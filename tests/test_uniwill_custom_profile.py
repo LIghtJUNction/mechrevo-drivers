@@ -43,9 +43,21 @@ class CustomProfileTests(unittest.TestCase):
         invocation = ('return uniwill_set_custom_profile_mode(zero);'
                       if helper.startswith('static int ') else
                       'uniwill_set_custom_profile_mode(zero); return 0;')
-        pieces = [helper, function(source, 'uniwill_event_callb'),
-                  function(source, 'uniwill_keyboard_probe')]
+        pieces = [helper, function(source, 'uniwill_event_callb')]
+        pieces += [function(source, name) for name in
+                   ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start')]
+        if 'static int uniwill_keyboard_abort_probe(' in source:
+            pieces.append(function(source, 'uniwill_keyboard_abort_probe'))
+        pieces.append(function(source, 'uniwill_keyboard_probe'))
+        has_adapter_gate = 'static void uniwill_restore_adapter_state(' in source
+        if has_adapter_gate:
+            pieces.append(function(source, 'uw_fan_lock'))
+            pieces.append(function(source, 'uniwill_restore_adapter_state'))
         fixture = (ROOT / 'tests/fixtures/uniwill_custom_profile.c').read_text()
+        fixture = fixture.replace('/* @ADAPTER_DECL@ */',
+                                  'static void uniwill_restore_adapter_state(void);'
+                                  if has_adapter_gate else '')
+        fixture = fixture.replace('/* @HAS_ADAPTER_GATE@ */', str(int(has_adapter_gate)))
         fixture = fixture.replace('/* @ACTUAL_FUNCTIONS@ */', '\n\n'.join(pieces))
         fixture = fixture.replace('/* @INVOKE_HELPER@ */', invocation)
         c_source = path / 'runtime.c'

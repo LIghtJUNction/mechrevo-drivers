@@ -545,33 +545,23 @@ static u32 uw_get_performance_profile_count(void)
  * validated custom-TDP path uses OVERBOOST on devices that require it. */
 static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 {
-	u8 current_value = 0x00, next_value;
-	u8 clear_bits = 0xa0 | 0x10;
-	int result;
-	result = uniwill_read_ec_ram(0x0751, &current_value);
-	if (result >= 0) {
-		next_value = current_value & ~clear_bits;
-		switch (profile) {
-		case 0x01:
-			next_value |= 0xa0;
-			break;
-		case 0x02:
-			next_value |= 0x00;
-			break;
-		case 0x03:
-			next_value |= 0x10;
-			break;
-		default:
-			result = -EINVAL;
-			break;
-		}
+	u8 profile_bits;
 
-		if (result != -EINVAL) {
-			result = uniwill_write_ec_ram(0x0751, next_value);
-		}
+	switch (profile) {
+	case PROFILE_POWERSAVE:
+		profile_bits = 0xa0;
+		break;
+	case PROFILE_ENTHUSIAST:
+		profile_bits = 0x00;
+		break;
+	case PROFILE_OVERBOOST:
+		profile_bits = 0x10;
+		break;
+	default:
+		return -EINVAL;
 	}
 
-	return result;
+	return uw_update_mode(0xb0, profile_bits);
 }
 
 static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
@@ -761,7 +751,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
 			if (copy_result)
 				return -EFAULT;
-			return uniwill_write_ec_ram(0x0751, argument & 0xff);
+			return uw_set_mode(argument & 0xff);
 		case W_UW_MODE_ENABLE:
 			// Note: Is for the moment set and cleared on init/exit of module (uniwill mode)
 			/*

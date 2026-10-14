@@ -14,17 +14,22 @@ errno values, unchanged initialization ordering, and independent adapter
 restoration. The full actual probe function is compiled; resource registration
 is observed through doubles rather than exercising the kernel resource APIs.
 
-To check sensitivity against an older revision, point
-`UNIWILL_KEYBOARD_HEADER` at its `src/uniwill_keyboard.h`. The harness adapts the
-old void helper only at the test invocation boundary. It does not rewrite its
-body or the actual probe/callback. The original upstream `a929f9c` executes the
-suite with seven failures and nine passes.
+This branch integrates the fan lifecycle changes and extracts the actual
+fan-start helpers required by the complete probe. Its fixtures therefore require
+a header with those helpers. `UNIWILL_KEYBOARD_HEADER` can select a frozen header
+with the same lifecycle API. For the independent custom-profile patch's baseline
+sensitivity, use its tests at `15cc292` against upstream `a929f9c`: those tests
+execute with seven failures and nine passes. That standalone harness adapts the
+old void helper only at the invocation boundary, without rewriting the helper,
+probe or callback bodies.
 
 Failure policy: the helper stops its dependent EC sequence and returns the
 original errno. Probe and adapter callbacks report this optional feature's
 failure and continue their existing independent initialization/restoration.
 A successful reset followed by a failed set can leave bit 6 clear; this is not
 a hardware rollback. The patch does not guarantee custom profile mode was
-applied after transport failure. It does not serialize adapter and PM accesses
-or establish firmware support on any additional model. No TUXEDO hardware was
-available for physical validation.
+applied after transport failure. The independent custom-profile patch does not
+serialize adapter and PM accesses or establish firmware support on any additional
+model. This fan lifecycle branch adds adapter/PM serialization and gating; the
+separate PM fixture covers that interaction. No TUXEDO hardware was available
+for physical validation.

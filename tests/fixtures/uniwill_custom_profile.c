@@ -34,6 +34,26 @@ struct uniwill_device_features_t {
 };
 static struct uniwill_device_features_t features;
 static struct { void *input_device; } uniwill_keyboard_driver;
+struct mutex { bool held; };
+static struct mutex uniwill_fan_command_lock, uniwill_fan_state_lock;
+static void mutex_lock(struct mutex *m) { assert(!m->held); m->held = true; }
+static void mutex_unlock(struct mutex *m) { assert(m->held); m->held = false; }
+#define lockdep_assert_held(m) assert((m)->held)
+static bool uniwill_fan_work_paused, uniwill_fan_removed, fans_initialized;
+static bool uniwill_pm_ready, uniwill_pm_suspended;
+static bool direct_fan_control_started, direct_fan_control_restart_needed, direct_fan_control_suspend;
+static u8 direct_fan_control_current_value_fan0, direct_fan_control_current_value_fan1;
+static u8 direct_fan_control_current_value_fan0_suspend_save, direct_fan_control_current_value_fan1_suspend_save;
+static int direct_fan_control_restart_delayed_work;
+static void cancel_delayed_work_sync(int *work) {
+    assert(work == &direct_fan_control_restart_delayed_work);
+    assert(uniwill_fan_command_lock.held && !uniwill_fan_state_lock.held);
+}
+static u8 uniwill_touchp_toggle_seq_pos;
+static bool uniwill_i8042_filter_installed;
+/* @ADAPTER_DECL@ */
+#define HAS_ADAPTER_GATE /* @HAS_ADAPTER_GATE@ */
+
 static struct uniwill_device_features_t *uniwill_get_device_features(void) { return &features; }
 struct operation { char kind; unsigned int address, value; };
 static struct operation trace[64];
@@ -89,7 +109,7 @@ static bool sparse_keymap_report_known_event(void *input, u32 code, int value, b
     (void)input; (void)code; (void)value; (void)down; return true;
 }
 static void set_rom_id(void) {}
-static void uniwill_write_kbd_bl_enable(u8 value) { assert(value == 1); resource(0); }
+static int uniwill_write_kbd_bl_enable(u8 value) { assert(value == 1); resource(0); return 0; }
 static void uniwill_leds_init(struct platform_device *dev) { (void)dev; resource(1); }
 static int uw_lightbar_init(struct platform_device *dev) { (void)dev; resource(2); return 0; }
 static void uw_charging_priority_init(struct platform_device *dev) { (void)dev; resource(3); }
@@ -101,7 +121,8 @@ static void uw_show_hidden_bios_options(void) { resource(8); }
 static void uw_battery_init(void) { resource(9); }
 static void uniwill_i8042_filter(void) {}
 static int i8042_install_filter(void (*filter)(void), void *context) {
-    assert(filter == uniwill_i8042_filter && context == NULL); resource(10); return 0;
+    assert(filter == uniwill_i8042_filter && context == NULL);
+    assert(uniwill_touchp_toggle_seq_pos == 0); resource(10); return 0;
 }
 /* @ACTUAL_FUNCTIONS@ */
 static int invoke_helper(bool zero) { /* @INVOKE_HELPER@ */ }
@@ -115,6 +136,10 @@ static void reset(void) {
     features.uniwill_custom_profile_mode_needed = true;
     features.uniwill_profile_v1 = false;
     uw_lightbar_loaded = false; uniwill_kbd_bl_enable_state_on_start = 0xff;
+    uniwill_touchp_toggle_seq_pos = 5; uniwill_i8042_filter_installed = false;
+    uniwill_pm_ready = uniwill_pm_suspended = false;
+    uniwill_fan_removed = uniwill_fan_work_paused = false;
+    direct_fan_control_started = direct_fan_control_restart_needed = direct_fan_control_suspend = false;
 }
 static void check_operation(int index, char kind, unsigned int address, unsigned int value) {
     assert(index < operations);
@@ -171,11 +196,21 @@ static void probe_case(int failure, int error, bool unsupported, bool curve) {
     check_operation(offset++, 'r', UW_EC_REG_KBD_BL_STATUS, 0);
     assert(operations == offset);
     assert(resource_calls == 11 && resource_mask == ((1U << 11) - 1) && uw_lightbar_loaded);
-    assert(uniwill_kbd_bl_enable_state_on_start == 1);
+    assert(uniwill_kbd_bl_enable_state_on_start == 0);
+    assert(uniwill_i8042_filter_installed && !uniwill_touchp_toggle_seq_pos);
+    assert(!uniwill_fan_removed && !uniwill_fan_command_lock.held && !uniwill_fan_state_lock.held);
 }
 static void event_case(int failure, int error, bool unsupported) {
-    reset(); fail_at = failure; injected_errno = error;
+    reset();
     features.uniwill_custom_profile_mode_needed = !unsupported;
+    struct platform_device dev = {0};
+    assert(uniwill_keyboard_probe(&dev) == 0);
+    if (HAS_ADAPTER_GATE) assert(uniwill_pm_ready && !uniwill_pm_suspended);
+    /* Observe the cable event separately after the real probe opens its gate. */
+    memset(trace, 0, sizeof(trace));
+    operations = custom_calls = reads = writes = sleeps = errors = reported_errno = 0;
+    led_restores = priority_restores = profile_restores = 0;
+    fail_at = failure; injected_errno = error; custom_value = 0xa5;
     u8 initial = custom_value;
     uniwill_event_callb(UNIWILL_OSD_DC_ADAPTER_CHANGE);
     int offset = 0;

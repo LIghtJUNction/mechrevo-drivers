@@ -354,7 +354,9 @@ static int uniwill_wmi_probe(struct wmi_device *wdev, const void *dummy_context)
 		return -ENODEV;
 	}
 
-	uniwill_add_interface(&uniwill_wmi_interface);
+	status = uniwill_add_interface(&uniwill_wmi_interface);
+	if (status)
+		return status;
 
 	pr_info("interface initialized\n");
 

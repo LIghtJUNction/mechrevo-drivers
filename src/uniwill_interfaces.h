@@ -200,6 +200,8 @@ enum uw_perf_profiles_v1 {
 #define NB02_FAN_SPEED_MAX 0xc8
 
 int set_full_fan_mode(bool enable);
+int uw_set_mode(u8 value);
+int uw_update_mode(u8 clear_mask, u8 set_mask);
 int uw_init_fan(void);
 u32 uw_set_fan(u32 fan_index, u8 fan_speed);
 u32 uw_set_fan_auto(void);
