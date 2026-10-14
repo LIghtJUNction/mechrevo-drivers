@@ -1,8 +1,49 @@
 # 旷世 16 Pro GM6PX0X 本机验证
 
-日期：2026-10-14（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
+日期：2026-10-14；2026-10-15 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
-## 环境与安装状态
+## 2026-10-15 续验
+
+当前安装并加载 `4.24.0.r8.g90fae0c-1`，功能修复提交 `90fae0c`。
+经 GitHub `main` 构建及 `pacman -U` 升级，两套内核各完成 27 个 DKMS 模块的编译、签名和安装。
+安全重载项目模块后，五个运行模块的 GNU build ID 与磁盘一致；本轮改动的
+`uniwill_keyboard.h`、`tuxedo_io/tuxedo_io.c` 与安装源码逐字节一致。
+`pacman -Qkk` 报告 100 个文件、0 个改动，UKI/引导器的 `sbctl verify` 通过。
+仍未重启，Secure Boot 仍关闭。
+
+本轮修正风扇参数截断、EC 失败吞错、重试回读不匹配、全速模式幂等性和恢复缓存。
+睡眠恢复先准备双风扇目标；部分失败不再让已排队任务使用另一风扇被清零的缓存。
+挂起失败会在本回调尽力恢复，不依赖系统再调用恢复回调；后续手动/自动命令更新或取消旧目标。
+后台失败后，下一次手动请求会取消旧定时任务并立即排队恢复。
+原有寄存器、曲线、速度映射和正常成功路径的 50 分钟定时策略保持。
+
+- 本地 **125 项测试通过**：42 项 ioctl、32 项风扇/睡眠恢复、18 项 WMI、9 项电源、
+  24 项打包/同步。测试提取真实 C 函数，但 EC/ACPI 由模拟实现，不是实机故障注入。
+  17 组风扇及 PM 回归也在修改前源码上失败，确认能捕获原错误。
+- 实机向两只风扇接口分别传入 `256`、`UINT32_MAX`，四次均返回 `EINVAL`。
+  连续两次标准自动模式命令均返回 0；没有请求任意手动转速或新曲线。
+- 背光 `1 → 0 → 1`、Fn 锁 `0 → 1 → 0` 写入/回读及恢复通过，RGB 恢复 `4 4 4`。
+  这些仍是接口验证，没有人工确认发光效果或逐键验证。
+- 九项 TDP 读取仍返回 `ENODEV` 且输出未变，三项不支持写入及无效指针拒绝检查通过。
+  三次传感器样本均为 CPU 93°C、GPU 53°C、双风扇原始值 170；不能当作 RPM 或散热改善。
+- cTGP 在重载前、重载后 TCC 启动前及 TCC 启动后均为 25；原配置恢复，
+  `tccd`、`thermald`、`nvidia-powerd` 均运行。
+- NVIDIA `osapi.c:2198` 仍出现两次。已捕获 NPCF 通知和动态参数读取成功的独立链路，
+  但不能据此认为 GPU `0xC5` 可忽略，见 [NVIDIA 诊断记录](../NVIDIA-0xC5.md)。
+
+**真实睡眠/唤醒、实机 EC 故障、手动风扇控制和长期负载仍未验证。**
+本轮修复不构成完整睡眠兼容或散热认证，也未解决既有整体风扇并发串行化问题。
+
+证据保存在 `.local-tests/iteration-20261015/`：`all-tests.log`、两个内核构建日志、
+`fan-runtime-tests.log`、`fan-regression-sensitivity.log`、`makepkg.log`、`install.log`、
+`installed-validation.json`、`runtime-checks.json`、`after-install-checks.log`、`after-install-kernel.log`。
+升级前的 r6 包和两个内核的 54 个项目模块保存在
+`~/Backups/projects/mechrevo-drivers/light/20261015-iteration/`，
+已独立解包校验内容、权限和所有者，`SHA256SUMS` 复核通过。
+
+以下保留 2026-10-14 的 r6 历史验证，不代表当前安装版本。
+
+## 2026-10-14 环境与安装状态
 
 - DMI：`MECHREVO / Kuangshi16Pro Series GM6PX0X`，主板 `GM6PX0X`。
 - BIOS：`N.1.09MRO07`。
