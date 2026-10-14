@@ -20,7 +20,7 @@ struct uniwill_device_features_t { bool uniwill_has_charging_prio, uniwill_has_c
 static struct uniwill_device_features_t uniwill_device_features;
 struct char_to_u8_t { char *descriptor; u8 value; };
 static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
-static bool uw_lightbar_loaded;
+static bool uw_lightbar_loaded, uniwill_fan_removed;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 static struct platform_device platform;
 static int errors, last_error;
@@ -44,7 +44,9 @@ static bool removing;
 struct mutex { pthread_mutex_t native; bool charging; };
 #define DEFINE_MUTEX(name) struct mutex name = { PTHREAD_MUTEX_INITIALIZER, false }
 static DEFINE_MUTEX(uniwill_charging_lock);
-static void __attribute__((unused)) mutex_lock(struct mutex *lock)
+static DEFINE_MUTEX(uniwill_fan_command_lock);
+static DEFINE_MUTEX(uniwill_fan_state_lock);
+static void mutex_lock(struct mutex *lock)
 {
     int status = pthread_mutex_trylock(&lock->native);
     if (status == EBUSY) {
@@ -57,7 +59,7 @@ static void __attribute__((unused)) mutex_lock(struct mutex *lock)
     assert(status == 0);
     if (lock == &uniwill_charging_lock) ++charging_depth;
 }
-static void __attribute__((unused)) mutex_unlock(struct mutex *lock)
+static void mutex_unlock(struct mutex *lock)
 {
     if (lock == &uniwill_charging_lock) --charging_depth;
     assert(pthread_mutex_unlock(&lock->native) == 0);
@@ -178,16 +180,12 @@ static void sysfs_remove_group(void *kobj, void *group)
     while (active_store) pthread_cond_wait(&changed, &harness);
     pthread_mutex_unlock(&harness);
 }
+static void uniwill_keyboard_prepare_remove(void) {}
+static void uw_fan_quiesce_locked(void) {}
 static void uw_battery_uninit(void) {}
 static void uniwill_leds_remove(struct platform_device *dev) { (void)dev; }
-static void uniwill_write_kbd_bl_enable(u8 value) { (void)value; }
+static int uniwill_write_kbd_bl_enable(u8 value) { (void)value; return 0; }
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
-/* This branch extracts canonical remove, without the separate !61 fan/PM
- * changes. Its original filter/workqueue services remain external doubles. */
-static int uniwill_i8042_filter, direct_fan_control_restart_delayed_work;
-static int i8042_remove_filter(int filter) { (void)filter; return 0; }
-static void cancel_delayed_work_sync(int *work) { (void)work; }
-#define pr_info(...) do {} while (0)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 /* @DRIVER_FUNCTIONS@ */

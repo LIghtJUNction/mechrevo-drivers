@@ -22,9 +22,16 @@ static struct uniwill_device_features_t uniwill_device_features;
 struct platform_device { struct { struct { int unused; } kobj; } dev; };
 typedef int pm_message_t;
 static bool uw_charging_prio_loaded, uw_charging_profile_loaded, uw_lightbar_loaded;
-static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
+static __attribute__((unused)) int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)group; }
+/* Charging lifecycle is exercised with its real implementation separately. */
+static __attribute__((unused)) void uw_charging_uninit(struct platform_device *dev)
+{
+    (void)dev;
+    if (uw_charging_prio_loaded) sysfs_remove_group(NULL, &uw_charging_prio_attr_group);
+    if (uw_charging_profile_loaded) sysfs_remove_group(NULL, &uw_charging_profile_attr_group);
+}
 static void uw_battery_uninit(void) {}
 /* Deferred key-work ordering is exercised by uniwill_key_work_runtime.c. */
 
@@ -160,6 +167,17 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     }
     pthread_mutex_unlock(&harness);
     return error;
+}
+
+
+/* Service double for the probe/PM fixture's new atomic update entry point.
+ * Shared-register concurrency runs the actual foundation in LED transaction tests. */
+static int __attribute__((unused)) uniwill_update_ec_ram(unsigned int address, u8 clear, u8 set)
+{
+    u8 data;
+    int result = uniwill_read_ec_ram(address, &data);
+    if (result) return result;
+    return uniwill_write_ec_ram(address, (data & ~clear) | set);
 }
 
 #pragma GCC diagnostic push
