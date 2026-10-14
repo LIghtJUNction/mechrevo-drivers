@@ -113,6 +113,7 @@ static pthread_t first_thread;
 static bool schedule_active, first_paused, release_first;
 static bool second_blocked, second_done, second_started;
 static bool pause_any_ec_unlock, unregister_pause, unregister_started, allow_unregister;
+static bool pause_at_or_after_call;
 static int pause_call;
 static _Thread_local int thread_ec_calls;
 static void signal_schedule(void) { assert(!pthread_cond_broadcast(&schedule_changed)); }
@@ -137,7 +138,8 @@ static void mutex_unlock(struct mutex *mutex)
     assert(!pthread_mutex_lock(&schedule_lock));
     if (schedule_active && pthread_equal(pthread_self(), first_thread) &&
         strstr(mutex->name, "uniwill_ec_transaction_lock") && !first_paused &&
-        (pause_any_ec_unlock || thread_ec_calls == pause_call)) {
+        (pause_any_ec_unlock || thread_ec_calls == pause_call ||
+         (pause_at_or_after_call && thread_ec_calls >= pause_call))) {
         first_paused = true;
         signal_schedule();
         while (!release_first)
@@ -219,6 +221,7 @@ void led_stop_software_blink(struct led_classdev *);
 /* @DRIVER_DECLARATIONS@ */
 /* @DRIVER_SOURCE@ */
 /* @PARENT_BACKLIGHT_HELPER@ */
+/* @ACTUAL_USB_SETTER@ */
 /* @ACTUAL_LED_CORE@ */
 /* @ACTUAL_LED_PM@ */
 /* @DRIVER_LIFECYCLE@ */
@@ -287,6 +290,7 @@ static void reset(void)
     schedule_active = first_paused = release_first = false;
     second_blocked = second_done = second_started = false;
     pause_any_ec_unlock = unregister_pause = unregister_started = allow_unregister = false;
+    pause_at_or_after_call = false;
     pause_call = thread_ec_calls = 0;
     ec_calls = fail_call = core_errors = core_last_errno = 0;
     failure_errno = -EIO;
@@ -460,7 +464,7 @@ static void notify_suspended(void)
     }
 }
 struct operation { int kind, result; struct led_classdev *led; unsigned int value; };
-enum { OP_CALLBACK, OP_RESTORE, OP_BRIGHTNESS, OP_PARENT, OP_NOTIFY, OP_SUSPEND, OP_REMOVE };
+enum { OP_CALLBACK, OP_RESTORE, OP_BRIGHTNESS, OP_PARENT, OP_NOTIFY, OP_SUSPEND, OP_REMOVE, OP_USB };
 static void *perform(void *pointer)
 {
     struct operation *operation = pointer;
@@ -479,6 +483,7 @@ static void *perform(void *pointer)
     case OP_NOTIFY: operation->result = uniwill_leds_notify_brightness_change_extern(); break;
     case OP_SUSPEND: led_classdev_suspend(operation->led); operation->result = 0; break;
     case OP_REMOVE: operation->result = uniwill_leds_remove(&parent_device); break;
+    case OP_USB: operation->result = uw_set_usb_powershare(operation->value); break;
     default: assert(false);
     }
     assert(!pthread_mutex_lock(&schedule_lock));
@@ -551,6 +556,69 @@ static void status_interleave(bool parent_first)
             /* Atomic API proves each read/write pair is contiguous too. */
             assert(!transactions[0].write && transactions[1].write &&
                    !transactions[2].write && transactions[3].write);
+        }
+    }
+}
+static void usb_rgb_interleave(bool rgb_first)
+{
+    /* Both are actual business paths over the actual shared EC API. RGB
+     * enters through its real LED core synchronous dispatcher and callback;
+     * it is not represented by a direct API bit-update test double. */
+    assert(UW_EC_REG_USB_POWERSHARE_STATUS == UW_EC_REG_KBD_BL_RGB_MODE);
+    for (unsigned int byte = 0; byte < 256; ++byte) {
+        for (unsigned int choice = 0; choice < 2; ++choice) {
+            /* With byte zero, enable first makes either old split RMW lose
+             * a requested hardware bit before any trace-order assertion. */
+            unsigned int enable = 1 - choice;
+            struct led_classdev *led = init_model(2);
+            ec_ram[UW_EC_REG_KBD_BL_RGB_MODE] = byte;
+            ec_ram[UW_EC_REG_KBD_BL_STATUS] = 0x0b;
+            uw_mcled_cdev_subleds[0].intensity = 255;
+            uw_mcled_cdev_subleds[1].intensity = 127;
+            uw_mcled_cdev_subleds[2].intensity = 5;
+            uw_usb_powershare_last_written_value = !enable;
+            struct operation usb = { .kind = OP_USB, .value = enable };
+            struct operation rgb = { .kind = OP_CALLBACK, .led = led, .value = 3 };
+            struct operation *first = rgb_first ? &rgb : &usb;
+            struct operation *second = rgb_first ? &usb : &rgb;
+            pthread_t a, b;
+            schedule_active = true;
+            /* USB old code yields after its read (call 1), fixed after its
+             * indivisible pair (call 2). RGB first writes three channels:
+             * old code yields after its read (call 4), fixed after call 5.
+             * Pausing earlier would miss the old RGB lost-update window. */
+            pause_any_ec_unlock = !rgb_first;
+            pause_at_or_after_call = rgb_first;
+            pause_call = 4;
+            assert(!pthread_create(&a, NULL, first_perform, first));
+            wait_flag(&first_paused);
+            assert(!pthread_create(&b, NULL, perform, second));
+            wait_flag(&second_done);
+            assert(!pthread_join(b, NULL));
+            release_paused();
+            assert(!pthread_join(a, NULL));
+            assert(!usb.result && !rgb.result);
+            unsigned int value = (byte & ~0x10U) | (enable << 4) |
+                                 UW_EC_REG_KBD_BL_RGB_MODE_BIT_APPLY_COLOR;
+            assert(ec_ram[UW_EC_REG_KBD_BL_RGB_MODE] == value);
+            assert(uw_usb_powershare_last_written_value == enable);
+            assert(led->brightness == 3 && ec_ram[UW_EC_REG_KBD_BL_STATUS] == status_value(0x0b, 3));
+            assert(ec_calls == 9);
+            unsigned int rgb_start = rgb_first ? 0 : 2;
+            unsigned int usb_start = rgb_first ? 5 : 0;
+            expected(rgb_start, true, UW_EC_REG_KBD_BL_RGB_RED_BRIGHTNESS, 50);
+            expected(rgb_start + 1, true, UW_EC_REG_KBD_BL_RGB_GREEN_BRIGHTNESS, 127 * 50 / 255);
+            expected(rgb_start + 2, true, UW_EC_REG_KBD_BL_RGB_BLUE_BRIGHTNESS, 5 * 50 / 255);
+            expected(rgb_start + 3, false, UW_EC_REG_KBD_BL_RGB_MODE, 0);
+            unsigned int rgb_mode = rgb_first ? byte : ((byte & ~0x10U) | (enable << 4));
+            expected(rgb_start + 4, true, UW_EC_REG_KBD_BL_RGB_MODE,
+                     rgb_mode | UW_EC_REG_KBD_BL_RGB_MODE_BIT_APPLY_COLOR);
+            expected(usb_start, false, UW_EC_REG_USB_POWERSHARE_STATUS, 0);
+            unsigned int usb_mode = rgb_first ? (byte | UW_EC_REG_KBD_BL_RGB_MODE_BIT_APPLY_COLOR) : byte;
+            expected(usb_start + 1, true, UW_EC_REG_USB_POWERSHARE_STATUS,
+                     (usb_mode & ~0x10U) | (enable << 4));
+            expected(7, false, UW_EC_REG_KBD_BL_STATUS, 0);
+            expected(8, true, UW_EC_REG_KBD_BL_STATUS, status_value(0x0b, 3));
         }
     }
 }
@@ -768,6 +836,8 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "restore_color_errors")) restore_color_errors();
     else if (!strcmp(argv[1], "remove_flush")) remove_flush();
     else if (!strcmp(argv[1], "removed_exports")) removed_exports();
+    else if (!strcmp(argv[1], "usb_rgb_usb_first")) usb_rgb_interleave(false);
+    else if (!strcmp(argv[1], "usb_rgb_rgb_first")) usb_rgb_interleave(true);
     else assert(false && "unknown case");
     return 0;
 }
