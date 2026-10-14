@@ -291,8 +291,9 @@ static int fop_release(struct inode *inode, struct file *file)
 
 static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	u32 result = 0, status;
-	u32 copy_result;
+	u32 result = 0;
+	int status;
+	u32 copy_result = 0;
 	u32 argument = (u32) arg;
 	int i;
 
@@ -311,14 +312,20 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 			break;
 		case R_CL_FANINFO1:
 			status = clevo_evaluate_method(CLEVO_CMD_GET_FANINFO1, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 		case R_CL_FANINFO2:
 			status = clevo_evaluate_method(CLEVO_CMD_GET_FANINFO2, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 		case R_CL_FANINFO3:
 			status = clevo_evaluate_method(CLEVO_CMD_GET_FANINFO3, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 		/*case R_CL_FANINFO4:
@@ -331,14 +338,20 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 			    dmi_match(DMI_PRODUCT_SKU, "AURA14GEN4 / AURA15GEN4"))
 				return -ENODEV;
 			status = clevo_evaluate_method(CLEVO_CMD_GET_WEBCAM_SW, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 		case R_CL_FLIGHTMODE_SW:
 			status = clevo_evaluate_method(CLEVO_CMD_GET_FLIGHTMODE_SW, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 		case R_CL_TOUCHPAD_SW:
 			status = clevo_evaluate_method(CLEVO_CMD_GET_TOUCHPAD_SW, 0, &result);
+			if (status)
+				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
 	}
@@ -346,6 +359,8 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 	switch (cmd) {
 		case W_CL_FANSPEED:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
+			if (copy_result)
+				return -EFAULT;
 
 			// Don't allow vallues between fan-off and minimum fan-on-speed
 			u8 fanspeeds[3] = { argument & 0xff, argument >> 8 & 0xff, argument >> 16 & 0xff };
@@ -359,7 +374,9 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 			argument |= fanspeeds[1] << 8;
 			argument |= fanspeeds[2] << 16;
 
-			clevo_evaluate_method(CLEVO_CMD_SET_FANSPEED_VALUE, argument, &result);
+			status = clevo_evaluate_method(CLEVO_CMD_SET_FANSPEED_VALUE, argument, &result);
+			if (status)
+				return status;
 			// Note: Delay needed to let hardware catch up with the written value.
 			// No known ready flag. If the value is read too soon, the old value
 			// will still be read out.
@@ -369,36 +386,58 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 			break;
 		case W_CL_FANAUTO:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			clevo_evaluate_method(CLEVO_CMD_SET_FANSPEED_AUTO, argument, &result);
+			if (copy_result)
+				return -EFAULT;
+			status = clevo_evaluate_method(CLEVO_CMD_SET_FANSPEED_AUTO, argument, &result);
+			if (status)
+				return status;
 			break;
 		case W_CL_WEBCAM_SW:
 			if (dmi_match(DMI_PRODUCT_SKU, "AURA14GEN3") ||
 			    dmi_match(DMI_PRODUCT_SKU, "AURA15GEN3"))
 				return -ENODEV;
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
+			if (copy_result)
+				return -EFAULT;
 			status = clevo_evaluate_method(CLEVO_CMD_GET_WEBCAM_SW, 0, &result);
+			if (status)
+				return status;
 			// Only set status if it isn't already the right value
 			// (workaround for old and/or buggy WMI interfaces that toggle on write)
 			if ((argument & 0x01) != (result & 0x01)) {
-				clevo_evaluate_method(CLEVO_CMD_SET_WEBCAM_SW, argument, &result);
+				status = clevo_evaluate_method(CLEVO_CMD_SET_WEBCAM_SW, argument, &result);
+				if (status)
+					return status;
 			}
 			break;
 		case W_CL_FLIGHTMODE_SW:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			clevo_evaluate_method(CLEVO_CMD_SET_FLIGHTMODE_SW, argument, &result);
+			if (copy_result)
+				return -EFAULT;
+			status = clevo_evaluate_method(CLEVO_CMD_SET_FLIGHTMODE_SW, argument, &result);
+			if (status)
+				return status;
 			break;
 		case W_CL_TOUCHPAD_SW:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			clevo_evaluate_method(CLEVO_CMD_SET_TOUCHPAD_SW, argument, &result);
+			if (copy_result)
+				return -EFAULT;
+			status = clevo_evaluate_method(CLEVO_CMD_SET_TOUCHPAD_SW, argument, &result);
+			if (status)
+				return status;
 			break;
 		case W_CL_PERF_PROFILE:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
+			if (copy_result)
+				return -EFAULT;
 			clevo_arg = (CLEVO_CMD_OPT_SUB_SET_PERF_PROF << 0x18) | (argument & 0xff);
-			clevo_evaluate_method(CLEVO_CMD_OPT, clevo_arg, &result);
+			status = clevo_evaluate_method(CLEVO_CMD_OPT, clevo_arg, &result);
+			if (status)
+				return status;
 			break;
 	}
 
-	return 0;
+	return copy_result ? -EFAULT : 0;
 }
 
 static int uw_get_tdp_min(u8 tdp_index)
@@ -739,7 +778,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 
 static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	u32 status;
+	long status;
 	// u32 result = 0;
 	u32 copy_result;
 
