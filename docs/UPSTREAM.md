@@ -5,7 +5,7 @@ GitHub 上的 TUXEDO 仓库是只读镜像，贡献和问题反馈应交到 GitL
 
 ## 2026-10-15 已提交
 
-七项合并请求基于正式 `main` 的 `a929f9ce143316b3b18d5f3fbf9cc54f0c1122e2`，
+以下十项合并请求基于正式 `main` 的 `a929f9ce143316b3b18d5f3fbf9cc54f0c1122e2`，
 保留上游 4.25 的新增型号与配置支持，不包含 MECHREVO 品牌匹配、GPU 默认值、AUR 配方或项目规则。
 !61 通过真实 merge 提交纳入 !62 的分支历史，明确依赖该 helper 修复；!62 仍保持独立可审查。
 这项分支依赖不表示上游已经合并 !62。
@@ -18,22 +18,37 @@ GitHub 上的 TUXEDO 仓库是只读镜像，贡献和问题反馈应交到 GitL
 | [!61](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/61) | 风扇状态、错误及并发；失败绑定和 probe 回退；排空按键任务、重置序列；适配器/PM 状态门禁及背光恢复 | 当前 `13d69cf`：131 项实际 C、故障与 pthread 测试；两个内核各完整编译 27 模块 | 已更新，Draft，实机验收未完成 |
 | [!62](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/62) | custom profile 读取/reset/enable 失败后停止依赖操作，调用处报告错误并继续其他初始化 | 16 项实际 C 测试；27 模块编译 | 已提交，待审查 |
 | [!63](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/63) | Clevo ioctl 原错误传播、复制失败阻止固件调用、失败读取保留输出 | 当前 `e8e8b39`：17 项实际 C 测试，普通及 DEBUG 构建；27 模块编译 | 已提交，待审查 |
-| [!64](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/64) | LED 阻塞回调、最新亮度请求、睡眠队列排序、初始化错误和重绑状态 | 当前 `ee8ec49`：33 项实际 C/LED core 测试；27 模块编译 | 已提交，Draft，实机 PM 验收未完成 |
+| [!64](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/64) | LED 阻塞回调、睡眠队列排序、初始化和重绑、完整 LED 事务、通知及黑色目标恢复 | 当前 `f4822ce`：75 项实际 C/LED core/pthread 测试；27 模块编译 | 已更新，Draft，依赖 !65，实机 PM 验收未完成 |
+| [!65](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/65) | 公开 EC 访问及单寄存器原子位更新，拒绝非正读取重试次数 | 当前 `59e31e6`：24 项实际 C/pthread 测试；全部 16,777,216 种字节/掩码组合；7 个错误变体被捕获；27 模块编译 | 已提交，Draft，硬件验收未完成 |
+| [!66](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/66) | TDP 模式切换及最终写入通过同一生命周期门禁 | 当前 `95cb6b3`：201 项分支测试，含 23 项完整 TDP 事务回归；27 模块编译 | 已提交，Draft，依赖 !59、!61，未做功耗写入实测 |
+| [!67](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/67) | 充电设置及恢复缓存串行化、sysfs 生命周期和 USB powershare 原子位更新 | 当前 `ffc8289`：57 项实际 C/pthread 测试；27 模块编译 | 已提交，Draft，依赖 !65，硬件验收未完成 |
 
 同一测试运行原代码能捕获对应错误。故障输入和线程交错由测试模拟，不是实机故障注入。
-最终七组补丁组合 `668bbd2` 后 **248 项测试通过**，在 `7.2.7-arch1-1` 和 `7.2.9-arch1-1`
+上一轮七组补丁组合 `668bbd2` 后 **248 项测试通过**，在 `7.2.7-arch1-1` 和 `7.2.9-arch1-1`
 下各重新隔离编译全部 27 个模块，无编译警告。七个贡献提交均保留为真实合并祖先，4.25 机型与功耗表保持。
 组合时 ioctl 的上下文冲突已处理，同时保留有符号错误返回、复制失败检查和模式操作串行化。
 性能模式能力检查保留，串行化位更新位于内部 apply helper；测试夹具适配了完整 probe 和 helper 的返回值。
-组合分支仅本地保存，没有推送或安装其模块；不能用它的验证代替本项目 4.24 维护分支验收。
+该七组组合分支当时仅本地保存，没有推送或安装其模块；不能用它的验证代替本项目 4.24 维护分支验收。
 
 !61 与已有 [!55](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/55)
 修改同一个风扇函数，但没有吸收其缓存策略，也不声称解决 #399 的 EC 中断开销问题。
 若 !55 先合并，需要重新处理上下文并复测。
 
+LED 事务更新沿用 !64；!64 和充电补丁 !67 均通过真实 merge 纳入 !65。
+!66 通过真实 merge 纳入 !59 与 !61 的校验和设备生命周期门禁。
+十项请求均已提交且仍处于打开状态；这些依赖尚未合并到正式上游。
+所有移植继续保留正式上游 4.25 的机型与功耗表，与本项目 4.24 维护分支分别验收。
+
+最新十组组合 `059ddd16cd0aada16688b670325b35bcda3e459e` 已通过 **349 项测试**，两个内核各全新
+隔离编译 27 模块，无编译警告。十个已提交 MR 头均为真实合并祖先，57 个生产输入与冻结源码一致；
+上游 4.25 的 TDP/机型映射、设备能力和 LED DMI 三组表保持。独立审查未发现新增的阻断性整合问题。
+实际 RGB 与 USB 双向交错回归也包含在该组合中，服务模拟和硬件验收边界保持。
+组合已推送到 [GitHub 审查分支](https://github.com/LIghtJUNction/mechrevo-drivers/tree/contrib/upstream-combined-transactions-20261015)，
+远端 Git 提交已核对；它是整合审查材料，没有安装或加载其模块，也没有替代十个独立 GitLab MR。
+
 ## 验证和运行状态
 
-本轮 Clevo ioctl、probe EC 错误、适配器/PM 门禁及 LED 回调修复已合入维护源码 `2c749ac`。
+上一轮 Clevo ioctl、probe EC 错误、适配器/PM 门禁及 LED 回调修复已合入维护源码 `2c749ac`。
 该版本完整 **281 项测试通过**，两个内核各在新独立目录完整编译 27 模块，无编译警告。
 LED 修复包括睡眠前排空任务、初始化依赖错误与重新绑定状态，以及未初始化时拒绝恢复写入。
 发布源码 `f1aa652` 仅增加文档，已构建、安装并发布 AUR `4.24.0.r23.gf1aa652-1`。
@@ -46,6 +61,20 @@ TCC 配置字节、原背光/RGB/Fn 锁值、cTGP=25 及三个服务状态均保
 最终观察保存在本地发布和收尾记录中，不把旧缓存当作新版本元数据证明。
 probe/PM/LED 测试使用实际驱动函数，LED 用例还编译固定版本的实际 Linux LED core 函数；
 EC、资源、队列及计时服务由测试模拟，没有做物理 EC 故障注入或真实睡眠/闪烁验收。
+
+后续已合入原子 EC 位更新、无效重试预算拒绝、完整 TDP 写事务、充电缓存/恢复及 LED 事务修复。
+维护源码 `85bf136` 完整 381 项测试通过，两个内核各全新编译 27 模块，无编译警告；
+实际 RGB 与 USB 业务路径的双向交错回归也通过，不只测试它们共用的原子 helper。
+`4.24.0.r30.g85bf136-1` 已通过包内双内核隔离 DKMS 验证、磁盘安装及 AUR 发布。
+AUR 提交 `5cde00b` 与远端一致，最新获取的网页已核对 r30 和维护者；发布初期 RPC 仍返回 r23。
+包源码冻结于 `85bf136`，本次发布后的维护记录只修改文档。
+已核对安装的全部 55 个源码文件及 DKMS 配方、两个内核的 54 个模块和新 IO/keyboard 导出依赖。
+包完整性、模块 vermagic/签名元数据及启动文件签名检查通过；未做模块签名的独立密码学验证，
+Secure Boot 关闭，没有开启后的信任验证或实际启动验收。
+新 IO 依赖新 keyboard 的 `uw_write_tdp` 导出，因此只更新磁盘文件，五个运行 build ID 全部保持：
+IO 仍为 r23，其余四个仍为 r10，新事务修复尚未运行。没有热重载 IO、卸载旧 keyboard、睡眠、重启或重启 TCC。
+TCC 配置字节、原背光/RGB/Fn 锁值、cTGP=25 及三个服务状态保持；这些保持检查不能作为新功能硬件验收。
+安装前 r23 包、54 个签名模块及 TCC 配置已在统一 Backups 目录独立校验。
 
 上游 fork 的自动 CI 无法访问继承的构建模板项目，任务没有开始。
 未修改的上游基线也出现同一错误。这不属于代码测试结果，不能写成 CI 通过。
@@ -67,6 +96,15 @@ EC、资源、队列及计时服务由测试模拟，没有做物理 EC 故障�
 `upstream-combined-validation/final/receipt.json` 保存最新七组组合验收。
 `package-validation/receipt.json`、`system-install/receipt.json`、`live-runtime/output/receipt.json`
 和 `postinstall/receipt.json` 分别保存包内验证、系统安装、有限激活及签名/完整性核对。
+后续事务迭代证据位于 `.local-tests/transactions-20261015/`，各 `*-validation` 保存冻结输入、
+实际 C 回归、错误变体、内核构建及独立审查记录；`upstream-ec-validation/published-mr.json`
+对应 !65；`upstream-led-validation/published-mr.json`、`upstream-tdp-validation/published-mr.json`
+及 `upstream-charging-validation/published-mr.json` 对应 !64、!66 和 !67 的当前版本。
+`main-validation/receipt.json` 对应维护源码 `85bf136` 的 381 项完整测试、实际 RGB/USB 组合回归与双内核构建。
+`package-validation/receipt.json`、`system-install/receipt.json` 与 `disk-verification/receipt.json`
+分别记录包内隔离验证、系统安装和磁盘/运行版本区分；`package-validation/aur-published.json`
+记录 AUR Git、网页和 RPC 的各自观测；`upstream-combined-final-validation/receipt.json`
+及 `upstream-combined-final-validation/published-github.json` 记录十组最终组合、独立审查和 GitHub 远端核对。
 主动文件跟踪存在已记录缺口，不能把最终扫描当作完整创建、删除历史。
 这些本机材料不上传为原始机器日志。
 
@@ -76,7 +114,10 @@ EC、资源、队列及计时服务由测试模拟，没有做物理 EC 故障�
 - GM6PX0X 缺少可核验的 TDP 寄存器及安全上下限规范，仍不开放猜测性功耗写入。
 - 真实睡眠恢复、重启、手动风扇、长期温度和噪声、电池及物理按键等仍需实机验收，TUXEDO 型号未做硬件矩阵测试。
 - 新增完整实际 probe 的过滤器所有权和序列生命周期回归，初始化服务及同步由测试模拟；任意诊断 EC 写入仍不属于新增状态锁的保障范围。
-- 独立 LED/充电 sysfs 事务及其他未纳入的 WMI 操作不受本轮 PM 门禁统一串行化；普通 TDP 的最终 EC 写入仍在模式 helper 解锁之后。
+- 新的 TDP 写入口在同一门禁内完成模式切换和最终写入；传感器读取及 DEBUG 任意地址访问仍不受这套事务保障。
+- 单寄存器原子更新不覆盖原始 WMI 调用、接口对象生命周期、多字节读取或整个重试序列；不能称整个 EC 控制面已有统一事务。
+- 充电 sysfs 没有统一 PM 门禁，恢复入口失败会报告并保留重试缓存，但不作为 PM 返回错误；AC 自动开机和 lightbar 未纳入本轮。
+- LED 事务锁不把 LED core 自身的亮度/多色缓存写入变成完整快照，真实通知与 PM 压力仍待硬件验收。
 - RGB 部分写入失败和 probe 部分曲线写入没有事务回滚，LED 请求缓存不能作为硬件成功状态。
 
 已提交不代表上游已合并；编译及模拟测试通过不代表硬件完整兼容。
