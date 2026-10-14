@@ -2,6 +2,54 @@
 
 日期：2026-10-14；2026-10-15 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
+## 2026-10-15 RAPL 用户上限与原生温控协调
+
+独立用户态工具 `mechrevo-power-control 0.1.0-1` 已在本机安装，源码冻结于
+`124a440bbad69643fd6752b90db6e2832ac61884`；实际包内四个文件与该提交逐字节一致，
+包完整性检查为 16 个条目、0 个改动。它没有加入现有 DKMS 包或发布到 AUR。
+本轮 460 项完整本地测试通过，其中新增 62 项 CLI 行为回归、11 项实际 thermald C++
+控制链回归和 6 项打包回归。冻结源码在测试前后哈希一致，未用较早的变化中测试代替最终验收。
+
+本机原有 `thermald 2:2.5.13-1.1` 二进制保持，22 个包文件完整性核对通过。
+工具严格核对本机 DMI、BIOS `N.1.09MRO07`、i9-12900HX、发行版二进制哈希、
+有效且已启用的两套 RAPL 长期约束，并拒绝 PPCC、自适应平台、外来配置及会触发
+额外 TCC offset workaround 的情况。当前没有这些固件接口，原服务原本走 default 回退路径；
+启用工具时明确使用该原生 default engine 与独立 XML，保留默认温控区及原温度阈值。
+
+真实 `set 55` 将 MSR 和 MMIO 两套 PL1 下调到 55 W。
+随后 90.44 秒、180 次样本中，MSR 为 34、41、48、55 W，MMIO 保持 55 W，
+没有任何样本超过请求上限。独立内核跟踪捕获同一 thermald 进程的 44 次长期限值写入，
+请求值同为 34、41、48、55 W，44 次返回全部成功。
+这同时验证了本次观察内的上限保持、温控继续下调，以及降温约束放松后回到 55 W；
+不是靠后台循环与温控反复抢写。临时探针和 trace instance 已撤除。
+
+在较低温度窗口还执行了真实 `clear`：受管 XML、drop-in 和状态撤销，原始
+`--adaptive` 服务命令恢复且服务 active，两套限值回读均为 140 W。
+这是交回原生策略后的当次读值，不是工具主动写高功耗或保证该值以后固定。
+随后重新应用 55 W 成功。受管配置下另一次直接重启 thermald，启动回调生成新的成功收据，
+两套实际 PL1 再次不超过 55 W；服务退出到启动回调完成期间不承诺严格保持上限。
+这次服务重启后的 60.35 秒、120 次样本也通过：MSR 仍为 34、41、48、55 W，MMIO 为 55 W。
+
+五个运行模块 build ID、TCC settings 字节、cTGP、背光/RGB/Fn 锁、原内核温控 trip 值，
+以及 tccd、power-profiles-daemon、nvidia-powerd 进程均保持。
+PL2、peak 约束及 enabled 的采样值保持；长期时间窗口仍由 thermald 原生状态机调整。
+XML 匹配使 thermald 创建偏好文件和 `.save`，偏好值保持原来的 ENERGY_CONSERVE，
+没有宣称这些运行文件的存在性或字节完全不变。
+没有重载驱动、重启 TCC、睡眠、重启机器或增加压测工作进程。
+
+重要限制：现有任务下 90 秒 CPU package 能量差分均值约 39.31 W，低于 55 W，
+因此没有证明持续满载下的平均功耗执行效果。温度采样为 86–100°C，曾达到本机
+100°C 临界参考值；没有据此宣称温度下降、散热改善或长期稳定性已验收。
+55 W 以外的设置、整机重启、睡眠恢复、不同内核、BIOS 和其他型号仍未实机验收。
+CPU RAPL 不代替尚未开放的 EC TDP，也不解决 GPU `0xC5` 问题。
+
+用法及撤销、中断恢复见 [功耗控制说明](../POWER-CONTROL.md)。
+证据保留在 `.local-tests/rapl-fix-20261015/` 的完整测试、实际包、`held55_first.json`、
+`first-hardware-summary.json`、`thermal-writer-identities.json`、`clear-reapply.json`
+及 `restart55.json`、`held55_after_restart.json`、`restart-hardware-summary.json`。
+每次配置事务的恢复材料统一保留在
+`~/Backups/projects/mechrevo-drivers/light/rapl-power-control/`，原始机器日志不上传。
+
 ## 2026-10-15 Intel RAPL 临时降限试验
 
 本轮已安装包为 `4.24.0.r30.g85bf136-1`，五个运行模块仍保持 IO r23、其余四个 r10。
