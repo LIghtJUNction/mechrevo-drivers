@@ -32,7 +32,7 @@ core timer callback and direct nosleep dispatcher are exercised with an atomic
 context flag; an EC call before queued work is run fails an assertion. Work is
 explicitly drained later in simulated process context.
 
-Seventeen tests cover both white and RGB callbacks, the existing version branch
+Thirty-three tests cover both white and RGB callbacks, the existing version branch
 for multicolor `max_intensity` (6.10 and 7.2 preprocessing), status/mode bit
 preservation, exact successful EC ordering, every RGB channel's 256 input values,
 the existing RGB-black behavior, and each EC failure boundary with five distinct
@@ -61,8 +61,69 @@ interleaving, not general LED state coherence or concurrent color restoration.
 For baseline sensitivity, set `UNIWILL_LEDS_HEADER` to an older driver's header.
 The old `void` callbacks are extracted without rewriting; only a test invocation
 wrapper chooses the available callback type. Using base
-`f178aed2e3af4ba065181cd32d6551cf9d5c9db8` yields twelve failing tests on each of the
-two preprocessing versions (24 failing subtests), including the actual timer's
-atomic EC access. The five successful behavior tests pass on both old and new
-source. Core dumps are disabled for assertion failures. No physical backlight,
+`f178aed2e3af4ba065181cd32d6551cf9d5c9db8` yields twenty-five failing tests on each of the
+two preprocessing versions (50 failing subtests), including the actual timer's
+atomic EC access. Successful behavior checks also run against both old and new source. Core dumps are disabled for assertion failures. No physical backlight,
 EC register, software blink trigger, suspend or reboot is used by these tests.
+
+
+## Core PM and initialization lifecycle
+
+The two LED devices also use `LED_CORE_SUSPENDRESUME`. The default LED workqueue
+is ordered but is not freezable. Without the flag, deferred brightness work can
+capture the old low status bits, outlive parent suspension and write those bits
+back after the parent sets the backlight-disable bit. The child LED core PM path
+sets `LED_SUSPENDED`, schedules temporary OFF and flushes brightness work before
+the parent disables backlight. The temporary OFF retains the user's requested
+brightness. Parent resume precedes child resume, which queues the latest cached
+request. A new request while suspended updates the cache without EC access.
+
+`fixtures/linux_led_pm_v7_2_9.c` contains four unchanged functions from official
+Linux v7.2.9 `led-class.c` at the same pinned commit:
+`led_classdev_suspend`, `led_classdev_resume`, `led_suspend` and `led_resume`.
+The full original file has SHA-256
+`50913ab981c8431a834779b4d0ad9673393629239415199818b3cc9945c44dad`.
+Its GPL license and John Lenz / Richard Purdie attribution are retained.
+
+The fixture executes those actual child PM functions and the actual parent
+backlight read/modify/write helper. Parent-child scheduling and failure unwinding
+are an explicit hierarchy model, not the full kernel DPM engine or the complete
+parent PM callbacks. The modeled order and failure policy follow official
+`drivers/base/power/main.c`: an already-suspended LED child resumes after parent
+suspend abort; child resume also runs after a parent resume error. Core LED PM
+callbacks return zero even if asynchronous OFF or restore EC work fails; that
+errno is reported by the work handler. The tests preserve this policy, retain
+the requested cache and do not claim failed parent resume enabled the backlight.
+
+The actual LED `init`/`remove` functions are extracted too. Tests cover every
+successful feature byte, negative errors from both feature reads and the initial
+feature write, zero/failed barebone reads, registration failures, and legal
+remove/rebind cycles. Each registration resets lifecycle flags, then adds hardware
+notification capability for that detection. Detection state and the two-level
+white limit no longer leak from a previous binding. A requested five-level value
+4 is retained through child suspend, cleared to OFF by the modeled core unregister
+sequence and verified within the new two-level limit after rebind; registration
+and resume themselves do not clamp arbitrary old cache values.
+
+A failed LED registration keeps the detected backlight type available, but its
+direct restore entry point now does no EC work until initialization succeeds.
+Late direct restore after removal is also ignored. Successful restore retains
+its prior EC ordering and error policy, including independent brightness restore
+after a failed RGB-color restore. Kernel registration/unregistration services are
+mocked; the full core unregister path was separately checked to establish its
+stop-blink, OFF-request and flush behavior.
+
+The intermediate `5034bc16e92630f69bc8beaf4531e7c3944372bb` header already has blocking
+callbacks and request-cache ownership fixed, but lacks core PM/lifecycle changes.
+Running these same 33 tests against that header produces 24 failing subtests;
+the queued-RMW case specifically detects the parent disable bit being cleared.
+This distinguishes the deferred-work PM regression from the original sleeping
+atomic callback bug.
+
+The independent maintenance LED tree and canonical baseline still contain the
+old parent backlight helper returning `void`; its unchecked EC read is repaired
+separately by the parent PM/probe patch. The harness compiles this helper unchanged
+and permits only `maybe-uninitialized` to remain a warning for that legacy helper
+configuration. All compiler output is retained. With the fixed `int` helper in
+the combined maintenance tree, compilation uses strict `-Werror` throughout.
+Neither this exception nor the hierarchy model is a hardware PM validation.

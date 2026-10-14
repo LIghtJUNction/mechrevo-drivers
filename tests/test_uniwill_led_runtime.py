@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import resource
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -33,7 +34,7 @@ def function(source, name):
 
 
 def initializer(source, name):
-    match = re.search(r'(?m)^static struct [^\n]+\b' + re.escape(name)
+    match = re.search(r'(?m)^static (?:const )?struct [^\n]+\b' + re.escape(name)
                       + r'(?:\[[^\]]*\])?\s*=\s*\{', source)
     if not match:
         raise AssertionError('Missing actual initializer: ' + name)
@@ -62,12 +63,29 @@ class UniwillLedRuntime(unittest.TestCase):
                    ('uniwill_led_cdev', 'uw_mcled_cdev_subleds', 'uniwill_mcled_cdev')]
         defines = '\n'.join(re.findall(r'(?m)^#define UNIWILL_KBD_[^\n]+', source))
         interfaces = (ROOT / 'src/uniwill_interfaces.h').read_text()
-        defines += '\n' + '\n'.join(re.findall(r'(?m)^#define UW_EC_REG_KBD_BL_[^\n]+', interfaces))
+        defines += '\n' + '\n'.join(re.findall(r'(?m)^#define UW_EC_[^\n]+', interfaces))
         fixture = (ROOT / 'tests/fixtures/uniwill_led_runtime.c').read_text()
         fixture = fixture.replace('/* @DRIVER_CONSTANTS@ */', defines)
         fixture = fixture.replace('/* @DRIVER_SOURCE@ */', '\n\n'.join(pieces))
         core = (ROOT / 'tests/fixtures/linux_led_core_v7_2_9.c').read_text()
         fixture = fixture.replace('/* @ACTUAL_LED_CORE@ */', core)
+        lifecycle = [re.search(r'typedef enum \{.*?\} uniwill_kb_backlight_type_t;', source, re.S).group()]
+        for name in ('uniwill_kb_backlight_type', 'uniwill_barebone_id',
+                     'uniwill_kbl_brightness_ec_controlled', 'uw_leds_initialized'):
+            lifecycle.append(re.search(r'(?m)^static [^\n]+\b' + name + r'\s*=.*?;', source).group())
+        lifecycle += [initializer(source, name) for name in
+                      ('force_no_ec_led_control', 'kbl_type_fixed_color_5_levels')]
+        lifecycle += [function(source, name) for name in ('uniwill_leds_init', 'uniwill_leds_remove', 'uniwill_leds_restore_state_extern')]
+        keyboard = (ROOT / 'src/uniwill_keyboard.h').read_text()
+        parent_helper = function(keyboard, 'uniwill_write_kbd_bl_enable')
+        fixture = fixture.replace('/* @PARENT_BACKLIGHT_HELPER@ */', parent_helper)
+        parent_call = ('return uniwill_write_kbd_bl_enable(enable);'
+                       if parent_helper.startswith('static int ') else
+                       'uniwill_write_kbd_bl_enable(enable); return 0;')
+        fixture = fixture.replace('/* @INVOKE_PARENT_BACKLIGHT@ */', parent_call)
+        fixture = fixture.replace('/* @DRIVER_LIFECYCLE@ */', '\n\n'.join(lifecycle))
+        pm = (ROOT / 'tests/fixtures/linux_led_pm_v7_2_9.c').read_text()
+        fixture = fixture.replace('/* @ACTUAL_LED_PM@ */', pm)
         c_source = path / 'runtime.c'
         c_source.write_text(fixture)
         cls.binaries = []
@@ -77,9 +95,12 @@ class UniwillLedRuntime(unittest.TestCase):
             binary = path / ('runtime-' + '-'.join(map(str, version)))
             result = subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-O2',
                                      '-Wall', '-Wextra', '-Werror',
+                                     *(['-Wno-error=maybe-uninitialized'] if parent_helper.startswith('static void ') else []),
                                      '-DLINUX_VERSION_CODE=' + str(code),
                                      str(c_source), '-o', str(binary)],
                                     capture_output=True, text=True)
+            if result.stdout or result.stderr:
+                sys.stderr.write(str(version) + '\n' + result.stdout + result.stderr)
             if result.returncode:
                 raise AssertionError(str(version) + '\n' + result.stdout + result.stderr)
             cls.binaries.append((version, binary))
@@ -140,6 +161,54 @@ class UniwillLedRuntime(unittest.TestCase):
 
     def test_rgb_old_ec_work_does_not_overwrite_newer_core_request_cache(self):
         self.check_case('rgb_cache_interleave')
+
+    def test_core_pm_flag_is_present_in_both_actual_static_initializers(self):
+        self.check_case('pm_initial_flags')
+
+    def test_each_actual_init_registration_retains_core_pm_flag_and_hardware_notification(self):
+        self.check_case('init_flags')
+
+    def test_real_child_suspend_flushes_queued_rmw_before_parent_disables_backlight(self):
+        self.check_case('pm_queued_rmw')
+
+    def test_suspend_requests_only_update_cache_then_child_resume_applies_latest(self):
+        self.check_case('pm_latest_request')
+
+    def test_parent_suspend_failure_still_resumes_already_suspended_led_child(self):
+        self.check_case('pm_suspend_abort')
+
+    def test_parent_resume_failure_still_allows_child_core_resume_without_claiming_enabled(self):
+        self.check_case('pm_resume_error')
+
+    def test_core_pm_off_and_restore_ec_errors_are_logged_not_returned_as_child_pm_errors(self):
+        self.check_case('pm_ec_errors')
+
+    def test_successful_init_preserves_all_256_feature_bytes(self):
+        self.check_case('init_feature_bytes')
+
+    def test_feature_reads_and_write_failures_stop_before_led_registration(self):
+        self.check_case('init_feature_failures')
+
+    def test_barebone_transport_errors_retain_original_errno_after_three_attempts(self):
+        self.check_case('init_barebone_errors')
+
+    def test_zero_barebone_id_is_error_after_exactly_three_attempts(self):
+        self.check_case('init_zero_barebone')
+
+    def test_legal_remove_then_init_resets_flags_type_notification_and_white_level_limit(self):
+        self.check_case('init_rebind')
+
+    def test_init_registration_error_retains_errno_without_publishing_a_child(self):
+        self.check_case('init_registration_error')
+
+    def test_successful_init_restore_keeps_existing_white_and_rgb_ec_order(self):
+        self.check_case('restore_success')
+
+    def test_late_restore_after_actual_driver_remove_does_not_access_ec(self):
+        self.check_case('restore_after_remove')
+
+    def test_successfully_initialized_restore_preserves_existing_ec_error_semantics(self):
+        self.check_case('restore_errors')
 
     def test_deferred_off_then_on_keeps_core_order_and_sleepable_ec_access(self):
         self.check_case('off_on')
