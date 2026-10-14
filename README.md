@@ -3,7 +3,7 @@
 基于 [TUXEDO `tuxedo-drivers`](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers) 的非官方维护分支，保留原始历史、模块名称及许可证。
 
 - **初始维护基线：上游 `v4.24.0`**，不是开发版 `v4.25.0_rc`。
-- **当前适配：** 系统、主板、机箱厂商字段中的 `MECHREVO` 可通过品牌检查；修复 Uniwill 不支持的功耗查询及 Mini LED 初始化。保留原有 TUXEDO 匹配和旧平台逻辑。
+- **当前适配：** `MECHREVO` 品牌检查、Uniwill 错误传播与 WMI 响应校验；旷世 16 Pro `GM6PX0X` 加载时保留已有电源配置。保留原有 TUXEDO 匹配和旧平台逻辑。
 - **本机验证：** 旷世 16 Pro `GM6PX0X` 已安装、加载并完成部分接口验证，详见[验证记录](docs/hardware/GM6PX0X.md)；不代表完整功能认证。
 - **不是性能优化包：** 尚无机械革命型号专属风扇曲线、功耗调优或实机兼容性认证。品牌匹配不能保证 EC 操作安全。
 - **上游同步：** 每日镜像开发分支到 `upstream`，仅将正式版本合入自动更新 PR；`main` 不会被强推或自动合并。
