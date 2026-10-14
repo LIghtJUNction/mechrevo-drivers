@@ -1,0 +1,84 @@
+{
+  "upstream": "https://github.com/intel/thermal_daemon",
+  "tag": "v2.5.13",
+  "commit": "5fdc5bbca7f8c3f5bb2ad6540e8211a159a88a3a",
+  "license": "GPL-2.0-or-later",
+  "files": {
+    "thd_cdev.h": {
+      "upstream_path": "src/thd_cdev.h",
+      "upstream_sha256": "6ae67644e7543890732383a21aaa5074fe6bd56acf05ebe33c7b70bbca87a10d",
+      "snapshot_sha256": "6ae67644e7543890732383a21aaa5074fe6bd56acf05ebe33c7b70bbca87a10d",
+      "selection": "whole class declaration and inline methods"
+    },
+    "thd_cdev_rapl.h": {
+      "upstream_path": "src/thd_cdev_rapl.h",
+      "upstream_sha256": "ed8ec8e2e0338a48f247aa47c0e374244f3091a53100d9662d54523aa1a710f8",
+      "snapshot_sha256": "ed8ec8e2e0338a48f247aa47c0e374244f3091a53100d9662d54523aa1a710f8",
+      "selection": "whole class declaration and inline methods"
+    },
+    "thd_trip_point.h": {
+      "upstream_path": "src/thd_trip_point.h",
+      "upstream_sha256": "21685e1721a745b49030c1fd954a6f9354c30ad3be289f8ead4e696c9bc99bb9",
+      "snapshot_sha256": "21685e1721a745b49030c1fd954a6f9354c30ad3be289f8ead4e696c9bc99bb9",
+      "selection": "whole class declaration and inline methods"
+    },
+    "thd_cdev_rapl.cpp": {
+      "upstream_path": "src/thd_cdev_rapl.cpp",
+      "upstream_sha256": "8744c3e0f104183e6e69e7e64a65f7404c1971097a2fae3ac1f7e980eb9ce089",
+      "snapshot_sha256": "8369481b55db64ed147217709bda51b9da9cc74e77f49014c216e58f87972689",
+      "functions": {
+        "cthd_sysfs_cdev_rapl::set_curr_state": "40fda1ea2268f242bdf7fbc72dab956c8d25042245565932a81cc62a833b2877",
+        "cthd_sysfs_cdev_rapl::set_curr_state_raw": "74bfe21fa38c253417348a6c4e80f4b8be1eb7e9aba8c3b9c1890abf3072053a",
+        "cthd_sysfs_cdev_rapl::get_curr_state": "ef016a89b4e1f8679e93d04d8dfafa4e081e402efc7741effd2d05382997d5dd",
+        "cthd_sysfs_cdev_rapl::get_max_state": "6b7b6919ef536de1cfd719435eada97a7229f3e5646c0d28e1272b49c64bba44",
+        "cthd_sysfs_cdev_rapl::rapl_sysfs_valid": "ba385fb2ba5955ca603e8cf9a8cd78c490be624ec172ff3e36e3e38858b4a152",
+        "cthd_sysfs_cdev_rapl::rapl_read_pl1_max": "dbd05f9f97855cd20a1e48a3e0fb75d4520cda248d7f7f92813c7aaefa980ff1",
+        "cthd_sysfs_cdev_rapl::rapl_read_pl1": "3e158d5e26d8d3c42214127fed199916269a06de56763e4eb0b380678212892d",
+        "cthd_sysfs_cdev_rapl::rapl_update_pl1": "745fc40204005b4137db2991c3fe9a67acd026265f0eac6585d50c587952c15f",
+        "cthd_sysfs_cdev_rapl::rapl_read_pl2": "d8cfb5d32412327e5c90b6eb434577f97495ea4c836484bbf49016d336e44d40",
+        "cthd_sysfs_cdev_rapl::rapl_update_pl2": "c73490ffd76b27f1768ad074ca69821bba839510f983b6c86b78c0b04350e031",
+        "cthd_sysfs_cdev_rapl::rapl_read_time_window": "4932c3b2689d934951c56c81b294bccebdee9e666cd89508202829477d91a2b1",
+        "cthd_sysfs_cdev_rapl::rapl_update_time_window": "32224db320bfee65b01064d8a46ad279457e2cddec97139a4367f6325c43ca9d",
+        "cthd_sysfs_cdev_rapl::rapl_update_pl2_time_window": "423935505722047ee9585018d4aecd85d558ba3498ad628ba3474a870ada16a4",
+        "cthd_sysfs_cdev_rapl::rapl_update_enable_status": "08c270f1b43476841e98fe8fc9cf157459eb704371504fa79ce2da9b7987760e",
+        "cthd_sysfs_cdev_rapl::rapl_read_enable_status": "97ab4783ea584d1ddaf82d2b9a51d5cc1dd553956580c710d2fe2170258f6a22",
+        "cthd_sysfs_cdev_rapl::set_tcc": "d410672d228962579a10647eb130ca1778c2ed9962f1a4d1859b306cc11d2893",
+        "cthd_sysfs_cdev_rapl::set_adaptive_target": "fef64aff9129141b45172e7fc45fa158ee6839c8477cd5b039ab33968b3f8bfa",
+        "cthd_sysfs_cdev_rapl::update": "b1a4248d4b9d179e119a1f9465a8a96a238d43e23209c3067ac796c6a0258540",
+        "cthd_sysfs_cdev_rapl::thd_cdev_set_min_state_param": "c3b0f1056e13bfb535d26c43b0f82c6c89d21f676f4336d8df04ce6c9b976c8c"
+      }
+    },
+    "thd_cdev.cpp": {
+      "upstream_path": "src/thd_cdev.cpp",
+      "upstream_sha256": "7b169f45ae20839769eac4b9819361ded2dda72e0c18cda50036cd8b579da5e6",
+      "snapshot_sha256": "2014c89ae791610c56acbcb0c3fd6274ed5583d0add92e5721e20a5c08322c53",
+      "functions": {
+        "cthd_cdev::thd_clamp_state_min": "f86969ef4b346372f313191f4179f0fed3615e36542e961cde4f12eda10759d2",
+        "cthd_cdev::thd_clamp_state_max": "ff25dfc0495a38fb7d84a7c2bfeb46ca3df33a9fd98bd71bb9c52c226ee1ea66",
+        "cthd_cdev::thd_cdev_exponential_controller": "4821be678c9cc21e32f8503c81d2a77628419d278e7022daa8d39439421a0f8a",
+        "sort_clamp_values_asc": "49a0489a74bae05a51675731be5f7bc4aa73e0ca8d51ec1103bb00fe956ea368",
+        "sort_clamp_values_dec": "9f6977cc237b1ec91cd513da12d189a8449abb73ca4c8b5f69a944c265af0888",
+        "sort_min_max_values_asc": "50ad7767ab56fa39216429ba60ba57ed5065a5b4f2bb77fd94fc612013128801",
+        "sort_min_max_values_dec": "da33a853a7f2ac752cd99dd5045d3162556e65b789f51b241b8ab96f88e024e1",
+        "cthd_cdev::thd_cdev_set_state": "f5b189e40094af480b9da0616119333b006f0e985f2bd8696c4fefa878de63aa",
+        "cthd_cdev::thd_cdev_set_min_state": "c8d4f63866dd982a936849ae8e2baaea356197084785ebb2441dd038d79467bc"
+      }
+    },
+    "thd_trip_point.cpp": {
+      "upstream_path": "src/thd_trip_point.cpp",
+      "upstream_sha256": "f95cd56cb92a9c26601ada29648506f4236c3ff85aaf35fa49ad930e57b3f49f",
+      "snapshot_sha256": "9f57caddcec7964ea44d65b37337f0b256f2735ced4770041f87151b1be98151",
+      "functions": {
+        "cthd_trip_point::cthd_trip_point": "7d35617b982b1d17b65e6446697eac8990fd9ed42f94999acf289492520d0b82",
+        "cthd_trip_point::thd_trip_point_check": "08c64c0f018e3ab751083db9708029f1dd42d819c5a6aa29dcd873a2ef4bffc1",
+        "cthd_trip_point::thd_trip_point_add_cdev": "47ec59f0b3d97df9aedb597f6f6c8d6f57e6be534a7f091b3c39b3011e1a5e55"
+      }
+    },
+    "thd_preference.h": {
+      "upstream_path": "src/thd_preference.h",
+      "upstream_sha256": "99890971ee8b50bb3467aa5dca4aa32738460ef3e45de0d35ed002ea5b4e03b9",
+      "snapshot_sha256": "99890971ee8b50bb3467aa5dca4aa32738460ef3e45de0d35ed002ea5b4e03b9",
+      "selection": "whole preference declaration and exact enum constants"
+    }
+  }
+}

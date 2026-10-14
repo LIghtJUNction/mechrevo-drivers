@@ -10,6 +10,9 @@
 
 阅读 [机械革命支持范围与验证](docs/MECHREVO.md)、[同步机制及维护流程](docs/MAINTENANCE.md) 和 [Arch / AUR 安装与打包](docs/AUR.md)。
 
+GM6PX0X 的独立 CPU 长期功耗工具及其适用条件见 [功耗控制说明](docs/POWER-CONTROL.md)。
+它单独安装，不包含在现有 DKMS / AUR 驱动包中；验收范围见本机验证记录。
+
 > 本分支的 AUR 包名为 `mechrevo-drivers-dkms-git`，从本仓库 `main` 获取源码。它与其他维护者的 `mechrevo-drivers-dkms` 独立、互斥，不接管对方的包；也不要与原版 tuxedo-drivers 同时安装同名模块。AUR 发布的是构建配方，不是预编译 DKMS 二进制包。下方保留上游说明，列出的功能不代表所有机械革命机型都支持。
 
 ---

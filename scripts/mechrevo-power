@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Launcher for the installed module and a source checkout."""
+from pathlib import Path
+import runpy
+
+source = Path(__file__).resolve().with_name("mechrevo_power.py")
+module = source if source.is_file() else Path("/usr/lib/mechrevo-power-control/mechrevo_power.py")
+runpy.run_path(str(module), run_name="__main__")

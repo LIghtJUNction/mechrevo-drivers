@@ -1,0 +1,848 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Bounded, opt-in RAPL PL1 control for the qualified GM6PX0X host.
+
+The XML changes thermald's cooling-device bounds; apply performs at most one
+downward PL1 write per interface. This is not a competing power-control loop.
+"""
+
+import argparse
+import base64
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+import xml.etree.ElementTree as ET
+
+
+XML = "/etc/thermald/mechrevo-power.xml"
+DROPIN = "/etc/systemd/system/thermald.service.d/60-mechrevo-power.conf"
+STATE = "/var/lib/mechrevo-power/state.json"
+RECEIPTS = "/var/lib/mechrevo-power/receipts"
+LOCK = "/run/lock/mechrevo-power.lock"
+STOCK_UNIT = "/usr/lib/systemd/system/thermald.service"
+FEATURES = "/etc/thermald/thermald-features.xml"
+PREF = "/run/thermald/thd_preference.conf"
+BACKUP_ROOT = "/home/lightjunction/Backups/projects/mechrevo-drivers/light/rapl-power-control"
+STOCK_EXEC_START = "/usr/bin/thermald --systemd --dbus-enable --adaptive"
+MANAGED_EXEC_START = "/usr/bin/thermald --systemd --dbus-enable --config-file " + XML
+ZONES = ("/sys/class/powercap/intel-rapl:0", "/sys/class/powercap/intel-rapl-mmio:0")
+PPCC_PATHS = (
+    "/sys/bus/pci/devices/0000:00:04.0/power_limits",
+    "/sys/bus/pci/devices/0000:00:0b.0/power_limits",
+    "/sys/bus/platform/devices/INT3401:00/power_limits",
+)
+TCC_PATHS = tuple(p.rsplit("/", 1)[0] + "/tcc_offset_degree_celsius" for p in PPCC_PATHS[:2])
+FOREIGN_CONFIGS = (
+    "/etc/thermald/thermal-conf.xml", "/etc/thermald/thermal-conf.xml.auto",
+    "/run/thermald/thermal-conf.xml", "/run/thermald/thermal-conf.xml.auto",
+)
+IDENTITY = {"sys_vendor": "MECHREVO", "product_name": "Kuangshi16Pro Series GM6PX0X",
+            "bios_version": "N.1.09MRO07"}
+CPU_MODEL = "12th Gen Intel(R) Core(TM) i9-12900HX"
+QUALIFIED_THERMALD_SHA256 = "fbe6b27d2854fa8636c7bbdbcc953d1665a2c3b23534026dd42d68a2ffa8c767"
+MIN_LIMIT_UW = 55_000_000
+
+
+class PowerError(RuntimeError):
+    pass
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def json_bytes(value):
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+
+
+class Environment:
+    """Dependency boundary. CLI always uses the real system, never --root."""
+
+    def __init__(self, root=Path("/"), runner=None, uid=None, owner_uid=0,
+                 clock=time.time, sleeper=time.sleep):
+        self.root = Path(root).resolve()
+        self.runner = runner or self._run
+        self.uid = os.geteuid() if uid is None else uid
+        self.owner_uid = owner_uid
+        self.clock = clock
+        self.sleeper = sleeper
+
+    @staticmethod
+    def _run(argv):
+        return subprocess.run(argv, text=True, capture_output=True, timeout=45)
+
+    def path(self, logical):
+        if not str(logical).startswith("/") or ".." in Path(logical).parts:
+            raise PowerError("Invalid system path")
+        return self.root / str(logical).lstrip("/")
+
+    def command(self, *argv):
+        try:
+            result = self.runner(list(argv))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PowerError(f"Command failed: {' '.join(argv)}: {exc}") from exc
+        if result.returncode:
+            raise PowerError(f"Command failed: {' '.join(argv)}: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    def read_control(self, logical):
+        try:
+            return self.path(logical).read_text().strip()
+        except OSError as exc:
+            raise PowerError(f"Cannot read {logical}: {exc}") from exc
+
+    def write_control(self, logical, value):
+        try:
+            path = self.path(logical)
+            if path.is_symlink() or not path.resolve().is_relative_to(self.path("/sys")):
+                raise PowerError(f"Untrusted sysfs control: {logical}")
+            # sysfs accepts a single value; never truncate other control files.
+            with path.open("w") as stream:
+                stream.write(str(value) + "\n")
+        except OSError as exc:
+            raise PowerError(f"Cannot write {logical}: {exc}") from exc
+
+    def exists(self, logical):
+        return os.path.lexists(self.path(logical))
+
+    @staticmethod
+    def boot_id():
+        # Process identity is a kernel boundary, independent of file-tree fixtures.
+        try:
+            return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        except OSError as exc:
+            raise PowerError(f"Cannot read boot identity: {exc}") from exc
+
+    def process_identity(self, pid=None):
+        pid = os.getpid() if pid is None else pid
+        if type(pid) is not int or pid <= 0:
+            raise PowerError("Invalid transaction owner PID")
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            if fields[0] == "Z":
+                return None
+            return {"pid": pid, "start_ticks": int(fields[19]), "boot_id": self.boot_id()}
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, IndexError) as exc:
+            raise PowerError(f"Cannot establish process identity for PID {pid}: {exc}") from exc
+
+    def regular(self, logical, *, missing=False):
+        path = self.path(logical)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            if missing:
+                return None
+            raise PowerError(f"Missing file: {logical}")
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != self.owner_uid or info.st_mode & 0o022:
+            raise PowerError(f"Untrusted file (owner, mode or symlink): {logical}")
+        self.no_symlink_parents(path)
+        return path.read_bytes()
+
+    def no_symlink_parents(self, path):
+        for parent in path.parents:
+            if parent == self.root:
+                break
+            if parent.is_symlink():
+                raise PowerError(f"Symlink parent refused: {parent}")
+
+    def directory(self, logical, mode=0o700):
+        path = self.path(logical)
+        self.no_symlink_parents(path)
+        if path.is_symlink():
+            raise PowerError(f"Symlink directory refused: {logical}")
+        path.mkdir(parents=True, mode=mode, exist_ok=True)
+        info = path.stat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.owner_uid or info.st_mode & 0o022:
+            raise PowerError(f"Untrusted directory: {logical}")
+        return path
+
+    def atomic(self, logical, data, mode=0o600):
+        path = self.path(logical)
+        self.regular(logical, missing=True)
+        directory = self.directory(str(Path(logical).parent))
+        descriptor, temporary = tempfile.mkstemp(prefix=".mechrevo-power-", dir=directory)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                os.fchmod(stream.fileno(), mode)
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def remove(self, logical):
+        if self.regular(logical, missing=True) is not None:
+            self.path(logical).unlink()
+
+
+class PowerController:
+    def __init__(self, env=None):
+        self.env = env or Environment()
+
+    def require_root(self):
+        if self.env.uid != 0:
+            raise PowerError("set, clear and apply require root")
+
+    @contextmanager
+    def lock(self):
+        self.require_root()
+        self.env.directory(str(Path(LOCK).parent), 0o755)
+        self.env.regular(LOCK, missing=True)
+        fd = os.open(self.env.path(LOCK), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            os.close(fd)
+            raise PowerError("Another mechrevo-power operation is running") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def load_state(self):
+        raw = self.env.regular(STATE, missing=True)
+        if raw is None:
+            return None
+        try:
+            state = json.loads(raw)
+            if (state["version"] != 1 or type(state["cap_uw"]) is not int
+                    or state["cap_uw"] < MIN_LIMIT_UW
+                    or state["cap_uw"] > state["initial_ceiling_uw"]):
+                raise ValueError("Invalid state schema or cap")
+            if set(state["managed_hashes"]) != {XML, DROPIN}:
+                raise ValueError("Invalid managed paths")
+            required = ("host", "preference", "initial_limits", "stock_unit_sha256",
+                        "features_sha256", "thermald_sha256", "backup", "operation_id")
+            if any(key not in state for key in required):
+                raise ValueError("Missing managed state fields")
+            if (state["host"] != IDENTITY or state["preference"]["value"] not in (0, 1)
+                    or state["preference"]["name"] != ("ENERGY_CONSERVE", "PERFORMANCE")[state["preference"]["value"]]
+                    or set(state["initial_limits"]) != set(ZONES)
+                    or type(state["initial_ceiling_uw"]) is not int):
+                raise ValueError("Invalid identity, preference or initial limits")
+            if any(not isinstance(state[key], str) for key in ("stock_unit_sha256", "features_sha256",
+                                                                "thermald_sha256", "backup", "operation_id")):
+                raise ValueError("Invalid state metadata")
+            return state
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PowerError(f"Invalid managed state: {exc}") from exc
+
+    def service(self):
+        output = self.env.command("systemctl", "show", "thermald.service",
+                                  "--property=FragmentPath,DropInPaths,ActiveState,ExecStart")
+        result = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        for key in ("FragmentPath", "DropInPaths", "ActiveState", "ExecStart"):
+            if key not in result:
+                raise PowerError(f"systemctl omitted {key}")
+        return result
+
+    @staticmethod
+    def exec_start(properties):
+        raw = properties["ExecStart"]
+        match = re.search(r"argv\[\]=(.*?)\s*;", raw)
+        return match.group(1).strip() if match else raw.strip()
+
+    def preference(self):
+        raw = self.env.regular(PREF, missing=True)
+        if raw is None:
+            return {"value": 0, "name": "ENERGY_CONSERVE", "file_present": False}
+        try:
+            value = int(raw.strip())
+        except ValueError as exc:
+            raise PowerError("Invalid thermald preference file") from exc
+        if value not in (0, 1):
+            raise PowerError("Disabled or unknown thermald preference is unsupported")
+        return {"value": value, "name": ("ENERGY_CONSERVE", "PERFORMANCE")[value],
+                "file_present": True}
+
+    def observe(self):
+        observed = {}
+        for zone in ZONES:
+            physical = self.env.path(zone).resolve()
+            if not physical.is_relative_to(self.env.path("/sys")):
+                raise PowerError(f"Powercap link leaves sysfs: {zone}")
+            for name, expected in (("name", "package-0"), ("enabled", "1"),
+                                   ("constraint_0_name", "long_term")):
+                if self.env.read_control(zone + "/" + name) != expected:
+                    raise PowerError(f"Unsupported {zone}/{name}")
+            try:
+                power = int(self.env.read_control(zone + "/constraint_0_power_limit_uw"))
+                maximum = int(self.env.read_control(zone + "/constraint_0_max_power_uw"))
+            except ValueError as exc:
+                raise PowerError(f"Invalid power value: {zone}") from exc
+            if power <= 0 or power > 2_147_483_647 or maximum != MIN_LIMIT_UW:
+                raise PowerError(f"Unqualified PL1 or thermal-spec-power value: {zone}")
+            observed[zone] = {"pl1_uw": power, "max_power_uw": maximum,
+                              "physical_path": str(physical)}
+        return observed
+
+    def validate_managed(self, state, *, allow_missing=False, allow_prior=False):
+        prior = {}
+        pending = state.get("transaction") or {}
+        if allow_prior and "prior_managed_hashes" in pending:
+            prior = pending["prior_managed_hashes"]
+            prior_cap = pending.get("prior_cap_uw")
+            if prior_cap is None:
+                expected_prior = {XML: None, DROPIN: None}
+            elif type(prior_cap) is int and MIN_LIMIT_UW <= prior_cap <= state["initial_ceiling_uw"]:
+                expected_prior = {XML: digest(self.xml(prior_cap, state["preference"]["name"])),
+                                  DROPIN: digest(self.dropin())}
+            else:
+                raise PowerError("Invalid previous managed cap in interrupted transaction")
+            if prior != expected_prior:
+                raise PowerError("Previous file hashes do not match a managed configuration")
+        for path, expected in state["managed_hashes"].items():
+            raw = self.env.regular(path, missing=allow_missing)
+            if raw is None and allow_missing:
+                continue
+            if digest(raw) not in (expected, prior.get(path)):
+                raise PowerError(f"Managed file changed; refusing overwrite: {path}")
+        expected_xml = self.xml(state["cap_uw"], state["preference"]["name"])
+        if (state["managed_hashes"][XML] != digest(expected_xml)
+                or state["managed_hashes"][DROPIN] != digest(self.dropin())):
+            raise PowerError("Managed configuration does not match state")
+
+    def configuration(self, state, *, require_running=True, disk_only=False,
+                      allow_missing_managed=False):
+        unit = self.env.regular(STOCK_UNIT)
+        service_section = False
+        commands = []
+        for line in unit.decode().splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                service_section = line == "[Service]"
+            elif service_section and line.startswith("ExecStart"):
+                commands.append(line)
+        if commands != ["ExecStart=" + STOCK_EXEC_START]:
+            raise PowerError("Unqualified stock thermald unit")
+        for path in FOREIGN_CONFIGS + ("/etc/systemd/system/thermald.service",
+                                      "/run/systemd/system/thermald.service"):
+            if self.env.exists(path):
+                raise PowerError(f"Foreign thermald configuration refused: {path}")
+        for base in ("/etc", "/run", "/usr/lib"):
+            for suffix in ("thermald.service.d", "service.d"):
+                directory = self.env.path(base + "/systemd/system/" + suffix)
+                if directory.is_symlink():
+                    raise PowerError(f"Symlink drop-in directory: {directory}")
+                if directory.exists():
+                    for path in directory.glob("*.conf"):
+                        logical = "/" + str(path.relative_to(self.env.root))
+                        if not state or logical != DROPIN:
+                            raise PowerError(f"Foreign thermald drop-in refused: {logical}")
+        features = self.env.regular(FEATURES)
+        try:
+            enabled = ET.fromstring(features).findtext("XMLThermalConfig", "").strip()
+        except ET.ParseError as exc:
+            raise PowerError("Invalid thermald feature configuration") from exc
+        if enabled != "1":
+            raise PowerError("thermald XMLThermalConfig must be 1")
+        if state:
+            self.validate_managed(state, allow_missing=allow_missing_managed,
+                                  allow_prior=allow_missing_managed)
+            if state["stock_unit_sha256"] != digest(unit) or state["features_sha256"] != digest(features):
+                raise PowerError("Stock thermald unit or features changed since set")
+        elif self.env.exists(XML) or self.env.exists(DROPIN):
+            raise PowerError("Orphan or foreign mechrevo-power configuration refused")
+        if disk_only:
+            return None
+        service = self.service()
+        if service["FragmentPath"] != STOCK_UNIT:
+            raise PowerError("thermald is not using the qualified stock unit")
+        expected_paths = [DROPIN] if state else []
+        if service["DropInPaths"].split() != expected_paths:
+            raise PowerError("Loaded thermald drop-ins do not match managed files")
+        expected_command = MANAGED_EXEC_START if state else STOCK_EXEC_START
+        if self.exec_start(service) != expected_command:
+            raise PowerError("Loaded thermald command does not match configuration")
+        if require_running and service["ActiveState"] != "active":
+            raise PowerError("thermald must be active")
+        if not require_running and service["ActiveState"] not in ("active", "activating"):
+            raise PowerError("thermald must be active or starting before apply")
+        return service
+
+    def qualify(self, state, *, require_running=True):
+        host = {key: self.env.read_control("/sys/class/dmi/id/" + key) for key in IDENTITY}
+        if host != IDENTITY:
+            raise PowerError("This machine or BIOS has not been qualified")
+        cpuinfo = self.env.read_control("/proc/cpuinfo")
+        models = re.findall(r"^model name\s*:\s*(.*)$", cpuinfo, re.M)
+        if not models or any(model.strip() != CPU_MODEL for model in models):
+            raise PowerError("This CPU has not been qualified")
+        if self.env.command("/usr/bin/thermald", "--version") != "2.5.13":
+            raise PowerError("Only thermald 2.5.13 is qualified")
+        binary_hash = digest(self.env.regular("/usr/bin/thermald"))
+        if binary_hash != QUALIFIED_THERMALD_SHA256:
+            raise PowerError("This thermald binary has not been qualified")
+        if state and state["thermald_sha256"] != binary_hash:
+            raise PowerError("thermald binary changed since set")
+        for path in PPCC_PATHS + ("/sys/bus/platform/drivers/int3400 thermal",):
+            if self.env.exists(path):
+                raise PowerError(f"Unqualified adaptive or PPCC interface: {path}")
+        tcc = {}
+        for path in TCC_PATHS:
+            if self.env.exists(path):
+                try:
+                    value = int(self.env.read_control(path))
+                except ValueError as exc:
+                    raise PowerError("Invalid TCC offset") from exc
+                if value < 0 or value > 10:
+                    raise PowerError("TCC offset could trigger thermald's unrelated workaround")
+                tcc[path] = value
+            else:
+                tcc[path] = None
+        service = self.configuration(state, require_running=require_running)
+        preference = self.preference()
+        observed = self.observe()
+        if state and (host != state["host"] or preference["value"] != state["preference"]["value"]):
+            raise PowerError("Host identity or thermald preference changed")
+        if state and any(observed[zone]["physical_path"] != state["initial_limits"][zone]["physical_path"]
+                         for zone in ZONES):
+            raise PowerError("Powercap interface changed since set")
+        return host, preference, observed, service, tcc
+
+    @staticmethod
+    def xml(cap_uw, preference):
+        root = ET.Element("ThermalConfiguration")
+        platform = ET.SubElement(root, "Platform")
+        ET.SubElement(platform, "Name").text = "MECHREVO GM6PX0X user PL1 ceiling"
+        ET.SubElement(platform, "ProductName").text = IDENTITY["product_name"]
+        ET.SubElement(platform, "Preference").text = preference
+        cooling = ET.SubElement(platform, "CoolingDevices")
+        for name in ("rapl_controller", "rapl_controller_mmio"):
+            device = ET.SubElement(cooling, "CoolingDevice")
+            ET.SubElement(device, "Type").text = name
+            ET.SubElement(device, "MinState").text = str(cap_uw)
+            ET.SubElement(device, "MaxState").text = str(cap_uw // 2)
+        ET.indent(root)
+        return b'<?xml version="1.0"?>\n' + ET.tostring(root, encoding="utf-8") + b"\n"
+
+    @staticmethod
+    def dropin():
+        return ("# Managed by mechrevo-power; use mechrevo-power clear to remove.\n"
+                "[Service]\nExecStart=\nExecStart=" + MANAGED_EXEC_START + "\n"
+                "ExecStartPost=-/usr/bin/mechrevo-power apply\n").encode()
+
+    def receipt(self, operation, success, **details):
+        value = {"version": 1, "operation": operation, "success": success,
+                 "time": self.env.clock(), **details}
+        name = str(uuid.uuid4())
+        self.env.atomic(RECEIPTS + "/" + name + ".json", json_bytes(value))
+        return value
+
+    def backup(self, operation, old_files, snapshot):
+        date = time.strftime("%Y%m%d", time.localtime(self.env.clock()))
+        name = date + "-" + str(uuid.uuid4())
+        directory = BACKUP_ROOT + "/" + name
+        self.env.directory(BACKUP_ROOT)
+        self.env.directory(directory)
+        files = {}
+        for path, data in old_files.items():
+            if data is None:
+                files[path] = None
+            else:
+                info = self.env.path(path).lstat()
+                files[path] = {"sha256": digest(data), "base64": base64.b64encode(data).decode(),
+                               "uid": info.st_uid, "gid": info.st_gid,
+                               "mode": stat.S_IMODE(info.st_mode), "size": len(data)}
+        manifest = {"version": 1, "operation": operation, "time": self.env.clock(),
+                    "files": files, "snapshot": snapshot}
+        payload = json_bytes(manifest)
+        target = directory + "/prewrite-state.json"
+        self.env.atomic(target, payload)
+        if self.env.regular(target) != payload:
+            raise PowerError("Recovery backup verification failed")
+        return target
+
+    def restart(self):
+        # Never call while holding flock: ExecStartPost runs apply and takes it.
+        self.env.command("systemctl", "daemon-reload")
+        self.env.command("systemctl", "restart", "thermald.service")
+
+    def restore(self, old_files, expected_hashes, transaction):
+        with self.lock():
+            current = self.load_state()
+            if not current or transaction not in (current.get("transaction", {}).get("id"),
+                                                  current.get("operation_id")):
+                raise PowerError("Transaction changed; automatic rollback refused")
+            for path in (XML, DROPIN):
+                raw = self.env.regular(path, missing=True)
+                if raw is not None and digest(raw) not in (expected_hashes[path],
+                        digest(old_files[path]) if old_files[path] is not None else None):
+                    raise PowerError(f"File changed during operation; rollback refused: {path}")
+            target = json.loads(old_files[STATE]) if old_files[STATE] is not None else None
+            barrier = dict(target if target is not None else current)
+            barrier.update(operation_id=transaction, last_apply=None, backup=current["backup"],
+                           transaction={"id": transaction,
+                                        "operation": "rollback" if target is not None else "rollback_stock",
+                                        "owner": self.env.process_identity(),
+                                        "prior_cap_uw": current["cap_uw"],
+                                        "prior_managed_hashes": expected_hashes})
+            self.env.atomic(STATE, json_bytes(barrier))
+            for path in (XML, DROPIN):
+                if old_files[path] is None:
+                    self.env.remove(path)
+                else:
+                    self.env.atomic(path, old_files[path], 0o644)
+        self.restart()
+        with self.lock():
+            current = self.load_state()
+            if not current or current.get("transaction", {}).get("id") != transaction:
+                raise PowerError("Rollback transaction changed during restart")
+            if target is None:
+                self.configuration(None)
+                self.observe()
+                self.env.remove(STATE)
+            else:
+                _, _, observed, _, _ = self.qualify(current)
+                applied = current.get("last_apply") or {}
+                if (not applied.get("success") or applied.get("transaction") != transaction
+                        or any(v["pl1_uw"] > current["cap_uw"] for v in observed.values())):
+                    raise PowerError("Previous managed cap was not restored successfully")
+                current.pop("transaction")
+                current["last_rollback"] = self.receipt("rollback", True, observed=observed,
+                                                        cap_uw=current["cap_uw"], transaction=transaction)
+                self.env.atomic(STATE, json_bytes(current))
+
+    def _stage_set(self, watts, transaction, context):
+        with self.lock():
+            previous = self.load_state()
+            if previous and previous.get("transaction"):
+                raise PowerError("Another transaction is pending; inspect recovery receipts")
+            host, preference, observed, _, tcc = self.qualify(previous)
+            ceiling = previous["initial_ceiling_uw"] if previous else min(v["pl1_uw"] for v in observed.values())
+            cap = watts * 1_000_000
+            if cap < MIN_LIMIT_UW or cap > ceiling:
+                raise PowerError(f"Limit must be between 55 and {ceiling // 1_000_000} whole watts")
+            # Initial values bound the operation, not the notebook's safety rating.
+            old_files = {path: self.env.regular(path, missing=True) for path in (XML, DROPIN, STATE, PREF)}
+            backup = self.backup("set", old_files, {"host": host, "preference": preference,
+                                                     "observed": observed, "tcc": tcc})
+            xml, dropin = self.xml(cap, preference["name"]), self.dropin()
+            hashes = {XML: digest(xml), DROPIN: digest(dropin)}
+            state = {"version": 1, "cap_uw": cap, "initial_ceiling_uw": ceiling,
+                     "initial_limits": previous["initial_limits"] if previous else observed,
+                     "host": host, "preference": preference, "tcc": tcc,
+                     "managed_hashes": hashes, "stock_unit_sha256": digest(self.env.regular(STOCK_UNIT)),
+                     "features_sha256": digest(self.env.regular(FEATURES)),
+                     "thermald_sha256": digest(self.env.regular("/usr/bin/thermald")), "backup": backup,
+                     "operation_id": transaction,
+                     "transaction": {"id": transaction, "operation": "set",
+                                     "owner": self.env.process_identity(),
+                                     "prior_cap_uw": previous["cap_uw"] if previous else None,
+                                     "prior_managed_hashes": previous["managed_hashes"] if previous else {XML: None, DROPIN: None}},
+                     "last_apply": None}
+            context.update(old_files=old_files, hashes=hashes, backup=backup, cap=cap, phase="staging")
+            try:
+                # Persist recovery ownership before touching the daemon's files.
+                self.env.atomic(STATE, json_bytes(state))
+                self.env.atomic(XML, xml, 0o644)
+                self.env.atomic(DROPIN, dropin, 0o644)
+            except (Exception, KeyboardInterrupt) as exc:
+                # Service has not been reloaded. Restore only bytes this operation owns.
+                for path in (XML, DROPIN, STATE):
+                    raw = self.env.regular(path, missing=True)
+                    allowed = (old_files[path], xml if path == XML else dropin if path == DROPIN else json_bytes(state))
+                    if raw not in allowed and raw is not None:
+                        raise PowerError(f"Staging failed; foreign bytes retained: {path}; backup {backup}") from exc
+                    if old_files[path] is None:
+                        self.env.remove(path)
+                    else:
+                        self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
+                self.receipt("set", False, error=str(exc), backup=backup, phase="staging")
+                context["phase"] = "restored"
+                raise PowerError(f"Configuration staging failed: {exc}") from exc
+            context["phase"] = "staged"
+
+    def set_limit(self, watts):
+        self.require_root()
+        if type(watts) is not int:
+            raise PowerError("Limit must be an integer number of watts")
+        transaction = str(uuid.uuid4())
+        context = {}
+        try:
+            # Includes lock.__exit__: signals during the staging/restart handoff
+            # receive the same rollback as signals in the service command.
+            self._stage_set(watts, transaction, context)
+            cap, backup = context["cap"], context["backup"]
+            self.restart()
+            with self.lock():
+                current = self.load_state()
+                if not current or current.get("transaction", {}).get("id") != transaction:
+                    raise PowerError("Set transaction changed during restart")
+                _, _, observed, _, _ = self.qualify(current)
+                applied = current.get("last_apply") or {}
+                if not applied.get("success") or applied.get("transaction") != transaction:
+                    raise PowerError("ExecStartPost apply did not complete successfully")
+                if any(v["pl1_uw"] > cap for v in observed.values()):
+                    raise PowerError("Readback exceeds requested cap")
+                current.pop("transaction")
+                self.env.atomic(STATE, json_bytes(current))
+                # Keep the final readback and receipt under the same lock: a new
+                # set must not replace our desired cap between commit and status.
+                status = self.status()
+                if not status["holding_now"]:
+                    raise PowerError("Final status does not confirm the requested cap: " + "; ".join(status["errors"]))
+                status["last_operation"] = self.receipt("set", True, phase="completed", transaction=transaction,
+                                                         cap_uw=cap, observed=status["observed"], backup=backup)
+                return status
+        except (Exception, KeyboardInterrupt) as exc:
+            if context.get("phase") != "staged":
+                raise
+            backup = context["backup"]
+            try:
+                self.restore(context["old_files"], context["hashes"], transaction)
+                recovery = "configuration restored and thermald active"
+            except (Exception, KeyboardInterrupt) as rollback:
+                recovery = f"ROLLBACK FAILED: {rollback}"
+            self.receipt("set", False, error=str(exc), recovery=recovery, backup=backup)
+            raise PowerError(f"Set failed: {exc}; {recovery}; recovery backup: {backup}") from exc
+
+    def apply(self):
+        self.require_root()
+        with self.lock():
+            state = self.load_state()
+            if state is None:
+                raise PowerError("No managed power limit is configured")
+            transaction = state.get("transaction", {}).get("id")
+            if state.get("transaction", {}).get("operation") not in (None, "set", "rollback"):
+                raise PowerError("Configuration is being cleared")
+            writes = []
+            try:
+                _, _, observed, _, _ = self.qualify(state, require_running=False)
+                for zone in ZONES:
+                    # Re-read immediately: preserve a stricter limit applied by cooling.
+                    current = int(self.env.read_control(zone + "/constraint_0_power_limit_uw"))
+                    if current <= 0:
+                        raise PowerError(f"Invalid current PL1: {zone}")
+                    if current > state["cap_uw"]:
+                        self.env.write_control(zone + "/constraint_0_power_limit_uw", state["cap_uw"])
+                        writes.append(zone)
+                    value = int(self.env.read_control(zone + "/constraint_0_power_limit_uw"))
+                    if value <= 0 or value > state["cap_uw"]:
+                        raise PowerError(f"PL1 write/readback failed: {zone}")
+                observed = self.observe()
+                if any(v["pl1_uw"] > state["cap_uw"] for v in observed.values()):
+                    raise PowerError("PL1 changed above cap during apply")
+                receipt = self.receipt("apply", True, cap_uw=state["cap_uw"], observed=observed,
+                                       writes=writes, transaction=transaction)
+            except (Exception, KeyboardInterrupt) as exc:
+                receipt = self.receipt("apply", False, error=str(exc), writes=writes, transaction=transaction)
+                state["last_apply"] = receipt
+                self.env.atomic(STATE, json_bytes(state))
+                raise PowerError(f"Apply failed: {exc}") from exc
+            state["last_apply"] = receipt
+            self.env.atomic(STATE, json_bytes(state))
+            return receipt
+
+    def _stage_clear(self, transaction, context):
+        with self.lock():
+            state = self.load_state()
+            if state is None:
+                self.configuration(None)
+                return False
+            if state.get("transaction"):
+                raise PowerError("A transaction is pending; inspect recovery receipts")
+            self.configuration(state)
+            old_files = {path: self.env.regular(path, missing=True) for path in (XML, DROPIN, STATE, PREF)}
+            backup = self.backup("clear", old_files, {"observed": self.observe(), "preference": self.preference()})
+            pending = dict(state, backup=backup,
+                           transaction={"id": transaction, "operation": "clear",
+                                        "owner": self.env.process_identity(),
+                                        "prior_cap_uw": state["cap_uw"],
+                                        "prior_managed_hashes": state["managed_hashes"]})
+            context.update(old_files=old_files, state=state, backup=backup, phase="staging")
+            try:
+                self.env.atomic(STATE, json_bytes(pending))
+                self.env.remove(XML)
+                self.env.remove(DROPIN)
+            except (Exception, KeyboardInterrupt) as exc:
+                # The running daemon has not been restarted. Restore its files.
+                for path in (XML, DROPIN, STATE):
+                    raw = self.env.regular(path, missing=True)
+                    allowed = (old_files[path], json_bytes(pending) if path == STATE else None)
+                    if raw not in allowed and raw is not None:
+                        raise PowerError(f"Clear staging failed; foreign bytes retained: {path}; backup {backup}") from exc
+                    self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
+                self.receipt("clear", False, error=str(exc), backup=backup, phase="staging")
+                context["phase"] = "restored"
+                raise PowerError(f"Clear staging failed: {exc}") from exc
+            context["phase"] = "staged"
+        return True
+
+    def clear(self):
+        self.require_root()
+        transaction = str(uuid.uuid4())
+        context = {}
+        try:
+            if not self._stage_clear(transaction, context):
+                return self.status()
+            backup = context["backup"]
+            self.restart()
+            with self.lock():
+                current = self.load_state()
+                if not current or current.get("transaction", {}).get("id") != transaction:
+                    raise PowerError("Clear transaction changed during restart")
+                # STATE remains pending until the stock daemon has actually restarted.
+                self.configuration(None)
+                observed = self.observe()
+                preference = self.preference()
+                self.env.remove(STATE)
+                return self.receipt("clear", True, phase="completed", transaction=transaction,
+                                    observed=observed, backup=backup, preference_preserved=preference)
+        except (Exception, KeyboardInterrupt) as exc:
+            if context.get("phase") != "staged":
+                raise
+            backup = context["backup"]
+            try:
+                self.restore(context["old_files"], context["state"]["managed_hashes"], transaction)
+                recovery = "previous configuration restored and thermald active"
+            except (Exception, KeyboardInterrupt) as rollback:
+                recovery = f"ROLLBACK FAILED: {rollback}"
+            self.receipt("clear", False, error=str(exc), recovery=recovery, backup=backup)
+            raise PowerError(f"Clear failed: {exc}; {recovery}; recovery backup: {backup}") from exc
+
+    def recover(self):
+        """Explicitly restore stock policy after an interrupted owner has exited."""
+        self.require_root()
+        transaction = str(uuid.uuid4())
+        backup = None
+        try:
+            with self.lock():
+                state = self.load_state()
+                pending = (state or {}).get("transaction")
+                if not pending:
+                    raise PowerError("No interrupted transaction to recover; use clear for an active cap")
+                owner = pending.get("owner")
+                if (not isinstance(owner, dict) or set(owner) != {"pid", "start_ticks", "boot_id"}
+                        or type(owner["pid"]) is not int or owner["pid"] <= 0
+                        or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
+                        or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
+                    raise PowerError("Missing or invalid transaction owner; automatic recovery refused")
+                if owner["boot_id"] == self.env.boot_id():
+                    current_owner = self.env.process_identity(owner["pid"])
+                    if current_owner == owner:
+                        raise PowerError("Transaction owner is still running; recovery refused")
+                # A clear may have removed either file before it was interrupted.
+                # Any existing file must still be ours; never replace foreign bytes.
+                self.configuration(state, disk_only=True, allow_missing_managed=True)
+                old_files = {path: self.env.regular(path, missing=True)
+                             for path in (XML, DROPIN, STATE, PREF)}
+                backup = self.backup("recover", old_files,
+                                     {"pending_transaction": pending, "observed": self.observe()})
+                barrier = dict(state, backup=backup, operation_id=transaction,
+                               transaction={"id": transaction, "operation": "recover",
+                                            "owner": self.env.process_identity(),
+                                            **({"prior_cap_uw": pending.get("prior_cap_uw"),
+                                                "prior_managed_hashes": pending["prior_managed_hashes"]}
+                                               if "prior_managed_hashes" in pending else {})})
+                self.env.atomic(STATE, json_bytes(barrier))
+                self.env.remove(XML)
+                self.env.remove(DROPIN)
+            self.restart()
+            with self.lock():
+                current = self.load_state()
+                if not current or current.get("transaction", {}).get("id") != transaction:
+                    raise PowerError("Recovery transaction changed during restart")
+                self.configuration(None)
+                observed = self.observe()
+                preference = self.preference()
+                self.env.remove(STATE)
+                return self.receipt("recover", True, phase="completed", transaction=transaction,
+                                    observed=observed, backup=backup, recovered_transaction=pending,
+                                    preference_preserved=preference)
+        except (Exception, KeyboardInterrupt) as exc:
+            if backup is not None:
+                self.receipt("recover", False, error=str(exc), backup=backup,
+                             recovery="pending state retained; retry recover after this owner exits")
+                raise PowerError(f"Recovery failed: {exc}; recovery backup: {backup}") from exc
+            if isinstance(exc, PowerError):
+                raise
+            raise PowerError(f"Recovery preflight failed: {exc}") from exc
+
+    def status(self):
+        result = {"managed": False, "desired_limit_uw": None, "observed": {},
+                  "thermald": {}, "holding_now": False, "errors": []}
+        try:
+            state = self.load_state()
+            result["managed"] = state is not None
+            if state:
+                result["desired_limit_uw"] = state["cap_uw"]
+                result["pending_transaction"] = state.get("transaction")
+                result["last_apply"] = state.get("last_apply")
+        except (PowerError, OSError) as exc:
+            result["errors"].append(str(exc))
+            state = None
+        try:
+            result["thermald"] = self.service()
+        except PowerError as exc:
+            result["errors"].append(str(exc))
+        try:
+            result["observed"] = self.observe()
+        except (PowerError, OSError, ValueError) as exc:
+            result["errors"].append(str(exc))
+        if state:
+            try:
+                _, _, observed, service, _ = self.qualify(state)
+                result["observed"] = observed
+                result["thermald"] = service
+                if state.get("transaction"):
+                    raise PowerError("Configuration transaction is pending")
+                if not (state.get("last_apply") or {}).get("success"):
+                    raise PowerError("Latest apply has not succeeded")
+                if any(v["pl1_uw"] > state["cap_uw"] for v in result["observed"].values()):
+                    raise PowerError("Observed PL1 exceeds the requested limit")
+                result["holding_now"] = bool(result["observed"]) and not result["errors"]
+            except (PowerError, OSError) as exc:
+                result["errors"].append(str(exc))
+        return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("status", help="Read desired limit, actual PL1 and thermald state")
+    setter = commands.add_parser("set", help="Configure a PL1 ceiling (qualified host only)")
+    setter.add_argument("watts", type=int)
+    commands.add_parser("clear", help="Restore the stock thermald configuration")
+    commands.add_parser("apply", help="Apply managed PL1 once; used by thermald ExecStartPost")
+    commands.add_parser("recover", help="Restore stock policy after an interrupted transaction owner exits")
+    args = parser.parse_args(argv)
+    controller = PowerController()
+    def interrupted(signum, _frame):
+        raise PowerError("Interrupted by " + signal.Signals(signum).name)
+    previous_handler = signal.signal(signal.SIGTERM, interrupted)
+    try:
+        result = (controller.set_limit(args.watts) if args.command == "set"
+                  else getattr(controller, args.command)())
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    except (PowerError, OSError, ValueError, KeyboardInterrupt) as exc:
+        print(f"mechrevo-power: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

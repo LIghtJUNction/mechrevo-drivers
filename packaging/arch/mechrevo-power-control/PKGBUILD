@@ -1,0 +1,57 @@
+# shellcheck shell=bash
+# makepkg consumes these metadata variables and supplies srcdir/pkgdir.
+# shellcheck disable=SC2034,SC2154
+# Maintainer: LIghtJUNction <lightjunction.me@gmail.com>
+# Local package, deliberately separate from the DKMS driver package.
+# Build only from a reviewed, committed source tree:
+#   MECHREVO_POWER_COMMIT=<full commit> makepkg
+# To use an existing checkout without a network fetch, also set:
+#   MECHREVO_POWER_SOURCE=file:///absolute/path/to/mechrevo-drivers
+
+pkgname=mechrevo-power-control
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
+arch=('x86_64')
+url='https://github.com/LIghtJUNction/mechrevo-drivers'
+license=('GPL-2.0-or-later')
+# The native thermald control paths were qualified against this upstream version.
+# Omitting pkgrel accepts distribution rebuilds, including 2:2.5.13-1.1.
+depends=('python' 'thermald=2:2.5.13' 'systemd')
+makedepends=('git')
+options=('!strip' '!debug' '!lto')
+
+_source_commit=${MECHREVO_POWER_COMMIT-}
+_source_url=${MECHREVO_POWER_SOURCE:-"${url}.git"}
+if [[ ! $_source_commit =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' 'Set MECHREVO_POWER_COMMIT to a reviewed full 40-character Git commit.' >&2
+    return 1
+fi
+source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "${srcdir}/mechrevo-drivers" || return 1
+    if [[ $(git rev-parse HEAD) != "$_source_commit" ]]; then
+        printf '%s\n' 'Source checkout does not match MECHREVO_POWER_COMMIT.' >&2
+        return 1
+    fi
+    local file
+    for file in scripts/mechrevo-power scripts/mechrevo_power.py docs/POWER-CONTROL.md LICENSE; do
+        if [[ ! -f $file || -L $file ]]; then
+            printf 'Required regular source file missing: %s\n' "$file" >&2
+            return 1
+        fi
+    done
+}
+
+package() {
+    cd "${srcdir}/mechrevo-drivers" || return 1
+    install -dm700 "${pkgdir}/var/lib/mechrevo-power"
+    install -Dm755 scripts/mechrevo-power "${pkgdir}/usr/bin/mechrevo-power"
+    install -Dm644 scripts/mechrevo_power.py \
+        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_power.py"
+    install -Dm644 docs/POWER-CONTROL.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/POWER-CONTROL.md"
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
