@@ -25,14 +25,16 @@ static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)group; }
 static void uw_battery_uninit(void) {}
+/* Deferred key-work ordering is exercised by uniwill_key_work_runtime.c. */
+static void uniwill_keyboard_prepare_remove(void) {}
 static void uniwill_leds_remove(struct platform_device *dev);
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
 static void uniwill_write_kbd_bl_enable(u8 enabled) { (void)enabled; }
 static void uniwill_leds_restore_state_extern(void) {}
 static void uw_charging_priority_write_state(void) {}
 static void uw_charging_profile_write_state(void) {}
-static int uniwill_i8042_filter;
-static int i8042_remove_filter(int filter) { (void)filter; return 0; }
+static int __attribute__((unused)) uniwill_i8042_filter;
+static int __attribute__((unused)) i8042_remove_filter(int filter) { (void)filter; return 0; }
 #define LINUX_VERSION_CODE 0x070209
 #define KERNEL_VERSION(a, b, c) (((a) << 16) | ((b) << 8) | (c))
 #define EXPORT_SYMBOL(name)

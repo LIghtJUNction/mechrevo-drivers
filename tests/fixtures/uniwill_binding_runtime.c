@@ -19,6 +19,7 @@ struct tuxedo_keyboard_driver {
     struct key_entry *key_map;
     struct input_dev *input_device;
     bool (*fn_lock_available)(void);
+    void (*prepare_remove)(void);
 };
 struct uniwill_interface_t { const char *string_id; void (*event_callb)(u32); };
 struct wmi_device { int unused; };
@@ -90,10 +91,10 @@ static bool fn_available(void) { return false; }
 static int uniwill_keyboard_probe(struct platform_device *dev);
 static void uniwill_event_callb(u32 code);
 static struct tuxedo_keyboard_driver uniwill_keyboard_driver = {
-    &platform_driver_uniwill, uniwill_keyboard_probe, &keys, NULL, fn_available
+    &platform_driver_uniwill, uniwill_keyboard_probe, &keys, NULL, fn_available, NULL
 };
 static struct tuxedo_keyboard_driver other_driver = {
-    &platform_driver_other, uniwill_keyboard_probe, &keys, NULL, fn_available
+    &platform_driver_other, uniwill_keyboard_probe, &keys, NULL, fn_available, NULL
 };
 static int keymap_error, input_error, input_frees, input_unregs;
 static int bundles, platform_unregs, driver_unregs, key_events;

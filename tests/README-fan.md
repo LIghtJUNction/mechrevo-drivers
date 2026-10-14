@@ -44,3 +44,14 @@ propagation and rollback, rather than LED/battery/sysfs initialization. Set
 `UNIWILL_BINDING_BASELINE` to a frozen repository tree to combine its old outer
 binding functions with the new fan-start failure path; this checks the cleanup
 regression introduced when the initial EC failure can abort probe.
+
+The deferred-key fixture extracts the real common removal function, Uniwill
+removal/filter/worker/preparation functions, and the preparation hook from the
+production driver initializer. Controlled pthread schedules exercise queued and
+running key work during common removal and direct platform unbind. They require
+filter shutdown and synchronous work cancellation before the input pointer is
+cleared or the input device is freed, while keeping input teardown before its
+platform parent. No-input initialization and absent filters are also covered.
+`UNIWILL_KEY_WORK_BASELINE` selects a frozen tree for regression sensitivity.
+These cases do not simulate WMI bus notification lifetime; that is a separate
+kernel source-review assumption for standard WMI unbind.

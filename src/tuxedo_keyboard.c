@@ -178,6 +178,8 @@ void tuxedo_keyboard_remove_driver(struct tuxedo_keyboard_driver *tk_driver)
 	if (tk_driver != NULL && tk_driver != current_driver)
 		goto remove_driver_exit;
 
+	if (current_driver->prepare_remove)
+		current_driver->prepare_remove();
 	current_driver->input_device = NULL;
 	if (!IS_ERR_OR_NULL(tuxedo_platform_device))
 		device_remove_file(&tuxedo_platform_device->dev, &dev_attr_fn_lock);

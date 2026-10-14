@@ -288,12 +288,19 @@ EXPORT_SYMBOL(uniwill_get_active_interface_id);
 
 static void key_event_work(struct work_struct *work)
 {
+	struct input_dev *input;
+
 	// Delay sometimes needed to make userspace reliably separate
 	// the touchpadtoggle key events from the custom key events
 	// coming from firmware
 	msleep(50);
+	/* Input registration can fail while the keyboard itself stays bound.
+	 * Removal drains this worker before clearing or freeing a valid input. */
+	input = uniwill_keyboard_driver.input_device;
+	if (!input)
+		return;
 	sparse_keymap_report_known_event(
-		uniwill_keyboard_driver.input_device,
+		input,
 		UNIWILL_OSD_TOUCHPADWORKAROUND,
 		1,
 		true
@@ -2393,6 +2400,7 @@ static u8 uniwill_touchp_toggle_seq[] = {
 	0x9d,       // Control up
 	0xe0, 0xdb  // Super up
 };
+static bool uniwill_i8042_filter_installed;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
@@ -2421,6 +2429,21 @@ static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
 
 	seq_pos = 0;
 	return false;
+}
+
+static void uniwill_keyboard_prepare_remove(void)
+{
+	/* The common hook and a direct platform unbind may both quiesce us. */
+	mutex_lock(&uniwill_fan_command_lock);
+	/* i8042_remove_filter() synchronizes the filter before work is drained,
+	 * so no new touchpad workaround can be queued after cancellation. */
+	if (uniwill_i8042_filter_installed) {
+		if (i8042_remove_filter(uniwill_i8042_filter))
+			pr_info("Could not remove i8042 filter.\n");
+		uniwill_i8042_filter_installed = false;
+	}
+	cancel_work_sync(&uniwill_key_event_work);
+	mutex_unlock(&uniwill_fan_command_lock);
 }
 
 static int uniwill_keyboard_probe(struct platform_device *dev)
@@ -2483,10 +2506,12 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 	// which is fine, because it is probably just the upstream patch of this
 	// filter.
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
-	if (i8042_install_filter(uniwill_i8042_filter))
+	status = i8042_install_filter(uniwill_i8042_filter);
 #else
-	if (i8042_install_filter(uniwill_i8042_filter, NULL))
+	status = i8042_install_filter(uniwill_i8042_filter, NULL);
 #endif
+	uniwill_i8042_filter_installed = status == 0;
+	if (status)
 		pr_info("Could not install i8042 filter.\n");
 
 	return 0;
@@ -2498,6 +2523,8 @@ static int uniwill_keyboard_remove(struct platform_device *dev)
 static void uniwill_keyboard_remove(struct platform_device *dev)
 #endif
 {
+	uniwill_keyboard_prepare_remove();
+
 	/* Drain fan activity before any device resources or manual mode go away.
 	 * Keep command locked until teardown ends; a later probe starts a new
 	 * lifecycle explicitly instead of accepting a stale exported request. */
@@ -2527,10 +2554,6 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 
 	// Disable manual mode
 	uniwill_write_ec_ram(0x0741, 0x00);
-
-	// Ignore return value, it just means this filter was not active atm.
-	if (i8042_remove_filter(uniwill_i8042_filter))
-		pr_info("Could not remove i8042 filter.\n");
 
 	mutex_unlock(&uniwill_fan_command_lock);
 
@@ -2654,6 +2677,7 @@ struct tuxedo_keyboard_driver uniwill_keyboard_driver = {
 	.fn_lock_available = uniwill_fn_lock_available,
 	.fn_lock_show = uniwill_fn_lock_show,
 	.fn_lock_store = uniwill_fn_lock_store,
+	.prepare_remove = uniwill_keyboard_prepare_remove,
 };
 
 #endif // UNIWILL_KEYBOARD_H
