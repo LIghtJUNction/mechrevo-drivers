@@ -31,6 +31,9 @@ class UniwillKeyWorkRuntime(unittest.TestCase):
                           r'(static bool uniwill_i8042_filter\([^#]+)\n#endif', r'\1', keyboard)
         array = re.search(r'static u8 uniwill_touchp_toggle_seq\[\] = \{[^}]+\};', keyboard).group()
         pieces = [array]
+        sequence_state = re.search(r'(?m)^static u8 uniwill_touchp_toggle_seq_pos;', keyboard)
+        if sequence_state:
+            pieces.append(sequence_state.group())
         cls.has_prepare_remove = 'static void uniwill_keyboard_prepare_remove(' in keyboard
         if cls.has_prepare_remove:
             pieces.append(function(keyboard, 'uniwill_keyboard_prepare_remove'))
