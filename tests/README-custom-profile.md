@@ -28,6 +28,8 @@ original errno. Probe and adapter callbacks report this optional feature's
 failure and continue their existing independent initialization/restoration.
 A successful reset followed by a failed set can leave bit 6 clear; this is not
 a hardware rollback. The patch does not guarantee custom profile mode was
-applied after transport failure. It does not serialize adapter and PM accesses
-or establish firmware support on any additional model. No TUXEDO hardware was
-available for physical validation.
+applied after transport failure. The independent custom-profile patch does not
+serialize adapter and PM accesses or establish firmware support on any additional
+model. This fan lifecycle branch adds adapter/PM serialization and gating; the
+separate PM fixture covers that interaction. No TUXEDO hardware was available
+for physical validation.

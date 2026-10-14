@@ -15,9 +15,11 @@ not depend on random scheduling. A contender can either finish or block before
 the first operation is released, so an unlocked old implementation can run and
 fail the state assertions rather than merely time out.
 
-Temporary files are created in the system temporary directory and removed by the
-test runner. Set `UNIWILL_TEST_TMPDIR` to use an existing dedicated directory.
-Subprocess core dumps are disabled, including for expected baseline assertions.
+The fan runtime and concurrency fixtures default to `.local-tests` in this
+checkout; `UNIWILL_TEST_TMPDIR` selects a dedicated directory. Set `TMPDIR` as
+well to redirect the standalone custom-profile fixture. The runners remove
+their temporary builds and disable subprocess core dumps, including for expected
+baseline assertions.
 
 `UNIWILL_FAN_HEADER` selects a frozen production header for the concurrency test.
 When it lacks the new mode helpers, also set `UNIWILL_FAN_IO_BASELINE` to the
@@ -55,3 +57,26 @@ platform parent. No-input initialization and absent filters are also covered.
 `UNIWILL_KEY_WORK_BASELINE` selects a frozen tree for regression sensitivity.
 These cases do not simulate WMI bus notification lifetime; that is a separate
 kernel source-review assumption for standard WMI unbind.
+
+The PM/adapter fixture extracts the complete actual probe, adapter callback,
+fan/worker helpers, prepare/remove, suspend and resume functions. Fifteen cases
+use controlled pthread schedules and EC/resource doubles to cover adapter versus
+suspend, resume and removal in both orders; late adapter events in AUTO and
+manual sleep; all exported command gates; probe/failure/remove/reprobe; and
+failed suspend/resume recovery without requiring a second PM callback. The
+separate ready and suspended state prevents a late cable event from setting
+custom-profile bit 6 again after a successful suspend. Backlight failures are
+returned from PM, and failed resume preserves manual targets while leaving
+ordinary commands available for recovery after the callback returns. A worker
+must not run or requeue before probe completes, during sleep or after early
+remove preparation. These tests use the full source functions with mock
+services; they do not establish real firmware, WMI/LED core lock ordering,
+suspend or hotkey behavior on a physical device.
+
+The final branch suite contains 131 tests: 37 fan/fault/boundary, 12 deterministic
+fan concurrency, 4 ioctl routing, 13 binding, 11 deferred-key, 23 complete probe
+and backlight, 16 custom-profile, and 15 PM/adapter cases. The probe cases also
+run across four API version macro selections. The independent custom-profile
+change is merged as a prerequisite so the adapter and failed-suspend paths can
+retain its original-errno handling. Uniwill usercopy/capability and Clevo ioctl
+patches remain independent contributions.
