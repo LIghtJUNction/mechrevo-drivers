@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
+#define TUXEDO_ERROR(...) do {} while (0)
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,7 +30,7 @@ static void uw_battery_uninit(void) {}
 static void uniwill_keyboard_prepare_remove(void) {}
 static void uniwill_leds_remove(struct platform_device *dev);
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
-static void uniwill_write_kbd_bl_enable(u8 enabled) { (void)enabled; }
+static int uniwill_write_kbd_bl_enable(u8 enabled) { (void)enabled; return 0; }
 static void uniwill_leds_restore_state_extern(void) {}
 static void uw_charging_priority_write_state(void) {}
 static void uw_charging_profile_write_state(void) {}

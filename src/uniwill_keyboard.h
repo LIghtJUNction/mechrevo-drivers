@@ -308,15 +308,18 @@ static void key_event_work(struct work_struct *work)
 }
 static DECLARE_WORK(uniwill_key_event_work, key_event_work);
 
-static void uniwill_write_kbd_bl_enable(u8 enable)
+static int uniwill_write_kbd_bl_enable(u8 enable)
 {
 	u8 backlight_data;
+	int status;
 	enable = enable & 0x01;
 
-	uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &backlight_data);
+	status = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &backlight_data);
+	if (status)
+		return status;
 	backlight_data = backlight_data & ~(1 << 1);
 	backlight_data |= (!enable << 1);
-	uniwill_write_ec_ram(UW_EC_REG_KBD_BL_STATUS, backlight_data);
+	return uniwill_write_ec_ram(UW_EC_REG_KBD_BL_STATUS, backlight_data);
 }
 
 void uniwill_event_callb(u32 code)
@@ -2458,6 +2461,29 @@ static void uniwill_keyboard_prepare_remove(void)
 	mutex_unlock(&uniwill_fan_command_lock);
 }
 
+static int uniwill_keyboard_abort_probe(int status, bool disable_manual_mode)
+{
+	int cleanup_status;
+
+	/* No device resources or event filter have been published yet. Close
+	 * exported fan commands and drain a request that raced initialization. */
+	mutex_lock(&uniwill_fan_command_lock);
+	mutex_lock(&uniwill_fan_state_lock);
+	uniwill_fan_removed = true;
+	uw_fan_quiesce_locked();
+	/* Only undo the manual-enable write that this probe confirmed. A
+	 * partially copied curve or a failed enable has no known rollback. */
+	if (disable_manual_mode) {
+		cleanup_status = uniwill_write_ec_ram(0x0741, 0x00);
+		if (cleanup_status)
+			TUXEDO_ERROR("Could not disable manual fan mode after failed probe: %d\n", cleanup_status);
+	}
+	mutex_unlock(&uniwill_fan_state_lock);
+	mutex_unlock(&uniwill_fan_command_lock);
+	TUXEDO_ERROR("Could not initialize fan control: %d\n", status);
+	return status;
+}
+
 static int uniwill_keyboard_probe(struct platform_device *dev)
 {
 	u32 i;
@@ -2465,6 +2491,8 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 	int status;
 	struct uniwill_device_features_t *uw_feats;
 
+	/* A new binding must not restore a backlight state from an old one. */
+	uniwill_kbd_bl_enable_state_on_start = 0xff;
 	set_rom_id();
 
 	uw_feats = uniwill_get_device_features();
@@ -2480,8 +2508,12 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 		// Set manual-mode fan-curve in 0x0743 - 0x0747
 		// Some kind of default fan-curve is stored in 0x0786 - 0x078a: Using it to initialize manual-mode fan-curve
 		for (i = 0; i < 5; ++i) {
-			uniwill_read_ec_ram(0x0786 + i, &data);
-			uniwill_write_ec_ram(0x0743 + i, data);
+			status = uniwill_read_ec_ram(0x0786 + i, &data);
+			if (status)
+				return uniwill_keyboard_abort_probe(status, false);
+			status = uniwill_write_ec_ram(0x0743 + i, data);
+			if (status)
+				return uniwill_keyboard_abort_probe(status, false);
 		}
 	}
 
@@ -2492,18 +2524,27 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 		TUXEDO_ERROR("Could not initialize custom profile mode: %d\n", status);
 
 	// Enable manual mode
-	uniwill_write_ec_ram(0x0741, 0x01);
+	status = uniwill_write_ec_ram(0x0741, 0x01);
+	if (status)
+		return uniwill_keyboard_abort_probe(status, false);
 
 	// Zero second fan temp for detection
-	uniwill_write_ec_ram(0x044f, 0x00);
+	status = uniwill_write_ec_ram(0x044f, 0x00);
+	if (status)
+		return uniwill_keyboard_abort_probe(status, true);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
 	TUXEDO_ERROR("Warning: Kernel version less that 5.9, keyboard backlight might not be properly recognized.");
 #endif
-	uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &data);
-	uniwill_kbd_bl_enable_state_on_start = (data >> 1) & 0x01;
+	status = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &data);
+	if (status)
+		TUXEDO_ERROR("Could not read initial keyboard backlight state: %d\n", status);
+	else
+		uniwill_kbd_bl_enable_state_on_start = !((data >> 1) & 0x01);
 	uniwill_leds_init(dev);
-	uniwill_write_kbd_bl_enable(1);
+	status = uniwill_write_kbd_bl_enable(1);
+	if (status)
+		TUXEDO_ERROR("Could not enable keyboard backlight: %d\n", status);
 
 	status = uw_lightbar_init(dev);
 	uw_lightbar_loaded = (status >= 0);
@@ -2539,6 +2580,8 @@ static int uniwill_keyboard_remove(struct platform_device *dev)
 static void uniwill_keyboard_remove(struct platform_device *dev)
 #endif
 {
+	int status;
+
 	uniwill_keyboard_prepare_remove();
 
 	/* Drain fan activity before any device resources or manual mode go away.
@@ -2562,14 +2605,18 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 
 	// Restore previous backlight enable state
 	if (uniwill_kbd_bl_enable_state_on_start != 0xff) {
-		uniwill_write_kbd_bl_enable(uniwill_kbd_bl_enable_state_on_start);
+		status = uniwill_write_kbd_bl_enable(uniwill_kbd_bl_enable_state_on_start);
+		if (status)
+			TUXEDO_ERROR("Could not restore keyboard backlight state: %d\n", status);
 	}
 
 	if (uw_lightbar_loaded)
 		uw_lightbar_remove(dev);
 
 	// Disable manual mode
-	uniwill_write_ec_ram(0x0741, 0x00);
+	status = uniwill_write_ec_ram(0x0741, 0x00);
+	if (status)
+		TUXEDO_ERROR("Could not disable manual fan mode: %d\n", status);
 
 	mutex_unlock(&uniwill_fan_command_lock);
 
