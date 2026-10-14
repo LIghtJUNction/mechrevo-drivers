@@ -11,10 +11,22 @@ import subprocess
 import tempfile
 import unittest
 
-from test_uniwill_fan_runtime import function
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def function(source, name):
+    match = re.search(r"(?m)^(?:static\s+)?(?:int|u32|void)\s+" + re.escape(name)
+                      + r"\([^;{]*\)\s*\{", source)
+    if not match:
+        raise AssertionError("Missing driver function: " + name)
+    depth, position = 1, match.end()
+    while depth and position < len(source):
+        depth += (source[position] == "{") - (source[position] == "}")
+        position += 1
+    if depth:
+        raise AssertionError("Unbalanced driver function: " + name)
+    return source[match.start():position]
 
 class UniwillECTransaction(unittest.TestCase):
     @classmethod
