@@ -221,43 +221,56 @@ static DEFINE_MUTEX(uniwill_interface_modification_lock);
 
 int uniwill_add_interface(struct uniwill_interface_t *interface)
 {
-	mutex_lock(&uniwill_interface_modification_lock);
+	struct platform_device *dev;
+	int status = 0;
 
-	if (strcmp(interface->string_id, UNIWILL_INTERFACE_WMI_STRID) == 0)
-		uniwill_interfaces.wmi = interface;
-	else {
-		TUXEDO_DEBUG("trying to add unknown interface\n");
-		mutex_unlock(&uniwill_interface_modification_lock);
-		return -EINVAL;
+	mutex_lock(&uniwill_interface_modification_lock);
+	if (strcmp(interface->string_id, UNIWILL_INTERFACE_WMI_STRID) != 0) {
+		status = -EINVAL;
+		goto unlock;
+	}
+	if (!IS_ERR_OR_NULL(uniwill_interfaces.wmi) &&
+	    uniwill_interfaces.wmi != interface) {
+		status = -EBUSY;
+		goto unlock;
+	}
+
+	/* Probe needs the transport, but events need the completed device. */
+	uniwill_interfaces.wmi = interface;
+	dev = tuxedo_keyboard_init_driver(&uniwill_keyboard_driver);
+	if (IS_ERR_OR_NULL(dev)) {
+		interface->event_callb = NULL;
+		uniwill_interfaces.wmi = NULL;
+		status = dev ? PTR_ERR(dev) : -ENODEV;
+		goto unlock;
 	}
 	interface->event_callb = uniwill_event_callb;
 
+unlock:
 	mutex_unlock(&uniwill_interface_modification_lock);
-
-	// Initialize driver if not already present
-	tuxedo_keyboard_init_driver(&uniwill_keyboard_driver);
-
-	return 0;
+	return status;
 }
 EXPORT_SYMBOL(uniwill_add_interface);
 
 int uniwill_remove_interface(struct uniwill_interface_t *interface)
 {
+	int status = 0;
+
 	mutex_lock(&uniwill_interface_modification_lock);
-
-	if (strcmp(interface->string_id, UNIWILL_INTERFACE_WMI_STRID) == 0) {
-		// Remove driver if last interface is removed
-		tuxedo_keyboard_remove_driver(&uniwill_keyboard_driver);
-
-		uniwill_interfaces.wmi = NULL;
-	} else {
-		mutex_unlock(&uniwill_interface_modification_lock);
-		return -EINVAL;
+	if (strcmp(interface->string_id, UNIWILL_INTERFACE_WMI_STRID) != 0) {
+		status = -EINVAL;
+		goto unlock;
 	}
+	if (uniwill_interfaces.wmi != interface)
+		goto unlock;
 
+	interface->event_callb = NULL;
+	tuxedo_keyboard_remove_driver(&uniwill_keyboard_driver);
+	uniwill_interfaces.wmi = NULL;
+
+unlock:
 	mutex_unlock(&uniwill_interface_modification_lock);
-
-	return 0;
+	return status;
 }
 EXPORT_SYMBOL(uniwill_remove_interface);
 
@@ -275,12 +288,19 @@ EXPORT_SYMBOL(uniwill_get_active_interface_id);
 
 static void key_event_work(struct work_struct *work)
 {
+	struct input_dev *input;
+
 	// Delay sometimes needed to make userspace reliably separate
 	// the touchpadtoggle key events from the custom key events
 	// coming from firmware
 	msleep(50);
+	/* Input registration can fail while the keyboard itself stays bound.
+	 * Removal drains this worker before clearing or freeing a valid input. */
+	input = uniwill_keyboard_driver.input_device;
+	if (!input)
+		return;
 	sparse_keymap_report_known_event(
-		uniwill_keyboard_driver.input_device,
+		input,
 		UNIWILL_OSD_TOUCHPADWORKAROUND,
 		1,
 		true
@@ -303,6 +323,8 @@ void uniwill_event_callb(u32 code)
 {
 	switch (code) {
 		case UNIWILL_OSD_MODE_CHANGE_KEY_EVENT:
+			if (!uniwill_keyboard_driver.input_device)
+				break;
 			// Special key combination when mode change key is pressed (the one next to
 			// the power key). Opens TCC by default when installed.
 			input_report_key(uniwill_keyboard_driver.input_device, KEY_LEFTMETA, 1);
@@ -2379,6 +2401,7 @@ static u8 uniwill_touchp_toggle_seq[] = {
 	0x9d,       // Control up
 	0xe0, 0xdb  // Super up
 };
+static bool uniwill_i8042_filter_installed;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
@@ -2407,6 +2430,21 @@ static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
 
 	seq_pos = 0;
 	return false;
+}
+
+static void uniwill_keyboard_prepare_remove(void)
+{
+	/* The common hook and a direct platform unbind may both quiesce us. */
+	mutex_lock(&uniwill_fan_command_lock);
+	/* i8042_remove_filter() synchronizes the filter before work is drained,
+	 * so no new touchpad workaround can be queued after cancellation. */
+	if (uniwill_i8042_filter_installed) {
+		if (i8042_remove_filter(uniwill_i8042_filter))
+			pr_info("Could not remove i8042 filter.\n");
+		uniwill_i8042_filter_installed = false;
+	}
+	cancel_work_sync(&uniwill_key_event_work);
+	mutex_unlock(&uniwill_fan_command_lock);
 }
 
 static int uniwill_keyboard_probe(struct platform_device *dev)
@@ -2469,10 +2507,12 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 	// which is fine, because it is probably just the upstream patch of this
 	// filter.
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
-	if (i8042_install_filter(uniwill_i8042_filter))
+	status = i8042_install_filter(uniwill_i8042_filter);
 #else
-	if (i8042_install_filter(uniwill_i8042_filter, NULL))
+	status = i8042_install_filter(uniwill_i8042_filter, NULL);
 #endif
+	uniwill_i8042_filter_installed = status == 0;
+	if (status)
 		pr_info("Could not install i8042 filter.\n");
 
 	return 0;
@@ -2484,6 +2524,8 @@ static int uniwill_keyboard_remove(struct platform_device *dev)
 static void uniwill_keyboard_remove(struct platform_device *dev)
 #endif
 {
+	uniwill_keyboard_prepare_remove();
+
 	/* Drain fan activity before any device resources or manual mode go away.
 	 * Keep command locked until teardown ends; a later probe starts a new
 	 * lifecycle explicitly instead of accepting a stale exported request. */
@@ -2513,10 +2555,6 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 
 	// Disable manual mode
 	uniwill_write_ec_ram(0x0741, 0x00);
-
-	// Ignore return value, it just means this filter was not active atm.
-	if (i8042_remove_filter(uniwill_i8042_filter))
-		pr_info("Could not remove i8042 filter.\n");
 
 	mutex_unlock(&uniwill_fan_command_lock);
 
@@ -2640,6 +2678,7 @@ struct tuxedo_keyboard_driver uniwill_keyboard_driver = {
 	.fn_lock_available = uniwill_fn_lock_available,
 	.fn_lock_show = uniwill_fn_lock_show,
 	.fn_lock_store = uniwill_fn_lock_store,
+	.prepare_remove = uniwill_keyboard_prepare_remove,
 };
 
 #endif // UNIWILL_KEYBOARD_H

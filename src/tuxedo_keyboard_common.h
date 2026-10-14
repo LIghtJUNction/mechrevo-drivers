@@ -54,6 +54,8 @@ struct tuxedo_keyboard_driver {
 	ssize_t (*fn_lock_show)(struct device *, struct device_attribute *, char *);
 	// store function for sysfs device fn_lock
 	ssize_t (*fn_lock_store)(struct device *, struct device_attribute *, const char *, size_t);
+	// Stop event sources and drain deferred users before input_device is freed.
+	void (*prepare_remove)(void);
 };
 
 // Global module devices
