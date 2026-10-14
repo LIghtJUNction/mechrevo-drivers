@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 #define pr_err(...) do {} while (0)
+#define pr_debug(...) do {} while (0)
 #define IS_ERR_OR_NULL(p) (!(p) || (uintptr_t)(p) >= (uintptr_t)-4095)
 #define EXPORT_SYMBOL(name)
 /* @INTERFACE_TYPES@ */
@@ -26,6 +28,7 @@ static char pause_kind;
 struct event { int actor; char kind; u16 address; u8 value; };
 static struct event events[16];
 static int event_count, read_error, write_error;
+static int read_sequence[8], read_sequence_length, read_sequence_position;
 static bool failed_write_applies;
 static u8 ec[UINT16_MAX + 1u];
 struct mutex { pthread_mutex_t native; };
@@ -75,7 +78,8 @@ static int provider_read(u16 address, u8 *data)
 {
     assert(lock_depth == 1);
     pthread_mutex_lock(&harness);
-    int status = IS_ERR_OR_NULL(data) ? -EINVAL : read_error;
+    int status = IS_ERR_OR_NULL(data) ? -EINVAL :
+        (read_sequence_position < read_sequence_length ? read_sequence[read_sequence_position++] : read_error);
     if (!status) *data = ec[address];
     record('r', address, ec[address]);
     pthread_mutex_unlock(&harness);
@@ -98,6 +102,7 @@ static void reset(void)
     assert(lock_depth == 0 && lock_calls == unlock_calls);
     uniwill_interfaces.wmi = &transport;
     event_count = read_error = write_error = 0;
+    read_sequence_length = read_sequence_position = 0;
     failed_write_applies = paused = release_pause = gate_read_unlock = false;
     memset(waiting, 0, sizeof(waiting)); memset(completed, 0, sizeof(completed));
     actor = 0; pause_kind = 0;
@@ -258,6 +263,48 @@ int main(int argc, char **argv)
             write_error = 0; assert(uniwill_write_ec_ram(0x078c, 9) == 0);
             u8 value; assert(uniwill_read_ec_ram(0x078c, &value) == 0 && value == 9);
         }
+    } else if (!strcmp(test, "retry_invalid")) {
+        const int budgets[] = {0, -1, INT_MIN};
+        for (unsigned int i = 0; i < sizeof(budgets) / sizeof(budgets[0]); ++i) {
+            reset(); u8 value = 0xa5; int calls = lock_calls;
+            assert(uniwill_read_ec_ram_with_retry(0x1234, &value, budgets[i]) == -EINVAL);
+            assert(uniwill_read_ec_ram_with_retry(0x1234, NULL, budgets[i]) == -EINVAL);
+            assert(value == 0xa5 && event_count == 0 && lock_calls == calls);
+        }
+    } else if (!strcmp(test, "retry_first_success")) {
+        const int budgets[] = {1, 3, INT_MAX};
+        for (unsigned int i = 0; i < sizeof(budgets) / sizeof(budgets[0]); ++i) {
+            reset(); ec[0xffff] = 0xd3; u8 value = 0;
+            assert(uniwill_read_ec_ram_with_retry(0xffff, &value, budgets[i]) == 0);
+            assert(value == 0xd3 && event_count == 1); check_event(0, 0, 'r', 0xffff, 0xd3);
+        }
+    } else if (!strcmp(test, "retry_transient")) {
+        reset(); ec[0x1234] = 0xc7; u8 value = 0xa5;
+        read_sequence[0] = -EIO; read_sequence[1] = -ETIMEDOUT; read_sequence[2] = 0; read_sequence_length = 3;
+        assert(uniwill_read_ec_ram_with_retry(0x1234, &value, 5) == 0);
+        assert(value == 0xc7 && event_count == 3 && read_sequence_position == 3);
+        for (int i = 0; i < event_count; ++i) check_event(i, 0, 'r', 0x1234, 0xc7);
+    } else if (!strcmp(test, "retry_exhausted")) {
+        for (unsigned int i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i)
+            for (int attempts = 1; attempts <= 5; ++attempts) {
+                reset(); read_error = errors[i]; u8 value = 0xa5;
+                assert(uniwill_read_ec_ram_with_retry(0x1234, &value, attempts) == errors[i]);
+                assert(value == 0xa5 && event_count == attempts);
+                for (int n = 0; n < attempts; ++n) assert(events[n].kind == 'r');
+            }
+    } else if (!strcmp(test, "retry_budget")) {
+        reset(); ec[0x1234] = 0xc7; u8 value = 0xa5;
+        read_sequence[0] = -EIO; read_sequence[1] = -ETIMEDOUT; read_sequence[2] = 0; read_sequence_length = 3;
+        assert(uniwill_read_ec_ram_with_retry(0x1234, &value, 2) == -ETIMEDOUT);
+        assert(value == 0xa5 && event_count == 2 && read_sequence_position == 2);
+    } else if (!strcmp(test, "retry_missing")) {
+        uniwill_interfaces.wmi = NULL; u8 value = 0xa5; int calls = lock_calls;
+        assert(uniwill_read_ec_ram_with_retry(0x1234, &value, 3) == -EIO);
+        assert(value == 0xa5 && event_count == 0 && lock_calls == calls + 3);
+    } else if (!strcmp(test, "retry_null")) {
+        assert(uniwill_read_ec_ram_with_retry(0x1234, NULL, 3) == -EINVAL);
+        assert(event_count == 3);
+        for (int i = 0; i < event_count; ++i) assert(events[i].kind == 'r' && events[i].address == 0x1234);
     } else return 2;
     assert(lock_depth == 0 && lock_calls == unlock_calls);
     return 0;

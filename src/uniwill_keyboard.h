@@ -144,6 +144,9 @@ int uniwill_read_ec_ram_with_retry(u16 address, u8 *data, int retries)
 {
 	int status, i;
 
+	if (retries <= 0)
+		return -EINVAL;
+
 	for (i = 0; i < retries; ++i) {
 		status = uniwill_read_ec_ram(address, data);
 		if (status != 0)
