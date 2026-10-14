@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADER = Path(os.environ.get('UNIWILL_LEDS_HEADER', ROOT / 'src/uniwill_leds.h'))
 KEYBOARD = Path(os.environ.get('UNIWILL_LED_KEYBOARD_HEADER', ROOT / 'src/uniwill_keyboard.h'))
 FOUNDATION = Path(os.environ.get('UNIWILL_EC_KEYBOARD_HEADER', ROOT / 'src/uniwill_keyboard.h'))
+USB_KEYBOARD = Path(os.environ.get('UNIWILL_USB_KEYBOARD_HEADER', KEYBOARD))
 
 
 def function(source, name):
@@ -48,6 +49,7 @@ class UniwillLedTransactions(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         path = Path(cls.temporary.name)
         source, keyboard, foundation = HEADER.read_text(), KEYBOARD.read_text(), FOUNDATION.read_text()
+        usb = USB_KEYBOARD.read_text()
         helpers = ('uniwill_write_kbd_bl_brightness',
                    'uniwill_write_kbd_bl_brightness_white_workaround',
                    'tf_convert_rgb_range', 'uniwill_write_kbd_bl_color',
@@ -76,6 +78,8 @@ class UniwillLedTransactions(unittest.TestCase):
         api += [function(foundation, name) for name in
                 ('uniwill_read_ec_ram', 'uniwill_write_ec_ram', 'uniwill_update_ec_ram')]
         parent = function(keyboard, 'uniwill_write_kbd_bl_enable')
+        usb_setter = re.search(r'(?m)^static bool uw_usb_powershare_last_written_value;', usb).group()
+        usb_setter += '\n' + function(usb, 'uw_set_usb_powershare')
         fixture = (ROOT / 'tests/fixtures/uniwill_led_transactions.c').read_text()
         replacements = {
             '/* @DRIVER_CONSTANTS@ */': defines + '\n#define HAS_LED_LOCK ' + str(int(bool(led_mutex))),
@@ -83,6 +87,7 @@ class UniwillLedTransactions(unittest.TestCase):
             '/* @DRIVER_DECLARATIONS@ */': '\n\n'.join(declarations),
             '/* @DRIVER_SOURCE@ */': '\n\n'.join(pieces),
             '/* @PARENT_BACKLIGHT_HELPER@ */': parent,
+            '/* @ACTUAL_USB_SETTER@ */': usb_setter,
             '/* @ACTUAL_LED_CORE@ */': (ROOT / 'tests/fixtures/linux_led_core_v7_2_9.c').read_text(),
             '/* @ACTUAL_LED_PM@ */': (ROOT / 'tests/fixtures/linux_led_pm_v7_2_9.c').read_text(),
             '/* @DRIVER_LIFECYCLE@ */': '\n\n'.join(lifecycle),
@@ -171,6 +176,12 @@ class UniwillLedTransactions(unittest.TestCase):
 
     def test_removed_restore_notify_and_backlight_type_queries_are_safe_and_no_ec(self):
         self.check_case('removed_exports')
+
+    def test_actual_usb_then_rgb_callback_preserves_both_0767_bits_all_bytes(self):
+        self.check_case('usb_rgb_usb_first')
+
+    def test_actual_rgb_callback_then_usb_preserves_both_0767_bits_all_bytes(self):
+        self.check_case('usb_rgb_rgb_first')
 
 
 if __name__ == '__main__':

@@ -169,7 +169,7 @@ do not establish that LED core's requested brightness, its RGB intensity tuple,
 or firmware state form one globally atomic snapshot. No physical backlight,
 register, trigger, sleep, reboot or runtime kernel lockdep is used.
 
-Run the 18 follow-up tests with:
+Run the 20 follow-up tests with:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_uniwill_led_transactions.py' -v
@@ -201,3 +201,21 @@ confirmed stale-register/cache errors and the new coordination contract; they
 are not a count of twelve distinct pre-existing vulnerabilities. The earlier
 33 core tests still pass with those same old LED and parent inputs, confirming
 that their established successful behavior and error policy remain intact.
+
+Two integration methods also run the actual `uw_set_usb_powershare` setter,
+RGB core dispatcher/callback/color helper and shared EC transaction API together.
+They cover all 256 initial `0x0767` bytes, both USB enable values and both request
+orders on both preprocessing versions. The first request pauses after releasing
+the real EC transaction mutex: USB at its first release, RGB after at least four
+EC calls so the old split read/write window is exercised. The second request
+finishes before the first continues. Final register bits, other bits, USB cache,
+RGB channels, brightness and transaction pairs are checked; RGB is not replaced
+by an API bit-update double.
+
+Select only the `2dae697` USB implementation with
+`UNIWILL_USB_KEYBOARD_HEADER`, or only its LED implementation with
+`UNIWILL_LEDS_HEADER`, and run these methods with `-k 0767`. The other business
+path and actual EC foundation remain current. Each old single-path selection
+fails the corresponding order's final hardware-state assertion on both versions;
+the opposite order still passes. These are deterministic software schedules,
+not real USB power, LED or firmware concurrency acceptance.

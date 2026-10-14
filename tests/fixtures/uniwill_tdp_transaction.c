@@ -35,13 +35,19 @@ struct delayed_work { struct work_struct work; bool pending, running; void (*han
 static struct work_struct uniwill_key_event_work;
 static bool uniwill_i8042_filter_installed;
 static unsigned int uniwill_touchp_toggle_seq_pos;
-static bool uw_charging_prio_loaded, uw_charging_profile_loaded, uw_lightbar_loaded;
-static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
+/* Old remove implementations directly reference these sysfs services. */
+static __attribute__((unused)) bool uw_charging_prio_loaded, uw_charging_profile_loaded;
+static __attribute__((unused)) int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
+static bool uw_lightbar_loaded;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 static int uniwill_i8042_filter;
 static int i8042_remove_filter(int filter) { (void)filter; return 0; }
 static void cancel_work_sync(struct work_struct *work) { (void)work; }
-static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)group; }
+static __attribute__((unused)) void sysfs_remove_group(void *kobj, void *group)
+{ (void)kobj; (void)group; }
+/* Charging resource teardown is outside the TDP transaction under test. */
+static __attribute__((unused)) void uw_charging_uninit(struct platform_device *dev)
+{ (void)dev; }
 static void uw_battery_uninit(void) {}
 static void uniwill_leds_remove(struct platform_device *dev) { (void)dev; }
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
