@@ -41,6 +41,12 @@
 #define UW_EC_BUSY_WAIT_CYCLES	30
 #define UW_EC_BUSY_WAIT_DELAY	15
 
+/* Preserve the existing x86_64 request: four-byte argument, one reserved
+ * byte, function, and two reserved bytes. */
+#define UW_WMI_EC_INPUT_SIZE	8
+/* All callers provide a ten-dword response buffer. */
+#define UW_WMI_EC_RESPONSE_WORDS	10
+
 static bool uniwill_ec_direct = false;
 
 DEFINE_MUTEX(uniwill_ec_lock);
@@ -58,38 +64,40 @@ static int uw_wmi_ec_evaluate(u8 function, u32 arg, u32 *return_buffer)
 	acpi_status status;
 	union acpi_object *out_acpi;
 	int e_result = 0;
-
-	// Kernel buffer for input argument
-	u32 *wmi_arg = (u32 *) kmalloc(sizeof(u32)*10, GFP_KERNEL);
-	// Byte reference to the input buffer
-	u8 *wmi_arg_bytes = (u8 *) wmi_arg;
+	u8 *wmi_arg;
 
 	u8 wmi_instance = 0x00;
 	u32 wmi_method_id = 0x04;
-	struct acpi_buffer wmi_in = { (acpi_size) sizeof(wmi_arg), wmi_arg};
+	struct acpi_buffer wmi_in = { UW_WMI_EC_INPUT_SIZE, NULL };
 	struct acpi_buffer wmi_out = { ACPI_ALLOCATE_BUFFER, NULL };
 
+	if (!return_buffer)
+		return -EINVAL;
+
+	wmi_arg = kzalloc(UW_WMI_EC_INPUT_SIZE, GFP_KERNEL);
+	if (!wmi_arg)
+		return -ENOMEM;
+	wmi_in.pointer = wmi_arg;
+
+	memcpy(wmi_arg, &arg, sizeof(arg));
+	wmi_arg[5] = function;
+
 	mutex_lock(&uniwill_ec_lock);
-
-	// Zero input buffer
-	memset(wmi_arg, 0x00, 10 * sizeof(u32));
-
-	// Configure input buffer
-	memcpy(&wmi_arg_bytes[0], &arg, sizeof(arg));
-
-	wmi_arg_bytes[5] = function;
 
 	status = wmi_evaluate_method(UNIWILL_WMI_MGMT_GUID_BC, wmi_instance, wmi_method_id, &wmi_in, &wmi_out);
 	out_acpi = (union acpi_object *) wmi_out.pointer;
 
-	if (out_acpi && out_acpi->type == ACPI_TYPE_BUFFER) {
-		memcpy(return_buffer, out_acpi->buffer.pointer, out_acpi->buffer.length);
-	} /* else if (out_acpi && out_acpi->type == ACPI_TYPE_INTEGER) {
-		e_result = (u32) out_acpi->integer.value;
-	}*/
 	if (ACPI_FAILURE(status)) {
 		pr_err("uniwill_wmi.h: Error evaluating method\n");
 		e_result = -EIO;
+	} else if (!out_acpi || out_acpi->type != ACPI_TYPE_BUFFER ||
+		   !out_acpi->buffer.pointer ||
+		   out_acpi->buffer.length < sizeof(u32) ||
+		   out_acpi->buffer.length > UW_WMI_EC_RESPONSE_WORDS * sizeof(u32)) {
+		pr_err("Invalid WMI EC response\n");
+		e_result = -EIO;
+	} else {
+		memcpy(return_buffer, out_acpi->buffer.pointer, out_acpi->buffer.length);
 	}
 
 	kfree(out_acpi);
@@ -105,17 +113,19 @@ static int uw_wmi_ec_evaluate(u8 function, u32 arg, u32 *return_buffer)
  */
 static int uw_ec_read_addr_wmi(u8 addr_low, u8 addr_high, union uw_ec_read_return *output)
 {
-	u32 uw_data[10];
+	u32 uw_data[UW_WMI_EC_RESPONSE_WORDS];
 	u32 arg = ((u32)addr_high << 8) | ((u32)addr_low);
 
 	int ret = uw_wmi_ec_evaluate(UNIWILL_WMI_FUNCTION_READ, arg, uw_data);
-	output->dword = uw_data[0];
+	if (ret)
+		return ret;
 
-	if (output->dword == 0xfefefefe) {
-		pr_err("WMI read error: 0x%02x%02x, data: %0#4x\n", addr_high, addr_low, output->bytes.data_low);
-		ret = -EIO;
+	if (uw_data[0] == 0xfefefefe) {
+		pr_err("WMI read error: 0x%02x%02x\n", addr_high, addr_low);
+		return -EIO;
 	}
 
+	output->dword = uw_data[0];
 	// pr_debug("addr: 0x%02x%02x value: %0#4x (high: %0#4x) result: %d\n", addr_high, addr_low, output->bytes.data_low, output->bytes.data_high, ret);
 	return ret;
 }
@@ -125,18 +135,20 @@ static int uw_ec_read_addr_wmi(u8 addr_low, u8 addr_high, union uw_ec_read_retur
  */
 static int uw_ec_write_addr_wmi(u8 addr_low, u8 addr_high, u8 data_low, u8 data_high, union uw_ec_write_return *output)
 {
-	u32 uw_data[10];
+	u32 uw_data[UW_WMI_EC_RESPONSE_WORDS];
 	u32 arg = ((u32)data_high << 24) | ((u32)data_low << 16) |
 		  ((u32)addr_high << 8) | ((u32)addr_low);
 
 	int ret = uw_wmi_ec_evaluate(UNIWILL_WMI_FUNCTION_WRITE, arg, uw_data);
-	output->dword = uw_data[0];
+	if (ret)
+		return ret;
 
-	if (output->dword == 0xfefefefe) {
+	if (uw_data[0] == 0xfefefefe) {
 		pr_err("WMI write error, addr: 0x%02x%02x, data: %0#4x\n", addr_high, addr_low, data_low);
-		ret = -EIO;
+		return -EIO;
 	}
 
+	output->dword = uw_data[0];
 	return ret;
 }
 
@@ -289,7 +301,8 @@ static int uw_wmi_read_ec_ram(u16 addr, u8 *data)
 		result = uw_ec_read_addr_wmi(addr_low, addr_high, &output);
 	}
 
-	*data = output.bytes.data_low;
+	if (!result)
+		*data = output.bytes.data_low;
 	return result;
 }
 
