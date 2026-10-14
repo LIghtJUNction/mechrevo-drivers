@@ -125,8 +125,11 @@ class UniwillRuntime(unittest.TestCase):
     def test_partial_copy_from_fault_never_reaches_any_write_helper(self):
         self.check_case("write_copy_faults")
 
-    def test_successful_fan_commands_preserve_index_and_byte_conversion(self):
+    def test_fan_commands_preserve_every_valid_byte_and_selected_fan(self):
         self.check_case("fan_write_success")
+
+    def test_oversized_fan_speed_never_reaches_helper(self):
+        self.check_case("fan_write_out_of_range")
 
     def test_unsigned_fan_helper_errno_reaches_ioctl_as_signed(self):
         self.check_case("fan_write_error")

@@ -174,6 +174,9 @@ int uniwill_write_ec_ram_with_retry(u16 address, u8 data, int retries)
 	int status, i;
 	u8 control_data;
 
+	if (retries <= 0)
+		return -EINVAL;
+
 	for (i = 0; i < retries; ++i) {
 		status = uniwill_write_ec_ram(address, data);
 		if (status != 0) {
@@ -182,6 +185,8 @@ int uniwill_write_ec_ram_with_retry(u16 address, u8 data, int retries)
 		}
 		else {
 			status = uniwill_read_ec_ram(address, &control_data);
+			if (!status && data != control_data)
+				status = -EIO;
 			if (status != 0 || data != control_data) {
 				msleep(50);
 				continue;
@@ -1907,20 +1912,24 @@ static u8 direct_fan_control_current_value_fan0_suspend_save = 0;
 static u8 direct_fan_control_current_value_fan1_suspend_save = 0;
 static bool fans_initialized = false;
 static bool direct_fan_control_started = false;
+static bool direct_fan_control_restart_needed = false;
 static bool direct_fan_control_suspend = false;
 static void restart_direct_fan_control_work_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(direct_fan_control_restart_delayed_work, restart_direct_fan_control_work_handler);
 
 int set_full_fan_mode(bool enable) {
 	u8 mode_data;
+	int status;
 
-	uniwill_read_ec_ram(0x0751, &mode_data);
+	status = uniwill_read_ec_ram(0x0751, &mode_data);
+	if (status)
+		return status;
 
 	if (enable && !(mode_data & 0x40)) {
 		// If not "full fan mode" (i.e. 0x40 bit not set) switch to it (required for old fancontrol)
 		return uniwill_write_ec_ram(0x0751, mode_data | 0x40);
 	}
-	else if (mode_data & 0x40){
+	else if (!enable && (mode_data & 0x40)) {
 		// If "full fan mode" (i.e. 0x40 bit set) turn it off (required for new fancontrol)
 		return uniwill_write_ec_ram(0x0751, mode_data & ~0x40);
 	}
@@ -1931,7 +1940,7 @@ EXPORT_SYMBOL(set_full_fan_mode);
 
 int uw_init_fan(void) {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
-	int i, temp_offset;
+	int i, temp_offset, status;
 
 	u16 addr_use_custom_fan_table_0 = 0x07c5; // use different tables for both fans (0x0f00-0x0f2f and 0x0f30-0x0f5f respectivly)
 	u16 addr_use_custom_fan_table_1 = 0x07c6; // enable 0x0fxx fantables
@@ -1947,36 +1956,70 @@ int uw_init_fan(void) {
 	u16 addr_gpu_custom_fan_table_fan_speed = 0x0f50;
 
 	if (!fans_initialized && uw_feats->uniwill_has_universal_ec_fan_control) {
-		set_full_fan_mode(false);
+		status = set_full_fan_mode(false);
+		if (status)
+			return status;
 
-		uniwill_read_ec_ram(addr_use_custom_fan_table_0, &value_use_custom_fan_table_0);
+		status = uniwill_read_ec_ram(addr_use_custom_fan_table_0, &value_use_custom_fan_table_0);
+		if (status)
+			return status;
 		if (!((value_use_custom_fan_table_0 >> offset_use_custom_fan_table_0) & 1)) {
-			uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_0, value_use_custom_fan_table_0 + (1 << offset_use_custom_fan_table_0), 3);
+			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_0, value_use_custom_fan_table_0 + (1 << offset_use_custom_fan_table_0), 3);
+			if (status)
+				return status;
 		}
 
 		// Setup
 		// - one controllable zone 0-115 deg
 		// - rest 116-117, 117-118 etc single non reachable dummy zones
 		//   with increasing ranges and max fan (same or increasing)
-		uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_end_temp, 115, 3);
-		uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_start_temp, 0, 3);
-		uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_fan_speed, 0x01, 3);
-		uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_end_temp, 120, 3);
-		uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_start_temp, 0, 3);
-		uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_fan_speed, 0x01, 3);
+		status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_end_temp, 115, 3);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_start_temp, 0, 3);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_fan_speed, 0x01, 3);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_end_temp, 120, 3);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_start_temp, 0, 3);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_fan_speed, 0x01, 3);
+		if (status)
+			return status;
 		temp_offset = 115;
 		for (i = 0x1; i <= 0xf; ++i) {
-			uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_end_temp + i, temp_offset + i + 1, 3);
-			uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_start_temp + i, temp_offset + i, 3);
-			uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_fan_speed + i, 0xc8, 3);
-			uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_end_temp + i, temp_offset + i + 1, 3);
-			uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_start_temp + i, temp_offset + i, 3);
-			uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_fan_speed + i, 0xc8, 3);
+			status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_end_temp + i, temp_offset + i + 1, 3);
+			if (status)
+				return status;
+			status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_start_temp + i, temp_offset + i, 3);
+			if (status)
+				return status;
+			status = uniwill_write_ec_ram_with_retry(addr_cpu_custom_fan_table_fan_speed + i, 0xc8, 3);
+			if (status)
+				return status;
+			status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_end_temp + i, temp_offset + i + 1, 3);
+			if (status)
+				return status;
+			status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_start_temp + i, temp_offset + i, 3);
+			if (status)
+				return status;
+			status = uniwill_write_ec_ram_with_retry(addr_gpu_custom_fan_table_fan_speed + i, 0xc8, 3);
+			if (status)
+				return status;
 		}
 
-		uniwill_read_ec_ram(addr_use_custom_fan_table_1, &value_use_custom_fan_table_1);
+		status = uniwill_read_ec_ram(addr_use_custom_fan_table_1, &value_use_custom_fan_table_1);
+		if (status)
+			return status;
 		if (!((value_use_custom_fan_table_1 >> offset_use_custom_fan_table_1) & 1)) {
-			uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 + (1 << offset_use_custom_fan_table_1), 3);
+			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 + (1 << offset_use_custom_fan_table_1), 3);
+			if (status)
+				return status;
 		}
 	}
 
@@ -1988,25 +2031,40 @@ EXPORT_SYMBOL(uw_init_fan);
 
 static void restart_direct_fan_control_work_handler(struct work_struct *work)
 {
-	int i;
+	int i, status;
 	u16 addr_fan0 = 0x1804;
 	u16 addr_fan1 = 0x1809;
 
 	pr_debug("restart fan control\n");
 
-	set_full_fan_mode(false);
+	status = set_full_fan_mode(false);
+	if (status)
+		goto failed;
 	msleep(10);
-	set_full_fan_mode(true);
+	status = set_full_fan_mode(true);
+	if (status)
+		goto failed;
 
 	// Attempt to write both fans as quick as possible before complete ramp-up
 	pr_debug("prevent ramp-up start\n");
 	for (i = 0; i < 10; ++i) {
-		uniwill_write_ec_ram(addr_fan0, direct_fan_control_current_value_fan0 & 0xff);
-		uniwill_write_ec_ram(addr_fan1, direct_fan_control_current_value_fan1 & 0xff);
+		status = uniwill_write_ec_ram(addr_fan0, direct_fan_control_current_value_fan0 & 0xff);
+		if (status)
+			goto failed;
+		status = uniwill_write_ec_ram(addr_fan1, direct_fan_control_current_value_fan1 & 0xff);
+		if (status)
+			goto failed;
 		msleep(10);
 	}
 	pr_debug("prevent ramp-up done\n");
+	direct_fan_control_restart_needed = false;
+	goto reschedule;
 
+failed:
+	direct_fan_control_restart_needed = true;
+	pr_err("Could not restart direct fan control: %d\n", status);
+
+reschedule:
 	schedule_delayed_work(&direct_fan_control_restart_delayed_work, msecs_to_jiffies(50 * 60 * 1000));
 }
 
@@ -2015,22 +2073,35 @@ static int direct_fan_control(u32 fan_index, u8 fan_speed, bool prevent_rampup)
 	u16 addr_for_fan;
 	u16 addr_fan0 = 0x1804;
 	u16 addr_fan1 = 0x1809;
+	int status;
 
 	if (fan_index == 0) {
 		addr_for_fan = addr_fan0;
-		direct_fan_control_current_value_fan0 = fan_speed;
 	} else if (fan_index == 1) {
 		addr_for_fan = addr_fan1;
-		direct_fan_control_current_value_fan1 = fan_speed;
 	} else {
 		return -EINVAL;
 	}
 
-	if (prevent_rampup && !direct_fan_control_started) {
+	if (prevent_rampup && (!direct_fan_control_started || direct_fan_control_restart_needed)) {
+		if (direct_fan_control_restart_needed)
+			cancel_delayed_work_sync(&direct_fan_control_restart_delayed_work);
+		/* The worker needs the requested speed before it is queued. */
+		if (fan_index == 0)
+			direct_fan_control_current_value_fan0 = fan_speed;
+		else
+			direct_fan_control_current_value_fan1 = fan_speed;
 		direct_fan_control_started = true;
+		direct_fan_control_restart_needed = false;
 		schedule_delayed_work(&direct_fan_control_restart_delayed_work, 0);
 	} else {
-		uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
+		status = uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
+		if (status)
+			return status;
+		if (fan_index == 0)
+			direct_fan_control_current_value_fan0 = fan_speed;
+		else
+			direct_fan_control_current_value_fan1 = fan_speed;
 	}
 
 	return 0;
@@ -2045,21 +2116,26 @@ u32 uw_set_fan(u32 fan_index, u8 fan_speed)
 	u16 addr_gpu_custom_fan_table_fan_speed = 0x0f50;
 
 	u8 byte_data;
+	int status;
+
+	if (fan_index > 1)
+		return -EINVAL;
 
 	if (uw_feats->uniwill_has_universal_ec_fan_control) {
-		uniwill_read_ec_ram(0x0751, &byte_data);
+		if (fan_speed > NB02_FAN_SPEED_MAX)
+			return -EINVAL;
+		status = uniwill_read_ec_ram(0x0751, &byte_data);
+		if (status)
+			return status;
 		if (!(byte_data & 0x40)) {
-			uw_init_fan();
+			status = uw_init_fan();
+			if (status)
+				return status;
 
 			if (fan_index == 0)
 				addr_for_fan = addr_cpu_custom_fan_table_fan_speed;
-			else if (fan_index == 1)
-				addr_for_fan = addr_gpu_custom_fan_table_fan_speed;
 			else
-				return -EINVAL;
-
-			if (fan_speed > NB02_FAN_SPEED_MAX)
-				return -EINVAL;
+				addr_for_fan = addr_gpu_custom_fan_table_fan_speed;
 
 			// Don't allow vallues between fan-off and minimum fan-on-speed
 			if (fan_speed < FAN_ON_MIN_SPEED_PERCENT * NB02_FAN_SPEED_MAX / 2 / 100)
@@ -2077,13 +2153,26 @@ u32 uw_set_fan(u32 fan_index, u8 fan_speed)
 				fan_speed = 1;
 			}
 
-			uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
+			status = uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
+			if (status)
+				return status;
 
-			direct_fan_control(fan_index, fan_speed, false);
+			return direct_fan_control(fan_index, fan_speed, false);
 		}
 	}
 	else { // old workaround using full fan mode
-		direct_fan_control(fan_index, fan_speed, true);
+		if (direct_fan_control_suspend && !direct_fan_control_started) {
+			direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan0_suspend_save;
+			direct_fan_control_current_value_fan1 = direct_fan_control_current_value_fan1_suspend_save;
+		}
+		status = direct_fan_control(fan_index, fan_speed, true);
+		if (!status && direct_fan_control_suspend) {
+			if (fan_index == 0)
+				direct_fan_control_current_value_fan0_suspend_save = fan_speed;
+			else
+				direct_fan_control_current_value_fan1_suspend_save = fan_speed;
+		}
+		return status;
 	}
 
 	return 0;
@@ -2094,6 +2183,7 @@ u32 uw_set_fan_auto(void)
 {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 	u8 mode_data;
+	int status;
 
 	if (uw_feats->uniwill_has_universal_ec_fan_control) {
 		u16 addr_use_custom_fan_table_0 = 0x07c5; // use different tables for both fans (0x0f00-0x0f2f and 0x0f30-0x0f5f respectivly)
@@ -2102,25 +2192,43 @@ u32 uw_set_fan_auto(void)
 		u8 offset_use_custom_fan_table_1 = 2;
 		u8 value_use_custom_fan_table_0;
 		u8 value_use_custom_fan_table_1;
-		uniwill_read_ec_ram(addr_use_custom_fan_table_1, &value_use_custom_fan_table_1);
-		if ((value_use_custom_fan_table_1 >> offset_use_custom_fan_table_1) & 1) {
-			uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 - (1 << offset_use_custom_fan_table_1), 3);
-		}
-		uniwill_read_ec_ram(addr_use_custom_fan_table_0, &value_use_custom_fan_table_0);
-		if ((value_use_custom_fan_table_0 >> offset_use_custom_fan_table_0) & 1) {
-			uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_0, value_use_custom_fan_table_0 - (1 << offset_use_custom_fan_table_0), 3);
-		}
+		/* A partial reset must not leave the initialization cache valid. */
 		fans_initialized = false;
+		status = uniwill_read_ec_ram(addr_use_custom_fan_table_1, &value_use_custom_fan_table_1);
+		if (status)
+			return status;
+		if ((value_use_custom_fan_table_1 >> offset_use_custom_fan_table_1) & 1) {
+			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 - (1 << offset_use_custom_fan_table_1), 3);
+			if (status)
+				return status;
+		}
+		status = uniwill_read_ec_ram(addr_use_custom_fan_table_0, &value_use_custom_fan_table_0);
+		if (status)
+			return status;
+		if ((value_use_custom_fan_table_0 >> offset_use_custom_fan_table_0) & 1) {
+			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_0, value_use_custom_fan_table_0 - (1 << offset_use_custom_fan_table_0), 3);
+			if (status)
+				return status;
+		}
 	}
 	else {
 		cancel_delayed_work_sync(&direct_fan_control_restart_delayed_work);
-		direct_fan_control_started = false;
-		// Get current mode
-		uniwill_read_ec_ram(0x0751, &mode_data);
+		/* Keep manual-mode recovery active if the EC reset fails. Only a
+		 * subsequent manual request should restart the cancelled worker. */
+		direct_fan_control_restart_needed = direct_fan_control_started;
+		// Get current mode after the worker can no longer change it.
+		status = uniwill_read_ec_ram(0x0751, &mode_data);
+		if (status)
+			return status;
 		// Switch off "full fan mode" (i.e. unset 0x40 bit)
-		uniwill_write_ec_ram(0x0751, mode_data & 0xbf);
+		status = uniwill_write_ec_ram(0x0751, mode_data & 0xbf);
+		if (status)
+			return status;
 	}
 
+	direct_fan_control_started = false;
+	direct_fan_control_restart_needed = false;
+	direct_fan_control_suspend = false;
 	direct_fan_control_current_value_fan0 = 0;
 	direct_fan_control_current_value_fan1 = 0;
 
@@ -2271,50 +2379,90 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 #endif
 }
 
+static int uw_restore_fan_state(void)
+{
+	int result, status;
+
+	if (!direct_fan_control_suspend)
+		return 0;
+
+	/* The first request can queue a worker immediately. Restore both
+	 * targets first so it cannot write a zero left by automatic mode. */
+	direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan0_suspend_save;
+	direct_fan_control_current_value_fan1 = direct_fan_control_current_value_fan1_suspend_save;
+	result = (int)uw_set_fan(0, direct_fan_control_current_value_fan0_suspend_save);
+	status = (int)uw_set_fan(1, direct_fan_control_current_value_fan1_suspend_save);
+	if (status && !result)
+		result = status;
+	if (!result)
+		direct_fan_control_suspend = false;
+
+	return result;
+}
+
 static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t state)
 {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 	u8 data;
+	int status, restore_status;
+
+	if (direct_fan_control_started) {
+		direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+		direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+		direct_fan_control_suspend = true;
+		status = (int)uw_set_fan_auto();
+		/* An explicit auto request cancels restoration; suspend must keep it. */
+		direct_fan_control_suspend = true;
+		if (status)
+			goto failed;
+	}
+
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
 		// Unset "customer mode light" before suspend. Otherwise at
 		// least one device is known to immediately wake up.
-		uniwill_read_ec_ram(0x0727, &data);
+		status = uniwill_read_ec_ram(0x0727, &data);
+		if (status)
+			goto failed;
 		data &= ~(1 << 6);
-		uniwill_write_ec_ram(0x0727, data);
+		status = uniwill_write_ec_ram(0x0727, data);
+		if (status)
+			goto failed;
 	}
 	uniwill_write_kbd_bl_enable(0);
-	if (direct_fan_control_started) {
-		direct_fan_control_suspend = true;
-		direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
-		direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
-		uw_set_fan_auto();
-	}
 	return 0;
+
+failed:
+	/* A failed suspend is not guaranteed to receive a resume callback. */
+	restore_status = uw_restore_fan_state();
+	if (restore_status)
+		pr_err("Could not restore direct fan control after failed suspend: %d\n", restore_status);
+	return status;
 }
 
 static int uniwill_keyboard_resume(struct platform_device *dev)
 {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 	u8 data;
+	int result, status;
 
-	if (direct_fan_control_suspend) {
-		direct_fan_control_suspend = false;
-		uw_set_fan(0, direct_fan_control_current_value_fan0_suspend_save);
-		uw_set_fan(1, direct_fan_control_current_value_fan1_suspend_save);
-	}
+	result = uw_restore_fan_state();
 
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
 		// Re-set "customer mode light" on resume
-		uniwill_read_ec_ram(0x0727, &data);
-		data |= (1 << 6);
-		uniwill_write_ec_ram(0x0727, data);
+		status = uniwill_read_ec_ram(0x0727, &data);
+		if (!status) {
+			data |= (1 << 6);
+			status = uniwill_write_ec_ram(0x0727, data);
+		}
+		if (status && !result)
+			result = status;
 	}
 	uniwill_leds_restore_state_extern();
 	uniwill_write_kbd_bl_enable(1);
 	// Restore charging settings on resume
 	uw_charging_priority_write_state();
 	uw_charging_profile_write_state();
-	return 0;
+	return result;
 }
 
 static struct platform_driver platform_driver_uniwill = {

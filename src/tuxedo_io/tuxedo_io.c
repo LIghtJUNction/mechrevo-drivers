@@ -685,6 +685,8 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
 			if (copy_result)
 				return -EFAULT;
+			if (argument > 0xff)
+				return -EINVAL;
 			return (int)uw_set_fan(cmd == W_UW_FANSPEED2, argument);
 		case W_UW_MODE:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));

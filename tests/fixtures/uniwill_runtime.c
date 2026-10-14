@@ -280,17 +280,30 @@ int main(int argc, char **argv)
 		assert(input_copies == 7 && ec_reads == 0 && ec_writes == 0);
 		assert(fan_calls == 0 && fan_auto_calls == 0);
 	} else if (strcmp(test, "fan_write_success") == 0) {
-		value = 0x1234;
-		assert(IOCTL(W_UW_FANSPEED, value) == 0);
-		assert(fan_calls == 1 && selected_fan == 0 && selected_speed == 0x34);
-		assert(IOCTL(W_UW_FANSPEED2, value) == 0);
-		assert(fan_calls == 2 && selected_fan == 1 && selected_speed == 0x34);
+		for (value = 0; value <= UINT8_MAX; ++value) {
+			assert(IOCTL(W_UW_FANSPEED, value) == 0);
+			assert(selected_fan == 0 && selected_speed == value);
+			assert(IOCTL(W_UW_FANSPEED2, value) == 0);
+			assert(selected_fan == 1 && selected_speed == value);
+		}
+		assert(fan_calls == 512 && input_copies == 512);
 		assert(IOCTL(W_UW_FANAUTO, value) == 0 && fan_auto_calls == 1);
+	} else if (strcmp(test, "fan_write_out_of_range") == 0) {
+		const u32 invalid_values[] = {256, UINT32_MAX};
+		for (size_t i = 0; i < COUNT(invalid_values); ++i) {
+			value = invalid_values[i];
+			assert(IOCTL(W_UW_FANSPEED, value) == -EINVAL);
+			assert(IOCTL(W_UW_FANSPEED2, value) == -EINVAL);
+		}
+		assert(input_copies == 4 && fan_calls == 0 && fan_auto_calls == 0);
+		assert(ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "fan_write_error") == 0) {
+		value = 52;
 		fan_status = -EINVAL;
 		assert(IOCTL(W_UW_FANSPEED, value) == -EINVAL);
 		assert(IOCTL(W_UW_FANSPEED2, value) == -EINVAL);
 		assert(IOCTL(W_UW_FANAUTO, value) == -EINVAL);
+		assert(fan_calls == 2 && fan_auto_calls == 1);
 	} else if (strcmp(test, "mode_write_success") == 0) {
 		value = 0x1234;
 		assert(IOCTL(W_UW_MODE, value) == 0);
