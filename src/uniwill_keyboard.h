@@ -574,7 +574,12 @@ static int uw_lightbar_remove(struct platform_device *dev)
 	return 0;
 }
 
+/* Serialize each charging EC update with its saved restoration value.
+ * Sysfs creation/removal must run without this lock so active callbacks
+ * can finish while sysfs drains them. */
+static DEFINE_MUTEX(uniwill_charging_lock);
 static bool uw_charging_prio_loaded = false;
+static bool uw_charging_prio_state_valid;
 static bool uw_charging_prio_last_written_value;
 
 static ssize_t uw_charging_prios_available_show(struct device *child,
@@ -610,29 +615,36 @@ static struct attribute_group uw_charging_prio_attr_group = {
  *     0 => charging priority
  *     1 => performance priority
  */
-static int uw_set_charging_priority(u8 charging_priority)
+static int uw_set_charging_priority_locked(u8 charging_priority)
 {
-	u8 previous_data, next_data;
 	int result;
 
-	charging_priority = (charging_priority & 0x01) << 7;
-
-	result = uniwill_read_ec_ram(0x07cc, &previous_data);
-	if (result != 0)
-		return result;
-
-	next_data = (previous_data & ~(1 << 7)) | charging_priority;
-	result = uniwill_write_ec_ram(0x07cc, next_data);
-	if (result == 0)
+	charging_priority &= 0x01;
+	result = uniwill_update_ec_ram(0x07cc, 1 << 7, charging_priority << 7);
+	if (!result) {
 		uw_charging_prio_last_written_value = charging_priority;
+		uw_charging_prio_state_valid = true;
+	}
+	return result;
+}
 
+static int uw_set_charging_priority(u8 charging_priority)
+{
+	int result;
+
+	mutex_lock(&uniwill_charging_lock);
+	result = uw_set_charging_priority_locked(charging_priority);
+	mutex_unlock(&uniwill_charging_lock);
 	return result;
 }
 
 static int uw_get_charging_priority(u8 *charging_priority)
 {
-	int result = uniwill_read_ec_ram(0x07cc, charging_priority);
-	*charging_priority = (*charging_priority >> 7) & 0x01;
+	u8 value;
+	int result = uniwill_read_ec_ram(0x07cc, &value);
+
+	if (!result)
+		*charging_priority = (value >> 7) & 0x01;
 	return result;
 }
 
@@ -693,26 +705,53 @@ static int uw_has_charging_priority(bool *status)
 
 static void uw_charging_priority_write_state(void)
 {
-	if (uw_charging_prio_loaded)
-		uw_set_charging_priority(uw_charging_prio_last_written_value);
+	int result;
+
+	mutex_lock(&uniwill_charging_lock);
+	if (uw_charging_prio_loaded && uw_charging_prio_state_valid) {
+		result = uw_set_charging_priority_locked(uw_charging_prio_last_written_value);
+		if (result)
+			TUXEDO_ERROR("Could not restore charging priority: %d\n", result);
+	}
+	mutex_unlock(&uniwill_charging_lock);
 }
 
 static void uw_charging_priority_init(struct platform_device *dev)
 {
 	u8 value;
+	int result;
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 
-	if (uw_feats->uniwill_has_charging_prio)
-		uw_charging_prio_loaded = sysfs_create_group(&dev->dev.kobj, &uw_charging_prio_attr_group) == 0;
-
-	// Read for state init
-	if (uw_charging_prio_loaded) {
-		uw_get_charging_priority(&value);
-		uw_charging_prio_last_written_value = value;
+	mutex_lock(&uniwill_charging_lock);
+	uw_charging_prio_loaded = false;
+	uw_charging_prio_state_valid = false;
+	if (!uw_feats->uniwill_has_charging_prio) {
+		mutex_unlock(&uniwill_charging_lock);
+		return;
 	}
+	result = uw_get_charging_priority(&value);
+	if (!result) {
+		uw_charging_prio_last_written_value = value;
+		uw_charging_prio_state_valid = true;
+	} else {
+		TUXEDO_ERROR("Could not read initial charging priority: %d\n", result);
+	}
+	mutex_unlock(&uniwill_charging_lock);
+
+	/* Publish after cache initialization. Do not hold charging while sysfs
+	 * creates/removes files and may drain a callback waiting for that lock.
+	 * A failed read still permits a userspace retry without restoring an
+	 * unknown value in the meantime. */
+	result = sysfs_create_group(&dev->dev.kobj, &uw_charging_prio_attr_group);
+	mutex_lock(&uniwill_charging_lock);
+	uw_charging_prio_loaded = !result;
+	if (result)
+		uw_charging_prio_state_valid = false;
+	mutex_unlock(&uniwill_charging_lock);
 }
 
 static bool uw_charging_profile_loaded = false;
+static bool uw_charging_profile_state_valid;
 static u8 uw_charging_profile_last_written_value;
 
 static ssize_t uw_charging_profiles_available_show(struct device *child,
@@ -749,33 +788,37 @@ static struct attribute_group uw_charging_profile_attr_group = {
  *     1 => balanced
  *     2 => stationary
  */
-static int uw_set_charging_profile(u8 charging_profile)
+static int uw_set_charging_profile_locked(u8 charging_profile)
 {
-	u8 previous_data, next_data, shifted_profile;
 	int result;
 
-	/* Store unshifted value (0-2) for later restoration */
-	charging_profile = charging_profile & 0x03;
-	shifted_profile = charging_profile << 4;
-
-	result = uniwill_read_ec_ram(0x07a6, &previous_data);
-	if (result != 0)
-		return result;
-
-	next_data = (previous_data & ~(0x03 << 4)) | shifted_profile;
-	result = uniwill_write_ec_ram(0x07a6, next_data);
-
-	if (result == 0)
+	/* Store unshifted value for later restoration. */
+	charging_profile &= 0x03;
+	result = uniwill_update_ec_ram(0x07a6, 0x03 << 4, charging_profile << 4);
+	if (!result) {
 		uw_charging_profile_last_written_value = charging_profile;
+		uw_charging_profile_state_valid = true;
+	}
+	return result;
+}
 
+static int uw_set_charging_profile(u8 charging_profile)
+{
+	int result;
+
+	mutex_lock(&uniwill_charging_lock);
+	result = uw_set_charging_profile_locked(charging_profile);
+	mutex_unlock(&uniwill_charging_lock);
 	return result;
 }
 
 static int uw_get_charging_profile(u8 *charging_profile)
 {
-	int result = uniwill_read_ec_ram(0x07a6, charging_profile);
-	if (result == 0)
-		*charging_profile = (*charging_profile >> 4) & 0x03;
+	u8 value;
+	int result = uniwill_read_ec_ram(0x07a6, &value);
+
+	if (!result)
+		*charging_profile = (value >> 4) & 0x03;
 	return result;
 }
 
@@ -810,23 +853,66 @@ static int uw_has_charging_profile(bool *status)
 
 static void uw_charging_profile_write_state(void)
 {
-	if (uw_charging_profile_loaded)
-		uw_set_charging_profile(uw_charging_profile_last_written_value);
+	int result;
+
+	mutex_lock(&uniwill_charging_lock);
+	if (uw_charging_profile_loaded && uw_charging_profile_state_valid) {
+		result = uw_set_charging_profile_locked(uw_charging_profile_last_written_value);
+		if (result)
+			TUXEDO_ERROR("Could not restore charging profile: %d\n", result);
+	}
+	mutex_unlock(&uniwill_charging_lock);
 }
 
 static void uw_charging_profile_init(struct platform_device *dev)
 {
 	u8 value;
+	int result;
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 
-	if (uw_feats->uniwill_has_charging_profile)
-		uw_charging_profile_loaded = sysfs_create_group(&dev->dev.kobj, &uw_charging_profile_attr_group) == 0;
-
-	// Read for state init
-	if (uw_charging_profile_loaded) {
-		uw_get_charging_profile(&value);
-		uw_charging_profile_last_written_value = value;
+	mutex_lock(&uniwill_charging_lock);
+	uw_charging_profile_loaded = false;
+	uw_charging_profile_state_valid = false;
+	if (!uw_feats->uniwill_has_charging_profile) {
+		mutex_unlock(&uniwill_charging_lock);
+		return;
 	}
+	result = uw_get_charging_profile(&value);
+	if (!result) {
+		uw_charging_profile_last_written_value = value;
+		uw_charging_profile_state_valid = true;
+	} else {
+		TUXEDO_ERROR("Could not read initial charging profile: %d\n", result);
+	}
+	mutex_unlock(&uniwill_charging_lock);
+
+	/* Publish after cache initialization. Do not hold charging while sysfs
+	 * creates/removes files and may drain a callback waiting for that lock.
+	 * A failed read still permits a userspace retry without restoring an
+	 * unknown value in the meantime. */
+	result = sysfs_create_group(&dev->dev.kobj, &uw_charging_profile_attr_group);
+	mutex_lock(&uniwill_charging_lock);
+	uw_charging_profile_loaded = !result;
+	if (result)
+		uw_charging_profile_state_valid = false;
+	mutex_unlock(&uniwill_charging_lock);
+}
+
+static void uw_charging_uninit(struct platform_device *dev)
+{
+	/* Do not hold charging while removing groups: an active sysfs callback
+	 * can be waiting for it and sysfs_remove_group waits for that callback. */
+	if (uw_charging_prio_loaded)
+		sysfs_remove_group(&dev->dev.kobj, &uw_charging_prio_attr_group);
+	if (uw_charging_profile_loaded)
+		sysfs_remove_group(&dev->dev.kobj, &uw_charging_profile_attr_group);
+
+	mutex_lock(&uniwill_charging_lock);
+	uw_charging_prio_loaded = false;
+	uw_charging_prio_state_valid = false;
+	uw_charging_profile_loaded = false;
+	uw_charging_profile_state_valid = false;
+	mutex_unlock(&uniwill_charging_lock);
 }
 
 struct char_to_u8_t {
@@ -887,8 +973,9 @@ static ssize_t uw_charging_profile_store(struct device *child,
 	int i, result;
 	char *buffer_copy;
 	char *charging_profile_descriptor;
-	buffer_copy = kmalloc(size + 1, GFP_KERNEL);
-	strcpy(buffer_copy, buffer);
+	buffer_copy = kmemdup_nul(buffer, size, GFP_KERNEL);
+	if (!buffer_copy)
+		return -ENOMEM;
 	charging_profile_descriptor = strstrip(buffer_copy);
 
 	for (i = 0; i < ARRAY_SIZE(charging_profile_options); ++i)
@@ -963,8 +1050,9 @@ static ssize_t uw_charging_prio_store(struct device *child,
 	int i, result;
 	char *buffer_copy;
 	char *charging_prio_descriptor;
-	buffer_copy = kmalloc(size + 1, GFP_KERNEL);
-	strcpy(buffer_copy, buffer);
+	buffer_copy = kmemdup_nul(buffer, size, GFP_KERNEL);
+	if (!buffer_copy)
+		return -ENOMEM;
 	charging_prio_descriptor = strstrip(buffer_copy);
 
 	for (i = 0; i < ARRAY_SIZE(charging_prio_options); ++i)
@@ -1169,22 +1257,15 @@ static struct attribute_group uw_usb_powershare_attr_group = {
 
 static int uw_set_usb_powershare(u8 usb_powershare)
 {
-	u8 previous_data, next_data;
 	int result;
-	usb_powershare = (usb_powershare & 0x01) << 4;
 
-	result = uniwill_read_ec_ram(UW_EC_REG_USB_POWERSHARE_STATUS,
-				     &previous_data);
-	if (result != 0)
-		return result;
-
-	next_data = (previous_data & ~(1 << 4)) | usb_powershare;
-	// This bit is set to 0 after a cold boot regardless of its original value for some reason.
-	result = uniwill_write_ec_ram(UW_EC_REG_USB_POWERSHARE_STATUS,
-				      next_data);
-	if (result == 0)
+	usb_powershare &= 0x01;
+	/* RGB apply uses the same 0x0767 byte. Keep their unrelated bits in one
+	 * shared EC read/modify/write transaction. */
+	result = uniwill_update_ec_ram(UW_EC_REG_USB_POWERSHARE_STATUS,
+				      1 << 4, usb_powershare << 4);
+	if (!result)
 		uw_usb_powershare_last_written_value = usb_powershare;
-
 	return result;
 }
 
@@ -2277,11 +2358,7 @@ static int uniwill_keyboard_remove(struct platform_device *dev)
 static void uniwill_keyboard_remove(struct platform_device *dev)
 #endif
 {
-	if (uw_charging_prio_loaded)
-		sysfs_remove_group(&dev->dev.kobj, &uw_charging_prio_attr_group);
-
-	if (uw_charging_profile_loaded)
-		sysfs_remove_group(&dev->dev.kobj, &uw_charging_profile_attr_group);
+	uw_charging_uninit(dev);
 
 	uw_battery_uninit();
 
