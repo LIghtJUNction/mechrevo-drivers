@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import resource
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -47,23 +48,44 @@ class UniwillProbeRuntime(unittest.TestCase):
         if state:
             declarations += '\n' + state.group()
         declarations += '\n' + re.search(r'(?m)^static bool uniwill_i8042_filter_installed;', keyboard).group()
-        pieces = [declarations,
+        backlight = function(keyboard, 'uniwill_write_kbd_bl_enable')
+        invocation = ('return uniwill_write_kbd_bl_enable(enable);'
+                      if backlight.startswith('static int ') else
+                      'uniwill_write_kbd_bl_enable(enable); return 0;')
+        pieces = [declarations, backlight,
+                  function(keyboard, 'uw_fan_quiesce_locked'),
+                  function(keyboard, 'uw_fan_lock'),
+                  function(keyboard, 'uw_fan_unlock'),
+                  function(keyboard, 'uw_fan_control_start')]
+        if 'static int uniwill_keyboard_abort_probe(' in keyboard:
+            pieces.append(function(keyboard, 'uniwill_keyboard_abort_probe'))
+        pieces += [
                   versioned_function(keyboard, 'uniwill_i8042_filter'),
                   function(keyboard, 'uniwill_keyboard_prepare_remove'),
                   function(keyboard, 'uniwill_keyboard_probe'),
                   versioned_function(keyboard, 'uniwill_keyboard_remove')]
         fixture = (ROOT / 'tests/fixtures/uniwill_probe_runtime.c').read_text()
         source = Path(cls.temp.name) / 'runtime.c'
-        source.write_text(fixture.replace('/* @DRIVER_FUNCTIONS@ */', '\n\n'.join(pieces)))
+        fixture = fixture.replace('/* @DRIVER_FUNCTIONS@ */', '\n\n'.join(pieces))
+        fixture = fixture.replace('/* @INVOKE_BACKLIGHT@ */', invocation)
+        source.write_text(fixture)
         cls.binaries = []
         for version in ((6, 10, 0), (6, 13, 0), (6, 14, 0), (7, 2, 9)):
             code = (version[0] << 16) | (version[1] << 8) | version[2]
             binary = Path(cls.temp.name) / ('runtime-' + '-'.join(map(str, version)))
-            result = subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+            flags = ['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror']
+            if selected.resolve() != ROOT.resolve():
+                # Known old read-failure bugs trigger this compiler warning.
+                # Keep it visible and permit runtime regression assertions;
+                # current production source still builds with strict -Werror.
+                flags.append('-Wno-error=maybe-uninitialized')
+            result = subprocess.run(flags + [
                                      '-DLINUX_VERSION_CODE=' + str(code), str(source), '-o', str(binary)],
                                     capture_output=True, text=True)
             if result.returncode:
                 raise AssertionError(str(version) + '\n' + result.stdout + result.stderr)
+            if result.stdout or result.stderr:
+                sys.stderr.write(str(version) + '\n' + result.stdout + result.stderr)
             cls.binaries.append((version, binary))
 
     def check_case(self, case):
@@ -98,6 +120,51 @@ class UniwillProbeRuntime(unittest.TestCase):
 
     def test_previous_lifecycle_tail_cannot_queue_work_in_new_lifecycle(self):
         self.check_case('stale_tail')
+
+    def test_backlight_rmw_preserves_other_bits_and_enable_argument_mask(self):
+        self.check_case('backlight_bytes')
+
+    def test_backlight_read_failure_returns_original_errno_and_never_writes(self):
+        self.check_case('backlight_read_errors')
+
+    def test_backlight_write_failure_returns_original_errno(self):
+        self.check_case('backlight_write_errors')
+
+    def test_profile_curve_success_preserves_exact_ec_sequence(self):
+        self.check_case('curve_success')
+
+    def test_each_curve_read_and_write_failure_stops_dependent_initialization(self):
+        self.check_case('curve_errors')
+
+    def test_manual_enable_failure_closes_exports_without_guessing_rollback(self):
+        self.check_case('manual_enable_errors')
+
+    def test_second_fan_reset_failure_disables_confirmed_manual_mode(self):
+        self.check_case('fan_detection_errors')
+
+    def test_failed_probe_cleanup_keeps_original_errno_and_reports_cleanup_error(self):
+        self.check_case('cleanup_errors')
+
+    def test_critical_probe_failures_can_retry_with_no_live_exports_or_resources(self):
+        self.check_case('critical_reprobe')
+
+    def test_optional_initial_backlight_read_failure_keeps_unknown_sentinel(self):
+        self.check_case('initial_backlight_errors')
+
+    def test_optional_backlight_enable_failures_are_logged_and_probe_continues(self):
+        self.check_case('enable_backlight_errors')
+
+    def test_backlight_enable_is_restored_for_all_initial_and_current_bytes(self):
+        self.check_case('backlight_restore_bytes')
+
+    def test_remove_backlight_failures_do_not_stop_resource_teardown(self):
+        self.check_case('restore_errors')
+
+    def test_remove_manual_disable_errno_is_logged_without_skipping_unlock(self):
+        self.check_case('remove_manual_errors')
+
+    def test_new_probe_clears_saved_backlight_state_even_on_early_failure(self):
+        self.check_case('backlight_reprobe')
 
 
 if __name__ == '__main__':

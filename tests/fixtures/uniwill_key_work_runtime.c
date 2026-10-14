@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
+#define TUXEDO_ERROR(...) do {} while (0)
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -117,7 +118,7 @@ static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)grou
 static void uw_battery_uninit(void) {}
 static void uniwill_leds_remove(struct platform_device *dev) { assert(dev == &platform); }
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
-static void uniwill_write_kbd_bl_enable(u8 b) { (void)b; }
+static int uniwill_write_kbd_bl_enable(u8 b) { (void)b; return 0; }
 static int uniwill_write_ec_ram(unsigned int address, u8 b) { assert(address == 0x0741 && b == 0); return 0; }
 static void uw_fan_quiesce_locked(void) {}
 static void device_remove_file(struct device *dev, int *attr) { assert(dev == &platform.dev); (void)attr; }

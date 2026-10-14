@@ -45,8 +45,10 @@ class CustomProfileTests(unittest.TestCase):
                       'uniwill_set_custom_profile_mode(zero); return 0;')
         pieces = [helper, function(source, 'uniwill_event_callb')]
         pieces += [function(source, name) for name in
-                   ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start',
-                    'uniwill_keyboard_probe')]
+                   ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start')]
+        if 'static int uniwill_keyboard_abort_probe(' in source:
+            pieces.append(function(source, 'uniwill_keyboard_abort_probe'))
+        pieces.append(function(source, 'uniwill_keyboard_probe'))
         fixture = (ROOT / 'tests/fixtures/uniwill_custom_profile.c').read_text()
         fixture = fixture.replace('/* @ACTUAL_FUNCTIONS@ */', '\n\n'.join(pieces))
         fixture = fixture.replace('/* @INVOKE_HELPER@ */', invocation)

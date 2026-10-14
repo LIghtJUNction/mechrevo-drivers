@@ -106,7 +106,7 @@ static bool sparse_keymap_report_known_event(void *input, u32 code, int value, b
     (void)input; (void)code; (void)value; (void)down; return true;
 }
 static void set_rom_id(void) {}
-static void uniwill_write_kbd_bl_enable(u8 value) { assert(value == 1); resource(0); }
+static int uniwill_write_kbd_bl_enable(u8 value) { assert(value == 1); resource(0); return 0; }
 static void uniwill_leds_init(struct platform_device *dev) { (void)dev; resource(1); }
 static int uw_lightbar_init(struct platform_device *dev) { (void)dev; resource(2); return 0; }
 static void uw_charging_priority_init(struct platform_device *dev) { (void)dev; resource(3); }
@@ -190,7 +190,7 @@ static void probe_case(int failure, int error, bool unsupported, bool curve) {
     check_operation(offset++, 'r', UW_EC_REG_KBD_BL_STATUS, 0);
     assert(operations == offset);
     assert(resource_calls == 11 && resource_mask == ((1U << 11) - 1) && uw_lightbar_loaded);
-    assert(uniwill_kbd_bl_enable_state_on_start == 1);
+    assert(uniwill_kbd_bl_enable_state_on_start == 0);
     assert(uniwill_i8042_filter_installed && !uniwill_touchp_toggle_seq_pos);
     assert(!uniwill_fan_removed && !uniwill_fan_command_lock.held && !uniwill_fan_state_lock.held);
 }

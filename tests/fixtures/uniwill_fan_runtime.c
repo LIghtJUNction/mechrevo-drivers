@@ -31,7 +31,7 @@ static void mutex_unlock(struct mutex *lock) { assert(pthread_mutex_unlock(&lock
 struct platform_device { int unused; };
 typedef int pm_message_t;
 static int backlight_calls, backlight_enabled, leds_calls, priority_calls, profile_calls;
-static void uniwill_write_kbd_bl_enable(u8 enabled) { ++backlight_calls; backlight_enabled = enabled; }
+static int uniwill_write_kbd_bl_enable(u8 enabled) { ++backlight_calls; backlight_enabled = enabled; return 0; }
 static void uniwill_leds_restore_state_extern(void) { ++leds_calls; }
 static void uw_charging_priority_write_state(void) { ++priority_calls; }
 static void uw_charging_profile_write_state(void) { ++profile_calls; }
