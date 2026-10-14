@@ -2030,6 +2030,31 @@ int uw_update_mode(u8 clear_mask, u8 set_mask)
 }
 EXPORT_SYMBOL(uw_update_mode);
 
+/* The mode prerequisite and TDP write form one device command. In particular,
+ * neither a new profile nor PM/removal may intervene before the final write.
+ * The caller validates the model's power limits before encoding this byte. */
+int uw_write_tdp(u8 tdp_index, u8 tdp_data)
+{
+	u8 mode;
+	int status;
+
+	if (tdp_index > 2)
+		return -EINVAL;
+	status = uw_fan_lock_active(false);
+	if (status)
+		return status;
+	if (uniwill_device_features.uniwill_custom_profile_mode_needed) {
+		status = uniwill_read_ec_ram(0x0751, &mode);
+		if (!status)
+			status = uniwill_write_ec_ram(0x0751, (mode & ~0xb0) | 0x10);
+	}
+	if (!status)
+		status = uniwill_write_ec_ram(0x0783 + tdp_index, tdp_data);
+	uw_fan_unlock();
+	return status;
+}
+EXPORT_SYMBOL(uw_write_tdp);
+
 static int set_full_fan_mode_locked(bool enable) {
 	u8 mode_data;
 	int status;

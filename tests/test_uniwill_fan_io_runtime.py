@@ -26,8 +26,10 @@ class UniwillFanIoRouting(unittest.TestCase):
                               source, re.S).group()
         fixture = (ROOT / "tests/fixtures/uniwill_fan_io_runtime.c").read_text()
         fixture = fixture.replace("/* @PROFILE_ENUM@ */", enum)
-        fixture = fixture.replace("/* @PROFILE_FUNCTION@ */",
-                                  function(source, "uw_set_performance_profile_v1"))
+        fixture = fixture.replace("/* @PROFILE_FUNCTION@ */", "\n\n".join(
+            function(source, name) for name in
+            ("uw_get_performance_profile_count", "uw_apply_performance_profile_v1",
+             "uw_set_performance_profile_v1")))
         fixture = fixture.replace("/* @MODE_CASE@ */", mode_case)
         program = path / "runtime.c"
         program.write_text(fixture)
