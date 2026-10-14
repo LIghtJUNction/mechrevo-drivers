@@ -4,7 +4,7 @@
 
 ## 当前改动
 
-基线为 TUXEDO 正式版本 `v4.24.0`。仅在
+基线为 TUXEDO 正式版本 `v4.24.0`。品牌适配在
 `src/tuxedo_compatibility_check/tuxedo_compatibility_check.c` 的品牌检查表中增加三个独立条目：
 
 - `DMI_SYS_VENDOR` 包含 `MECHREVO`；
@@ -17,6 +17,12 @@
 
 这与 AUR `mechrevo-drivers-dkms` 的品牌放行思路一致，但这里直接维护源代码及上游更新，
 不依赖每次下载上游后再应用外部补丁。
+
+另修复两个通用 Uniwill 问题：不支持的 TDP 读取返回负错误码，避免将 `-ENODEV`
+显示成 `4294967277`；不支持 Mini LED 或控制接口注册失败时，跳过局部调光初始化命令。
+这些修改没有为未知型号添加功耗表，也没有改变已支持型号成功读取时的 32 位数据格式。
+
+旷世 16 Pro `GM6PX0X` 的安装、模块加载和部分接口验证见[本机记录](hardware/GM6PX0X.md)。
 
 ## 能力与边界
 
