@@ -326,6 +326,12 @@ static int find_event(char kind, u16 address)
         if (events[i].kind == kind && events[i].address == address) return i;
     return -1;
 }
+static void assert_event_order(char first_kind, u16 first_address, char second_kind, u16 second_address)
+{
+    int first = find_event(first_kind, first_address);
+    int second = find_event(second_kind, second_address);
+    assert(first >= 0 && second >= 0 && first < second);
+}
 int main(int argc, char **argv)
 {
     assert(argc == 2); const char *test = argv[1]; actor = 0;
@@ -379,14 +385,14 @@ int main(int argc, char **argv)
         }
     } else if (!strcmp(test, "pm_order")) {
         manual(); assert(uniwill_keyboard_suspend(&platform, 0) == 0);
-        assert(find_event('w', 0x0751) < find_event('w', 0x0727));
-        assert(find_event('w', 0x0727) < find_event('w', 0x078c));
+        assert_event_order('w', 0x0751, 'w', 0x0727);
+        assert_event_order('w', 0x0727, 'w', 0x078c);
         clear_events(); assert(uniwill_keyboard_resume(&platform) == 0);
-        assert(find_event('w', 0x1809) < find_event('w', 0x0727));
-        assert(find_event('w', 0x0727) < find_event('L', 0));
-        assert(find_event('L', 0) < find_event('w', 0x078c));
-        assert(find_event('w', 0x078c) < find_event('P', 0));
-        assert(find_event('P', 0) < find_event('C', 0));
+        assert_event_order('w', 0x1809, 'w', 0x0727);
+        assert_event_order('w', 0x0727, 'L', 0);
+        assert_event_order('L', 0, 'w', 0x078c);
+        assert_event_order('w', 0x078c, 'P', 0);
+        assert_event_order('P', 0, 'C', 0);
         run_worker(); assert(ec[0x1804] == 83 && ec[0x1809] == 97);
     } else if (!strcmp(test, "suspend_backlight_failure")) {
         for (int enabled = 0; enabled < 2; ++enabled) {
