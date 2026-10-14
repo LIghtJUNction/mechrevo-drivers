@@ -169,6 +169,17 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     return error;
 }
 
+
+/* Service double for the probe/PM fixture's new atomic update entry point.
+ * Shared-register concurrency runs the actual foundation in LED transaction tests. */
+static int __attribute__((unused)) uniwill_update_ec_ram(unsigned int address, u8 clear, u8 set)
+{
+    u8 data;
+    int result = uniwill_read_ec_ram(address, &data);
+    if (result) return result;
+    return uniwill_write_ec_ram(address, (data & ~clear) | set);
+}
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #define UW_EC_REG_KBD_BL_STATUS 0x078c

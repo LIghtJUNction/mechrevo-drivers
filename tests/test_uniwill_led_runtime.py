@@ -20,7 +20,7 @@ HEADER = Path(os.environ.get('UNIWILL_LEDS_HEADER', ROOT / 'src/uniwill_leds.h')
 
 
 def function(source, name):
-    match = re.search(r'(?m)^(?:static\s+)?(?:int|void)\s+' + re.escape(name)
+    match = re.search(r'(?m)^(?:static\s+)?(?:int|void|bool)\s+' + re.escape(name)
                       + r'\([^;{]*\)\s*\{', source)
     if not match:
         raise AssertionError('Missing actual function: ' + name)
@@ -58,7 +58,10 @@ class UniwillLedRuntime(unittest.TestCase):
                    'uniwill_write_kbd_bl_brightness_white_workaround',
                    'tf_convert_rgb_range', 'uniwill_write_kbd_bl_color',
                    'uniwill_leds_set_brightness', 'uniwill_leds_set_brightness_mc')
-        pieces = [function(source, name) for name in helpers]
+        pieces = [re.search(r'(?m)^static DEFINE_MUTEX\(uniwill_led_lock\);', source).group()
+                  if 'static DEFINE_MUTEX(uniwill_led_lock);' in source else
+                  'static DEFINE_MUTEX(uniwill_led_lock);']
+        pieces += [function(source, name) for name in helpers]
         pieces += [initializer(source, name) for name in
                    ('uniwill_led_cdev', 'uw_mcled_cdev_subleds', 'uniwill_mcled_cdev')]
         defines = '\n'.join(re.findall(r'(?m)^#define UNIWILL_KBD_[^\n]+', source))
@@ -75,8 +78,13 @@ class UniwillLedRuntime(unittest.TestCase):
             lifecycle.append(re.search(r'(?m)^static [^\n]+\b' + name + r'\s*=.*?;', source).group())
         lifecycle += [initializer(source, name) for name in
                       ('force_no_ec_led_control', 'kbl_type_fixed_color_5_levels')]
-        lifecycle += [function(source, name) for name in ('uniwill_leds_init', 'uniwill_leds_remove', 'uniwill_leds_restore_state_extern')]
-        keyboard = (ROOT / 'src/uniwill_keyboard.h').read_text()
+        lifecycle += [function(source, name) for name in ('uniwill_leds_init', 'uniwill_leds_remove', 'uniwill_leds_restore_state_extern', 'uniwill_leds_notify_brightness_change_extern')]
+        keyboard = Path(os.environ.get('UNIWILL_LEDS_KEYBOARD', ROOT / 'src/uniwill_keyboard.h')).read_text()
+        foundation = (ROOT / 'src/uniwill_keyboard.h').read_text()
+        wrappers = [re.search(r'(?m)^static DEFINE_MUTEX\(uniwill_ec_transaction_lock\);', foundation).group()]
+        wrappers += [function(foundation, name) for name in
+                     ('uniwill_read_ec_ram', 'uniwill_write_ec_ram', 'uniwill_update_ec_ram')]
+        fixture = fixture.replace('/* @ACTUAL_EC_WRAPPERS@ */', '\n\n'.join(wrappers))
         parent_helper = function(keyboard, 'uniwill_write_kbd_bl_enable')
         fixture = fixture.replace('/* @PARENT_BACKLIGHT_HELPER@ */', parent_helper)
         parent_call = ('return uniwill_write_kbd_bl_enable(enable);'
@@ -97,7 +105,7 @@ class UniwillLedRuntime(unittest.TestCase):
                                      '-Wall', '-Wextra', '-Werror',
                                      *(['-Wno-error=maybe-uninitialized'] if parent_helper.startswith('static void ') else []),
                                      '-DLINUX_VERSION_CODE=' + str(code),
-                                     str(c_source), '-o', str(binary)],
+                                     '-pthread', str(c_source), '-o', str(binary)],
                                     capture_output=True, text=True)
             if result.stdout or result.stderr:
                 sys.stderr.write(str(version) + '\n' + result.stdout + result.stderr)

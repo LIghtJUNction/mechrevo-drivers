@@ -117,6 +117,17 @@ static int uniwill_write_ec_ram(unsigned int address, u8 data) {
     if (!status) ec[address] = data;
     return status;
 }
+
+/* Service double for the probe/PM fixture's new atomic update entry point.
+ * Shared-register concurrency runs the actual foundation in LED transaction tests. */
+static int __attribute__((unused)) uniwill_update_ec_ram(unsigned int address, u8 clear, u8 set)
+{
+    u8 data;
+    int result = uniwill_read_ec_ram(address, &data);
+    if (result) return result;
+    return uniwill_write_ec_ram(address, (data & ~clear) | set);
+}
+
 static int uniwill_set_custom_profile_mode(bool enabled) { assert(enabled); ++tail_initializations; return 0; }
 static void uniwill_leds_init(struct platform_device *dev) { assert(dev == &platform); ++resources; }
 static int uw_lightbar_init(struct platform_device *dev) { assert(dev == &platform); return -ENODEV; }

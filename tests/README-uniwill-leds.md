@@ -127,3 +127,77 @@ and permits only `maybe-uninitialized` to remain a warning for that legacy helpe
 configuration. All compiler output is retained. With the fixed `int` helper in
 the combined maintenance tree, compilation uses strict `-Werror` throughout.
 Neither this exception nor the hierarchy model is a hardware PM validation.
+
+## Driver transaction and firmware event follow-up
+
+The LED domain mutex serializes each driver's complete white/RGB apply, direct
+restore, firmware notification, and readiness publication. It never surrounds
+LED core registration, unregistration, work flushing, or cancellation. In
+particular removal closes direct restore/notification before unregister, while
+the unregister OFF callback remains usable and acquires the mutex normally.
+Normal init/remove calls still rely on their existing outer device/interface
+serialization; the domain mutex does not make arbitrary simultaneous exported
+init/remove calls a supported lifecycle.
+
+Brightness and parent enable use the atomic EC update helper for their shared
+`0x078c` byte. The brightness update preserves the existing low nibble and
+replaces the full upper nibble, including its apply bit. RGB apply uses the same
+helper for `0x0767`, which also contains USB powershare's independent bit. The
+helper holds a transaction mutex across the actual read and dependent write;
+public individual EC reads/writes participate in that same mutex. None of these
+changes add EC retries or roll back partial color writes.
+
+Firmware brightness events are consumed for an initialized EC-controlled LED
+without touching the EC or requested cache while the child is suspended. EC
+read errors and failed RGB compensation leave the requested cache and hardware
+notification untouched. The suspended flag is checked again after a sleeping
+read/compensation so a waiting event does not overwrite the desired state from
+a completed LED-core temporary OFF. This is a defensive check, not an atomic
+contract with every LED-core flag/cache writer. Direct RGB restoration now uses
+the existing black special case: all-zero color channels request hardware
+brightness zero without writing EC default-color commands or changing the
+cached requested brightness. Nonblack restore retains the prior independent
+brightness attempt after a color error.
+
+The existing 33-test core fixture now extracts the real public EC wrappers and
+atomic update helper, with private transport service doubles. The older probe
+and parent-PM fixtures instead provide an explicit update service double to
+preserve their existing probe/PM assertions. Shared-register and driver-domain
+concurrency are tested separately by `test_uniwill_led_transactions.py`, which
+runs the real foundation and LED functions with pthread schedules. These tests
+do not establish that LED core's requested brightness, its RGB intensity tuple,
+or firmware state form one globally atomic snapshot. No physical backlight,
+register, trigger, sleep, reboot or runtime kernel lockdep is used.
+
+Run the 18 follow-up tests with:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_uniwill_led_transactions.py' -v
+```
+
+Both preprocessing versions run the same actual source. The fixed pthread
+schedules cover both orders of brightness/enable updates for all 256 original
+status bytes and both enable values; full RGB callback/restore transaction
+sequences with distinct immutable color inputs; every white/RGB EC failure and
+subsequent recovery; and RGB-black restore at every requested level and original
+status byte. Notification checks include successful existing white/RGB mapping,
+failed reads/compensation, uninitialized/absent/uncontrolled state, a completed
+child suspend, and child suspend arriving during the notification read or RGB
+compensation. The latter runs the actual frozen child suspend and queued OFF
+callback, verifies that it waits for the domain mutex, then resumes the latest
+requested brightness. Registration verifies readiness is still unpublished and
+our mutex is unlocked while a core callback runs. Unregister is a service model
+that requests OFF through actual core queueing and drains its actual callback;
+it is not execution of the full kernel unregister implementation.
+
+For this follow-up's sensitivity, select the `2dae697` LED header with
+`UNIWILL_LEDS_HEADER` and its keyboard header with
+`UNIWILL_LED_KEYBOARD_HEADER`. The new EC foundation remains the actual compiled
+API from the current tree; this isolates the old LED/parent implementation
+above it rather than claiming a build of the complete old driver tree. Twelve
+of the 18 methods fail as runtime assertions on both preprocessing versions
+(24 failing subtests), while six methods pass. These failures include both
+confirmed stale-register/cache errors and the new coordination contract; they
+are not a count of twelve distinct pre-existing vulnerabilities. The earlier
+33 core tests still pass with those same old LED and parent inputs, confirming
+that their established successful behavior and error policy remain intact.
