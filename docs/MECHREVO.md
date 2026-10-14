@@ -58,7 +58,8 @@ make -j2 KDIR=/usr/lib/modules/$(uname -r)/build
 构建成功仅证明该内核下能编译，不证明硬件兼容。不建议为了试验直接 `make install`：
 上游 install 目标会写系统模块及 `usr/` 中的规则，且不提供本分支的包管理卸载保障。
 优先在明确兼容型号上通过发行版包管理/DKMS 打包测试，避免同时安装多个提供同名模块的包。
-本项目暂未发布自己命名的 AUR 包；AUR 上现有同名包不会自动变成这个仓库的版本。
+本分支使用独立的 AUR 包名 `mechrevo-drivers-dkms-git`，详见 [Arch / AUR 安装与打包](AUR.md)。
+它与其他维护者的 `mechrevo-drivers-dkms` 互斥；现有第三方包不会自动变成这个仓库的版本。
 
 ## 维护原则
 

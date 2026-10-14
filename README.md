@@ -7,9 +7,9 @@
 - **不是性能优化包：** 尚无机械革命型号专属风扇曲线、功耗调优或实机兼容性认证。品牌匹配不能保证 EC 操作安全。
 - **上游同步：** 每日镜像开发分支到 `upstream`，仅将正式版本合入自动更新 PR；`main` 不会被强推或自动合并。
 
-阅读 [机械革命支持范围与验证](docs/MECHREVO.md) 和 [同步机制及维护流程](docs/MAINTENANCE.md)。
+阅读 [机械革命支持范围与验证](docs/MECHREVO.md)、[同步机制及维护流程](docs/MAINTENANCE.md) 和 [Arch / AUR 安装与打包](docs/AUR.md)。
 
-> 不要与原版 tuxedo-drivers / AUR mechrevo-drivers-dkms 同时安装同名模块。本仓库目前是源码维护分支，尚未发布独立 DKMS 二进制包。下方保留上游说明，列出的功能不代表所有机械革命机型都支持。
+> 本分支的 AUR 包名为 `mechrevo-drivers-dkms-git`，从本仓库 `main` 获取源码。它与其他维护者的 `mechrevo-drivers-dkms` 独立、互斥，不接管对方的包；也不要与原版 tuxedo-drivers 同时安装同名模块。AUR 发布的是构建配方，不是预编译 DKMS 二进制包。下方保留上游说明，列出的功能不代表所有机械革命机型都支持。
 
 ---
 

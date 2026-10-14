@@ -65,6 +65,10 @@ make -j2 KDIR=/usr/lib/modules/$(uname -r)/build
 该记录只描述初始化版本，不代表未来 PR 已被验证。
 `.sync-worktrees/` 和 `.local-tests/` 不提交到 Git。
 
+AUR 构建配方及独立包发布流程见 [Arch / AUR 安装与打包](AUR.md)。
+`tests/test_aur_packaging.py` 会在本机检查包名、互斥、源码地址、校验和、Git 版本选择、
+DKMS 模块与 Kbuild 一致性，以及安装布局和权限；不联网、不安装、不加载模块。
+
 例行更新先在本机检查 PR diff、跑以上测试和对应内核构建，记录结果后再合并、推送。
 不要为日常验收反复触发/等待远程 CI 或远程审查。没有硬件时明确注明未做实机验证。
 
