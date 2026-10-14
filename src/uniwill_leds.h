@@ -196,6 +196,7 @@ static int uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum le
 static struct led_classdev uniwill_led_cdev = {
 	.name = "white:" LED_FUNCTION_KBD_BACKLIGHT,
 	.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE,
+	.flags = LED_CORE_SUSPENDRESUME,
 	.brightness_set_blocking = &uniwill_leds_set_brightness,
 	.brightness = UNIWILL_KBD_BRIGHTNESS_DEFAULT_WHITE,
 };
@@ -230,6 +231,7 @@ static struct mc_subled uw_mcled_cdev_subleds[3] = {
 static struct led_classdev_mc uniwill_mcled_cdev = {
 	.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT,
 	.led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_1_ZONE_RGB,
+	.led_cdev.flags = LED_CORE_SUSPENDRESUME,
 	.led_cdev.brightness_set_blocking = &uniwill_leds_set_brightness_mc,
 	.led_cdev.brightness = UNIWILL_KBD_BRIGHTNESS_DEFAULT_1_ZONE_RGB,
 	.num_colors = 3,
@@ -291,6 +293,9 @@ int uniwill_leds_init(struct platform_device *dev)
 	int result = 0, i = 0;
 	u8 data = 0;
 
+	uniwill_kb_backlight_type = UNIWILL_KB_BACKLIGHT_TYPE_NONE;
+	uniwill_kbl_brightness_ec_controlled = false;
+
 	for (i = 0; i < 3; ++i) {
 		if (i) {
 			pr_err("Reading barebone ID failed. Retrying ...\n");
@@ -304,7 +309,7 @@ int uniwill_leds_init(struct platform_device *dev)
 	}
 	if (result || !uniwill_barebone_id) {
 		pr_err("Reading barebone ID failed.\n");
-		return result;
+		return result ? result : -EIO;
 	}
 	pr_debug("EC Barebone ID: %#04x\n", uniwill_barebone_id);
 
@@ -315,9 +320,17 @@ int uniwill_leds_init(struct platform_device *dev)
 	// Known affected devices:
 	// - IBP Gen7-9
 	// - Polaris Gen4-5
-	uniwill_read_ec_ram(UW_EC_REG_FEATURES_1, &data);
+	result = uniwill_read_ec_ram(UW_EC_REG_FEATURES_1, &data);
+	if (result) {
+		pr_err("Reading keyboard backlight features failed: %d\n", result);
+		return result;
+	}
 	data |= UW_EC_REG_FEATURES_1_BIT_FIXED_COLOR_5_ENABLE;
-	uniwill_write_ec_ram(UW_EC_REG_FEATURES_1, data);
+	result = uniwill_write_ec_ram(UW_EC_REG_FEATURES_1, data);
+	if (result) {
+		pr_err("Enabling keyboard backlight control failed: %d\n", result);
+		return result;
+	}
 
 	if (dmi_check_system(force_no_ec_led_control)) {
 		pr_debug("Skip uniwill_kb_backlight_type checks because of quirk.\n");
@@ -355,8 +368,10 @@ int uniwill_leds_init(struct platform_device *dev)
 
 	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
 		pr_debug("Registering fixed color leds interface\n");
+		uniwill_led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE;
+		uniwill_led_cdev.flags = LED_CORE_SUSPENDRESUME;
 		if (uniwill_kbl_brightness_ec_controlled)
-			uniwill_led_cdev.flags = LED_BRIGHT_HW_CHANGED;
+			uniwill_led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = led_classdev_register(&dev->dev, &uniwill_led_cdev);
 		if (result) {
 			pr_err("Registering fixed color leds interface failed\n");
@@ -366,8 +381,9 @@ int uniwill_leds_init(struct platform_device *dev)
 	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
 		pr_debug("Registering fixed color 5 levels leds interface\n");
 		uniwill_led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE_5;
+		uniwill_led_cdev.flags = LED_CORE_SUSPENDRESUME;
 		if (uniwill_kbl_brightness_ec_controlled)
-			uniwill_led_cdev.flags = LED_BRIGHT_HW_CHANGED;
+			uniwill_led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = led_classdev_register(&dev->dev, &uniwill_led_cdev);
 		if (result) {
 			pr_err("Registering fixed color 5 levels leds interface failed\n");
@@ -376,8 +392,9 @@ int uniwill_leds_init(struct platform_device *dev)
 	}
 	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
 		pr_debug("Registering single zone rgb leds interface\n");
+		uniwill_mcled_cdev.led_cdev.flags = LED_CORE_SUSPENDRESUME;
 		if (uniwill_kbl_brightness_ec_controlled)
-			uniwill_mcled_cdev.led_cdev.flags = LED_BRIGHT_HW_CHANGED;
+			uniwill_mcled_cdev.led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = devm_led_classdev_multicolor_register(&dev->dev, &uniwill_mcled_cdev);
 		if (result) {
 			pr_err("Registering single zone rgb leds interface failed\n");
@@ -417,6 +434,9 @@ uniwill_kb_backlight_type_t uniwill_leds_get_backlight_type_extern(void) {
 EXPORT_SYMBOL(uniwill_leds_get_backlight_type_extern);
 
 void uniwill_leds_restore_state_extern(void) {
+	if (!uw_leds_initialized)
+		return;
+
 	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
 	    uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
 		if (uniwill_write_kbd_bl_brightness_white_workaround(uniwill_led_cdev.brightness)) {
