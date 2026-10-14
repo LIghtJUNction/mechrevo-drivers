@@ -130,6 +130,8 @@ int uniwill_add_interface(struct uniwill_interface_t *new_interface);
 int uniwill_remove_interface(struct uniwill_interface_t *interface);
 uniwill_read_ec_ram_t uniwill_read_ec_ram;
 uniwill_write_ec_ram_t uniwill_write_ec_ram;
+/* Atomic with respect to other public EC reads, writes and updates. */
+int uniwill_update_ec_ram(u16 address, u8 clear_mask, u8 set_mask);
 uniwill_wmi_evaluate_t uniwill_wmi_evaluate;
 uniwill_write_ec_ram_with_retry_t uniwill_write_ec_ram_with_retry;
 uniwill_read_ec_ram_with_retry_t uniwill_read_ec_ram_with_retry;

@@ -112,7 +112,11 @@ static struct uniwill_interfaces_t {
 
 uniwill_event_callb_t uniwill_event_callb;
 
-int uniwill_read_ec_ram(u16 address, u8 *data)
+/* Lock order: caller domain locks -> EC transaction -> transport.
+ * Keep the lock private: callers compose only complete register updates. */
+static DEFINE_MUTEX(uniwill_ec_transaction_lock);
+
+static int uniwill_read_ec_ram_unlocked(u16 address, u8 *data)
 {
 	int status;
 
@@ -123,6 +127,15 @@ int uniwill_read_ec_ram(u16 address, u8 *data)
 		status = -EIO;
 	}
 
+	return status;
+}
+int uniwill_read_ec_ram(u16 address, u8 *data)
+{
+	int status;
+
+	mutex_lock(&uniwill_ec_transaction_lock);
+	status = uniwill_read_ec_ram_unlocked(address, data);
+	mutex_unlock(&uniwill_ec_transaction_lock);
 	return status;
 }
 EXPORT_SYMBOL(uniwill_read_ec_ram);
@@ -156,7 +169,7 @@ static int uniwill_read_ec_ram_u16(u16 hibyte_address, u16 lobyte_address, u16 *
 	return result;
 }
 
-int uniwill_write_ec_ram(u16 address, u8 data)
+static int uniwill_write_ec_ram_unlocked(u16 address, u8 data)
 {
 	int status;
 
@@ -169,7 +182,30 @@ int uniwill_write_ec_ram(u16 address, u8 data)
 
 	return status;
 }
+int uniwill_write_ec_ram(u16 address, u8 data)
+{
+	int status;
+
+	mutex_lock(&uniwill_ec_transaction_lock);
+	status = uniwill_write_ec_ram_unlocked(address, data);
+	mutex_unlock(&uniwill_ec_transaction_lock);
+	return status;
+}
 EXPORT_SYMBOL(uniwill_write_ec_ram);
+
+int uniwill_update_ec_ram(u16 address, u8 clear_mask, u8 set_mask)
+{
+	u8 data;
+	int status;
+
+	mutex_lock(&uniwill_ec_transaction_lock);
+	status = uniwill_read_ec_ram_unlocked(address, &data);
+	if (!status)
+		status = uniwill_write_ec_ram_unlocked(address, (data & ~clear_mask) | set_mask);
+	mutex_unlock(&uniwill_ec_transaction_lock);
+	return status;
+}
+EXPORT_SYMBOL(uniwill_update_ec_ram);
 
 int uniwill_write_ec_ram_with_retry(u16 address, u8 data, int retries)
 {

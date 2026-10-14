@@ -1,0 +1,40 @@
+# Uniwill EC update transaction
+
+`uniwill_update_ec_ram(address, clear_mask, set_mask)` performs one successful
+read followed by `(old & ~clear_mask) | set_mask` under a private provider mutex.
+Set bits win when masks overlap. It returns the original transport status; a
+failed read cannot issue a write. A failed write is not retried or rolled back:
+a failed physical transaction may still have changed hardware.
+
+All public `uniwill_read_ec_ram` and `uniwill_write_ec_ram` operations use the
+same mutex. The new helper calls private unlocked implementations while holding
+it, so it does not recursively lock the public wrappers. Existing missing
+interface and read-pointer delegation behavior is preserved. Lock order is
+caller domain locks, then the private EC transaction mutex, then existing WMI
+or direct-EC transport locks. No generic lock/unlock functions are exported.
+
+The actual-C test extracts these five complete provider functions, the real
+interface structure/typedefs, and mutex declaration without rewriting them.
+Transport memory and kernel mutex services are explicit userspace pthread
+doubles. It checks all 16,777,216 initial-byte/clear-mask/set-mask combinations,
+u16 address endpoints, original read/write errors, absent/error interface
+pointers, NULL/error read-pointer validation, and failure recovery. It also
+models a failed write with a hardware side effect to ensure no guessed rollback.
+
+Deterministic pthread cases pause the first transport operation after sampling
+or writing, start a competing public operation, and verify that it is blocked.
+The recorded trace must contain complete update read/write pairs before the
+next read, write or update can access transport. Disjoint and overlapping
+updates are checked in both orders. A scheduler hook after a standalone read's
+unlock exposes lost updates in an intentionally broken implementation that
+uses separately locked public read/write calls. The unchanged complete
+transaction does not reach that hook between its read and write. Nonrecursive
+mutex semantics are asserted rather than letting a broken test hang.
+
+This is a single-register atomicity primitive among these public provider
+operations. It does not serialize firmware, external direct transport users,
+`uniwill_wmi_evaluate`, interface registration/removal, two-register u16 reads,
+or a complete write/retry/readback sequence. It does not replace LED, charging
+or fan multi-operation/cache transactions. No hardware or module is accessed by
+the runtime tests. Compilation and pthread execution are not physical EC or
+scheduler/lockdep validation.
