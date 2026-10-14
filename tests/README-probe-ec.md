@@ -32,12 +32,15 @@ initial state is never restored using a fabricated value.
 `UNIWILL_PROBE_BASELINE=/absolute/tree` runs this same fixture against an older
 tree. A wrapper adapts only invocation of the older void backlight helper to
 the new test return convention; all extracted driver bodies remain unchanged.
-The f178aed baseline fails 13 new behavior tests (52 version subtests), while
-the remaining 10 tests pass. For an explicitly selected older tree, the known
+The upstream branch baseline `cf53ff7`, before the probe/PM additions, fails
+13 new behavior tests (52 version subtests), while the remaining 10 tests pass.
+Fixture-only PM-state declarations are marked unused so a header predating the
+PM gate still compiles without changing its driver functions. For an explicitly
+selected older tree, the known
 `maybe-uninitialized` warning is printed and allowed so the old source can
 reach the runtime assertions. Current source keeps strict `-Werror` builds.
 Logs and build records are retained under
-`.local-tests/next-20261015/probe-validation` in the original project.
+`.local-tests/next-20261015/upstream-uniwill-validation` in the original project.
 
 No EC fault injection, real unbind/rebind, backlight restore, suspend/resume or
 physical fan test is performed by this fixture. PM callback error propagation
