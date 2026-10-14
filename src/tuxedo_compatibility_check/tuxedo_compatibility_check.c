@@ -199,7 +199,8 @@ static const struct x86_cpu_id force_tuxedo_dmi_string_check_match[] = {
 	{ }
 };
 
-// Going forward we only run the drivers on in house tested devices
+// Downstream MECHREVO entries enable the brand gate only; they do not
+// certify model-specific EC, fan or power-control compatibility.
 static const struct dmi_system_id tuxedo_dmi_string_match[] = {
 	{
 		.matches = {
@@ -214,6 +215,21 @@ static const struct dmi_system_id tuxedo_dmi_string_match[] = {
 	{
 		.matches = {
 			DMI_MATCH(DMI_CHASSIS_VENDOR, "TUXEDO"),
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "MECHREVO"),
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "MECHREVO"),
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_CHASSIS_VENDOR, "MECHREVO"),
 		},
 	},
 	{ }

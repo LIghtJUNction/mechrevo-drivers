@@ -1,3 +1,18 @@
+# mechrevo-drivers — 机械革命 Linux 平台驱动维护分支
+
+基于 [TUXEDO `tuxedo-drivers`](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers) 的非官方维护分支，保留原始历史、模块名称及许可证。
+
+- **初始维护基线：上游 `v4.24.0`**，不是开发版 `v4.25.0_rc`。
+- **当前适配：** 系统、主板、机箱厂商字段中的 `MECHREVO` 可通过品牌检查；保留原有 TUXEDO 匹配和旧平台逻辑。
+- **不是性能优化包：** 尚无机械革命型号专属风扇曲线、功耗调优或实机兼容性认证。品牌匹配不能保证 EC 操作安全。
+- **上游同步：** 每日镜像开发分支到 `upstream`，仅将正式版本合入自动更新 PR；`main` 不会被强推或自动合并。
+
+阅读 [机械革命支持范围与验证](docs/MECHREVO.md) 和 [同步机制及维护流程](docs/MAINTENANCE.md)。
+
+> 不要与原版 tuxedo-drivers / AUR mechrevo-drivers-dkms 同时安装同名模块。本仓库目前是源码维护分支，尚未发布独立 DKMS 二进制包。下方保留上游说明，列出的功能不代表所有机械革命机型都支持。
+
+---
+
 # Table of Content
 - <a href="#description">Description</a>
 - <a href="#building-and-install">Building and Install</a>

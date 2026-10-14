@@ -19,3 +19,8 @@ Module.symvers
 /*.kdev4
 /.vscode
 /.cache
+
+# downstream maintenance / local verification
+/.sync-worktrees/
+/.local-tests/
+__pycache__/
