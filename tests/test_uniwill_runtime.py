@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_uniwill_fan_runtime import function as provider_function
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -29,12 +31,13 @@ def function(source, name):
 class UniwillRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", tempfile.gettempdir()))
         parent.mkdir(exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
         source_root = Path(os.environ.get("UNIWILL_IO_SOURCE_ROOT", ROOT))
+        keyboard = (source_root / "src/uniwill_keyboard.h").read_text()
         io = (source_root / "src/tuxedo_io/tuxedo_io.c").read_text()
         interfaces = (source_root / "src/uniwill_interfaces.h").read_text()
         fan_constant = re.search(r"(?m)^#define FAN_ON_MIN_SPEED_PERCENT\s+.+$", io)
@@ -61,6 +64,14 @@ class UniwillRuntime(unittest.TestCase):
         fixture = (ROOT / "tests/fixtures/uniwill_runtime.c").read_text()
         profile_prototype = function(io, "uw_set_performance_profile_v1").split("{", 1)[0].strip() + ";"
         fixture = fixture.replace("/* @DRIVER_PROFILE_PROTOTYPE@ */", profile_prototype)
+        provider = ""
+        if re.search(r"(?m)^int uw_write_tdp\(", keyboard):
+            provider = "#define ACTUAL_TDP_PROVIDER 1\n" + "\n\n".join(
+                provider_function(keyboard, name) for name in
+                ("uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active", "uw_write_tdp"))
+        else:
+            provider = "#define ACTUAL_TDP_PROVIDER 0\n"
+        fixture = fixture.replace("/* @DRIVER_TDP_PROVIDER@ */", provider)
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(functions))
         fixture = fixture.replace("/* @DRIVER_INTERFACE_TYPES@ */", "\n\n".join(types))
         fixture = fixture.replace("/* @DRIVER_UNIWILL_IOCTL@ */", function(io, "uniwill_ioctl_interface"))
@@ -170,6 +181,9 @@ class UniwillRuntime(unittest.TestCase):
 
     def test_tdp_profile_change_precedes_valid_tdp_write(self):
         self.check_case("tdp_profile_success")
+
+    def test_tdp_provider_gate_error_prevents_tdp_write(self):
+        self.check_case("tdp_provider_gate_error")
 
     def test_tdp_write_error_after_profile_change_is_reported(self):
         self.check_case("tdp_ec_error_after_profile")

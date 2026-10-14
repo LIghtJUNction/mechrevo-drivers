@@ -498,10 +498,8 @@ static int uw_get_tdp(u8 tdp_index)
 
 static int uw_set_tdp(u8 tdp_index, int tdp_value)
 {
-	int tdp_min, tdp_max, status;
+	int tdp_min, tdp_max;
 	u8 tdp_data;
-	u16 tdp_base_addr = 0x0783;
-	u16 tdp_current_addr = tdp_base_addr + tdp_index;
 
 	// Use min tdp to detect support for chosen tdp parameter
 	tdp_min = uw_get_tdp_min(tdp_index);
@@ -513,22 +511,12 @@ static int uw_set_tdp(u8 tdp_index, int tdp_value)
 	if (tdp_value < tdp_min || tdp_value > tdp_max)
 		return -EINVAL;
 
-	if (uw_feats->uniwill_custom_profile_mode_needed) {
-		// Ensure that "overboost" profile is chosen when using TDP set
-		// for devices that require this
-		/* Custom TDP can require this internal mode even when no public
-		 * profiles are advertised for the device. */
-		status = uw_apply_performance_profile_v1(PROFILE_OVERBOOST);
-		if (status < 0)
-			return status;
-	}
-
 	if (tdp_index == 2 && uw_feats->uniwill_has_double_pl4)
 		tdp_data = tdp_value / 2;
 	else
 		tdp_data = tdp_value;
 
-	return uniwill_write_ec_ram(tdp_current_addr, tdp_data);
+	return uw_write_tdp(tdp_index, tdp_data);
 }
 
 static u32 uw_get_performance_profile_count(void)
@@ -541,8 +529,8 @@ static u32 uw_get_performance_profile_count(void)
 	return 0;
 }
 
-/* Apply the established mode bits. In addition to public profiles, the
- * validated custom-TDP path uses OVERBOOST on devices that require it. */
+/* Apply the established public-profile mode bits. Custom TDP uses the
+ * provider's complete mode-plus-power transaction instead. */
 static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 {
 	u8 profile_bits;

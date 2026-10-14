@@ -6,6 +6,13 @@
 typedef uint8_t u8;
 typedef uint32_t u32;
 /* @PROFILE_ENUM@ */
+/* This fixture validates serialization for supported public profiles. The
+ * ioctl fixture separately covers every advertised capability combination. */
+static struct {
+    int uniwill_profile_v1_two_profs;
+    int uniwill_profile_v1_three_profs;
+    int uniwill_profile_v1_three_profs_leds_only;
+} features = { .uniwill_profile_v1_three_profs = 1 }, *uw_feats = &features;
 static int mode_calls, update_calls, helper_status;
 static u8 mode_value, clear_mask, set_mask;
 static int uw_set_mode(u8 value)
