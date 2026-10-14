@@ -10,8 +10,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 
 typedef uint8_t u8;
+typedef uint16_t u16;
+struct mutex { pthread_mutex_t value; };
+#define DEFINE_MUTEX(name) struct mutex name = { PTHREAD_MUTEX_INITIALIZER }
+static void mutex_lock(struct mutex *mutex) { assert(pthread_mutex_lock(&mutex->value) == 0); }
+static void mutex_unlock(struct mutex *mutex) { assert(pthread_mutex_unlock(&mutex->value) == 0); }
+#define READ_ONCE(value) (*(volatile __typeof__(value) *)&(value))
 enum led_brightness { LED_OFF = 0, LED_FULL = 255 };
 #define ENOTSUPP 524
 #define __always_unused __attribute__((unused))
@@ -116,7 +123,7 @@ static void record(bool write, unsigned int address, unsigned int value)
         atomic_context = false;
     }
 }
-static int uniwill_read_ec_ram(unsigned int address, u8 *value)
+static int uniwill_read_ec_ram_unlocked(u16 address, u8 *value)
 {
     record(false, address, 0);
     if (ec_calls == fail_call)
@@ -131,7 +138,7 @@ static int uniwill_read_ec_ram(unsigned int address, u8 *value)
     }
     return 0;
 }
-static int uniwill_write_ec_ram(unsigned int address, u8 value)
+static int uniwill_write_ec_ram_unlocked(u16 address, u8 value)
 {
     record(true, address, value);
     if (ec_calls == fail_call)
@@ -178,8 +185,13 @@ static void led_blink_set(struct led_classdev *led, unsigned long *on, unsigned 
 }
 void led_set_brightness_nosleep(struct led_classdev *, unsigned int);
 void led_stop_software_blink(struct led_classdev *);
+static void led_classdev_notify_brightness_hw_changed(struct led_classdev *led, unsigned int value)
+{
+    (void)led; (void)value;
+}
 
 /* @DRIVER_CONSTANTS@ */
+/* @ACTUAL_EC_WRAPPERS@ */
 /* @DRIVER_SOURCE@ */
 /* @PARENT_BACKLIGHT_HELPER@ */
 /* @ACTUAL_LED_CORE@ */
@@ -229,6 +241,7 @@ static void devm_led_classdev_multicolor_unregister(struct device *parent, struc
 
 static void reset(void)
 {
+    (void)&uniwill_led_lock;
     atomic_context = false;
     ec_calls = fail_call = core_errors = core_last_errno = 0;
     failure_errno = -EIO;

@@ -321,15 +321,10 @@ static void key_event_work(struct work_struct *work)
 }
 static DECLARE_WORK(uniwill_key_event_work, key_event_work);
 
-static void uniwill_write_kbd_bl_enable(u8 enable)
+static int uniwill_write_kbd_bl_enable(u8 enable)
 {
-	u8 backlight_data;
-	enable = enable & 0x01;
-
-	uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &backlight_data);
-	backlight_data = backlight_data & ~(1 << 1);
-	backlight_data |= (!enable << 1);
-	uniwill_write_ec_ram(UW_EC_REG_KBD_BL_STATUS, backlight_data);
+	return uniwill_update_ec_ram(UW_EC_REG_KBD_BL_STATUS, 1 << 1,
+				    !(enable & 0x01) << 1);
 }
 
 void uniwill_event_callb(u32 code)

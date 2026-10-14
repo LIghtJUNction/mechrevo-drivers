@@ -46,6 +46,7 @@ bool uniwill_leds_notify_brightness_change_extern(void);
 #include <linux/types.h>
 #include <linux/leds.h>
 #include <linux/led-class-multicolor.h>
+#include <linux/mutex.h>
 #include "uniwill_interfaces.h"
 
 #define UNIWILL_KBD_BRIGHTNESS_MAX_WHITE		0x02
@@ -65,19 +66,17 @@ static uniwill_kb_backlight_type_t uniwill_kb_backlight_type = UNIWILL_KB_BACKLI
 static u8 uniwill_barebone_id = 0;
 static bool uniwill_kbl_brightness_ec_controlled = false;
 static bool uw_leds_initialized = false;
+/* Serialize the driver's multi-register LED operations. LED core owns the
+ * requested brightness/intensity fields; this does not lock its writers.
+ * Lock order: fan command/state -> LED -> EC transaction -> transport.
+ * Never drain LED work or unregister a classdev while this mutex is held. */
+static DEFINE_MUTEX(uniwill_led_lock);
 
 static int uniwill_write_kbd_bl_brightness(u8 brightness)
 {
-	int result = 0;
-	u8 data = 0;
-
-	result = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &data);
-	if (result)
-		return result;
-	data &= 0x0f; // lower bits must be preserved
-	data |= brightness << 5; // upper 2 to 3 bits encode brightness
-	data |= UW_EC_REG_KBD_BL_STATUS_SUBCMD_RESET; // "apply bit"
-	return uniwill_write_ec_ram(UW_EC_REG_KBD_BL_STATUS, data);
+	/* Preserve the existing low nibble, replace brightness and the apply bit. */
+	return uniwill_update_ec_ram(UW_EC_REG_KBD_BL_STATUS, 0xf0,
+				    (brightness << 5) | UW_EC_REG_KBD_BL_STATUS_SUBCMD_RESET);
 }
 
 static int uniwill_write_kbd_bl_brightness_white_workaround(u8 brightness)
@@ -117,7 +116,6 @@ static int tf_convert_rgb_range(u8 input) {
 static int uniwill_write_kbd_bl_color(u8 red, u8 green, u8 blue)
 {
 	int result = 0;
-	u8 data = 0;
 
 	// If, after conversion, all three (red, green, and blue) values are zero at the same time,
 	// a special case is triggered in the EC and (probably device dependent) default values are
@@ -135,11 +133,9 @@ static int uniwill_write_kbd_bl_color(u8 red, u8 green, u8 blue)
 	if (result)
 		return result;
 
-	result = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_RGB_MODE, &data);
-	if (result)
-		return result;
-
-	result = uniwill_write_ec_ram(UW_EC_REG_KBD_BL_RGB_MODE, data | UW_EC_REG_KBD_BL_RGB_MODE_BIT_APPLY_COLOR);
+	/* USB powershare uses another bit in this same EC byte. */
+	result = uniwill_update_ec_ram(UW_EC_REG_KBD_BL_RGB_MODE, 0,
+				      UW_EC_REG_KBD_BL_RGB_MODE_BIT_APPLY_COLOR);
 	if (result)
 		return result;
 
@@ -151,19 +147,20 @@ static int uniwill_write_kbd_bl_color(u8 red, u8 green, u8 blue)
 static int uniwill_leds_set_brightness(struct led_classdev *led_cdev __always_unused, enum led_brightness brightness) {
 	int result = 0;
 
+	mutex_lock(&uniwill_led_lock);
 	result = uniwill_write_kbd_bl_brightness_white_workaround(brightness);
 	if (result) {
 		pr_debug("uniwill_leds_set_brightness(): uniwill_write_kbd_bl_white() failed\n");
-		return result;
 	}
-
-	return 0;
+	mutex_unlock(&uniwill_led_lock);
+	return result;
 }
 
 static int uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
 	int result = 0;
 	struct led_classdev_mc *mcled_cdev = lcdev_to_mccdev(led_cdev);
 
+	mutex_lock(&uniwill_led_lock);
 	if (mcled_cdev->subled_info[0].intensity == 0 &&
 	    mcled_cdev->subled_info[1].intensity == 0 &&
 	    mcled_cdev->subled_info[2].intensity == 0) {
@@ -171,7 +168,7 @@ static int uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum le
 		result = uniwill_write_kbd_bl_brightness(0);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_brightness() failed\n");
-			return result;
+			goto unlock;
 		}
 	}
 	else {
@@ -180,17 +177,19 @@ static int uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum le
 					       mcled_cdev->subled_info[2].intensity);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_rgb() failed\n");
-			return result;
+			goto unlock;
 		}
 
 		result = uniwill_write_kbd_bl_brightness(brightness);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_brightness() failed\n");
-			return result;
+			goto unlock;
 		}
 	}
 
-	return 0;
+unlock:
+	mutex_unlock(&uniwill_led_lock);
+	return result;
 }
 
 static struct led_classdev uniwill_led_cdev = {
@@ -292,7 +291,11 @@ int uniwill_leds_init(struct platform_device *dev)
 {
 	int result = 0, i = 0;
 	u8 data = 0;
+	uniwill_kb_backlight_type_t backlight_type;
+	bool ec_controlled;
 
+	mutex_lock(&uniwill_led_lock);
+	uw_leds_initialized = false;
 	uniwill_kb_backlight_type = UNIWILL_KB_BACKLIGHT_TYPE_NONE;
 	uniwill_kbl_brightness_ec_controlled = false;
 
@@ -309,7 +312,8 @@ int uniwill_leds_init(struct platform_device *dev)
 	}
 	if (result || !uniwill_barebone_id) {
 		pr_err("Reading barebone ID failed.\n");
-		return result ? result : -EIO;
+		result = result ? result : -EIO;
+		goto unlock;
 	}
 	pr_debug("EC Barebone ID: %#04x\n", uniwill_barebone_id);
 
@@ -323,13 +327,13 @@ int uniwill_leds_init(struct platform_device *dev)
 	result = uniwill_read_ec_ram(UW_EC_REG_FEATURES_1, &data);
 	if (result) {
 		pr_err("Reading keyboard backlight features failed: %d\n", result);
-		return result;
+		goto unlock;
 	}
 	data |= UW_EC_REG_FEATURES_1_BIT_FIXED_COLOR_5_ENABLE;
 	result = uniwill_write_ec_ram(UW_EC_REG_FEATURES_1, data);
 	if (result) {
 		pr_err("Enabling keyboard backlight control failed: %d\n", result);
-		return result;
+		goto unlock;
 	}
 
 	if (dmi_check_system(force_no_ec_led_control)) {
@@ -355,7 +359,7 @@ int uniwill_leds_init(struct platform_device *dev)
 		result = uniwill_read_ec_ram(UW_EC_REG_FEATURES_1, &data);
 		if (result) {
 			pr_err("Reading features 1 failed.\n");
-			return result;
+			goto unlock;
 		}
 		pr_debug("UW_EC_REG_FEATURES_1: 0x%02x\n", data);
 
@@ -365,12 +369,17 @@ int uniwill_leds_init(struct platform_device *dev)
 		}
 	}
 	pr_debug("Keyboard backlight type: 0x%02x\n", uniwill_kb_backlight_type);
+	backlight_type = uniwill_kb_backlight_type;
+	ec_controlled = uniwill_kbl_brightness_ec_controlled;
+	/* Registration may invoke LED core code. Publish restore/notification
+	 * availability only after it has succeeded, without holding our mutex. */
+	mutex_unlock(&uniwill_led_lock);
 
-	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
+	if (backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
 		pr_debug("Registering fixed color leds interface\n");
 		uniwill_led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE;
 		uniwill_led_cdev.flags = LED_CORE_SUSPENDRESUME;
-		if (uniwill_kbl_brightness_ec_controlled)
+		if (ec_controlled)
 			uniwill_led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = led_classdev_register(&dev->dev, &uniwill_led_cdev);
 		if (result) {
@@ -378,11 +387,11 @@ int uniwill_leds_init(struct platform_device *dev)
 			return result;
 		}
 	}
-	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
+	else if (backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
 		pr_debug("Registering fixed color 5 levels leds interface\n");
 		uniwill_led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE_5;
 		uniwill_led_cdev.flags = LED_CORE_SUSPENDRESUME;
-		if (uniwill_kbl_brightness_ec_controlled)
+		if (ec_controlled)
 			uniwill_led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = led_classdev_register(&dev->dev, &uniwill_led_cdev);
 		if (result) {
@@ -390,10 +399,10 @@ int uniwill_leds_init(struct platform_device *dev)
 			return result;
 		}
 	}
-	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
+	else if (backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
 		pr_debug("Registering single zone rgb leds interface\n");
 		uniwill_mcled_cdev.led_cdev.flags = LED_CORE_SUSPENDRESUME;
-		if (uniwill_kbl_brightness_ec_controlled)
+		if (ec_controlled)
 			uniwill_mcled_cdev.led_cdev.flags |= LED_BRIGHT_HW_CHANGED;
 		result = devm_led_classdev_multicolor_register(&dev->dev, &uniwill_mcled_cdev);
 		if (result) {
@@ -402,40 +411,53 @@ int uniwill_leds_init(struct platform_device *dev)
 		}
 	}
 
+	mutex_lock(&uniwill_led_lock);
 	uw_leds_initialized = true;
-
-	return 0;
+unlock:
+	mutex_unlock(&uniwill_led_lock);
+	return result;
 }
 EXPORT_SYMBOL(uniwill_leds_init);
 
 int uniwill_leds_remove(struct platform_device *dev)
 {
-	int result = 0;
+	uniwill_kb_backlight_type_t backlight_type;
+	bool initialized;
 
-	if (uw_leds_initialized) {
-		uw_leds_initialized = false;
+	mutex_lock(&uniwill_led_lock);
+	initialized = uw_leds_initialized;
+	uw_leds_initialized = false;
+	backlight_type = uniwill_kb_backlight_type;
+	mutex_unlock(&uniwill_led_lock);
+	/* Unregister queues OFF and drains our callback, which takes this lock. */
+	if (initialized) {
 
-		if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
-		    uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
+		if (backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
+		    backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
 			led_classdev_unregister(&uniwill_led_cdev);
 		}
-		else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
+		else if (backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
 			devm_led_classdev_multicolor_unregister(&dev->dev, &uniwill_mcled_cdev);
 		}
 	}
 
-	return result;
+	return 0;
 }
 EXPORT_SYMBOL(uniwill_leds_remove);
 
 uniwill_kb_backlight_type_t uniwill_leds_get_backlight_type_extern(void) {
-	return uniwill_kb_backlight_type;
+	uniwill_kb_backlight_type_t backlight_type;
+	mutex_lock(&uniwill_led_lock);
+	backlight_type = uniwill_kb_backlight_type;
+	mutex_unlock(&uniwill_led_lock);
+	return backlight_type;
 }
 EXPORT_SYMBOL(uniwill_leds_get_backlight_type_extern);
 
 void uniwill_leds_restore_state_extern(void) {
+	mutex_lock(&uniwill_led_lock);
 	if (!uw_leds_initialized)
-		return;
+		goto unlock;
 
 	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
 	    uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
@@ -444,6 +466,15 @@ void uniwill_leds_restore_state_extern(void) {
 		}
 	}
 	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
+		/* Keep the same all-black workaround as the brightness callback:
+		 * writing three zero channels can select an EC default color. */
+		if (uniwill_mcled_cdev.subled_info[0].intensity == 0 &&
+		    uniwill_mcled_cdev.subled_info[1].intensity == 0 &&
+		    uniwill_mcled_cdev.subled_info[2].intensity == 0) {
+			if (uniwill_write_kbd_bl_brightness(0))
+				pr_debug("uniwill_leds_restore_state_extern(): restoring RGB black failed\n");
+			goto unlock;
+		}
 		if (uniwill_write_kbd_bl_color(uniwill_mcled_cdev.subled_info[0].intensity,
 					     uniwill_mcled_cdev.subled_info[1].intensity,
 					     uniwill_mcled_cdev.subled_info[2].intensity)) {
@@ -453,44 +484,56 @@ void uniwill_leds_restore_state_extern(void) {
 			pr_debug("uniwill_leds_restore_state_extern(): uniwill_write_kbd_bl_brightness() failed\n");
 		}
 	}
+unlock:
+	mutex_unlock(&uniwill_led_lock);
 }
 EXPORT_SYMBOL(uniwill_leds_restore_state_extern);
 
 bool uniwill_leds_notify_brightness_change_extern(void) {
 	int result = 0;
 	u8 data = 0, brightness = 0;
+	struct led_classdev *led_cdev;
+	bool handled = false;
 
-	if (uw_leds_initialized) {
-		if (uniwill_kbl_brightness_ec_controlled) {
-			uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &data);
-			brightness = (data >> 5) & 0x07;
-			if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
-			    uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS) {
-				uniwill_led_cdev.brightness = brightness;
-				led_classdev_notify_brightness_hw_changed(&uniwill_led_cdev, uniwill_led_cdev.brightness);
-				return true;
-			}
-			else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
-				result = 0;
-				if (uniwill_mcled_cdev.led_cdev.brightness == brightness) {
-					// Workaround for devices where EC does not react to FN+space in manual mode (know device: Polaris Gen2)
-					result = uniwill_write_kbd_bl_brightness((brightness + 1) % 5);
-					if (result) {
-						pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_brightness() failed\n");
-					}
-					else {
-						brightness = (brightness + 1) % 5;
-					}
-				}
-				if (!result) {
-					uniwill_mcled_cdev.led_cdev.brightness = brightness;
-					led_classdev_notify_brightness_hw_changed(&uniwill_mcled_cdev.led_cdev, uniwill_mcled_cdev.led_cdev.brightness);
-				}
-				return true;
-			}
-		}
+	mutex_lock(&uniwill_led_lock);
+	if (!uw_leds_initialized || !uniwill_kbl_brightness_ec_controlled)
+		goto unlock;
+	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR ||
+	    uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_FIXED_COLOR_5_LEVELS)
+		led_cdev = &uniwill_led_cdev;
+	else if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB)
+		led_cdev = &uniwill_mcled_cdev.led_cdev;
+	else
+		goto unlock;
+	handled = true;
+	/* LED core's temporary suspend OFF must not replace its desired value. */
+	if (READ_ONCE(led_cdev->flags) & LED_SUSPENDED)
+		goto unlock;
+	result = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_STATUS, &data);
+	if (result) {
+		pr_debug("Reading changed keyboard backlight brightness failed: %d\n", result);
+		goto unlock;
 	}
-	return false;
+	if (READ_ONCE(led_cdev->flags) & LED_SUSPENDED)
+		goto unlock;
+	brightness = (data >> 5) & 0x07;
+	if (uniwill_kb_backlight_type == UNIWILL_KB_BACKLIGHT_TYPE_1_ZONE_RGB &&
+	    led_cdev->brightness == brightness) {
+		// Workaround for devices where EC does not react to FN+space in manual mode (known device: Polaris Gen2)
+		result = uniwill_write_kbd_bl_brightness((brightness + 1) % 5);
+		if (result) {
+			pr_debug("Applying changed keyboard backlight brightness failed: %d\n", result);
+			goto unlock;
+		}
+		brightness = (brightness + 1) % 5;
+	}
+	if (READ_ONCE(led_cdev->flags) & LED_SUSPENDED)
+		goto unlock;
+	led_cdev->brightness = brightness;
+	led_classdev_notify_brightness_hw_changed(led_cdev, brightness);
+unlock:
+	mutex_unlock(&uniwill_led_lock);
+	return handled;
 }
 
 MODULE_LICENSE("GPL");
