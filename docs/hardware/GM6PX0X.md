@@ -2,6 +2,37 @@
 
 日期：2026-10-14；2026-10-15 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
+## 2026-10-15 probe、PM、Clevo 与 LED 修正（r23，部分生效）
+
+已安装并发布 AUR `4.24.0.r23.gf1aa652-1`，包源码 `f1aa652`；功能提交最终为 `2c749ac`。
+281 项本地测试通过，两个内核各重新编译全部 27 模块；包内隔离 DKMS 另通过 54 模块构建。
+系统 DKMS 为两套内核编译、签名并安装 54 模块；包完整性、UKI 与引导器签名核对通过，未重启。
+安装 hook 保留此前已有的 `xhci_pci_renesas` 缺少固件警告，没有隐藏日志或额外改动该驱动。
+
+只精确重载 `tuxedo_io`，其运行 build ID 与新磁盘模块一致。
+keyboard、WMI、兼容检查和 GPU 电源模块的运行 build ID 保持 r10；
+新 probe 错误回退、适配器/PM 门禁、背光阻塞回调、睡眠队列及重绑修复仍未运行。
+Arch 未启用 `CONFIG_MODVERSIONS`；重载前另核对共享头文件、十个项目接口的签名和导出、
+新 IO 源码、导入符号和依赖均与已审版本一致，不能用未启用的 CRC 检查代替这项核对。
+
+本机 profile 数量仍为 0，合法但不支持的模式返回 `ENODEV`，非法枚举返回 `EINVAL`，空指针返回 `EFAULT`。
+无效风扇参数、九项不支持 TDP 读取及三项写入拒绝通过；失败读取的缓冲区保持不变。
+Clevo 识别为不存在；空接口字符串、空指针和六项失败读取检查通过，未执行有效 Clevo 固件写入。
+三次样本均为 CPU 95°C、GPU 55°C、双风扇原始值 170，不是 RPM 或散热改善证据。
+
+cTGP 前后均为 25，原背光/RGB/Fn 锁读值保持；`tccd`、`thermald`、`nvidia-powerd` 均 active。
+安装前后 `/etc/tcc/settings` 的 SHA-256 完全一致。
+这些旧 keyboard 控件仅读取用于检查状态保持，不能当作新 LED 修复的硬件验收。
+没有触发闪烁、物理按键、手动风扇、睡眠或重启，长期负载、电池及其他型号也未验收。
+NVIDIA `0xC5` 仍未修复，GM6PX0X TDP 仍缺少规范；没有据此启用猜测性写入。
+
+证据在 `.local-tests/next-20261015/` 的 `main-validation/receipt-final.json`、
+`package-validation/receipt.json`、`system-install/receipt.json`、`live-runtime/output/receipt.json`
+及 `postinstall/receipt.json`。r16 包、54 模块和原 TCC 配置已保存并校验于
+`~/Backups/projects/mechrevo-drivers/light/20261015-next-r16/`。
+跟踪保留事件队列溢出、临时 FIFO 等缺口；安装阶段使用轮询，Limine 的短命 `/tmp` 目录不在选定根目录内。
+不把最终扫描当作完整历史，未额外清理。
+
 ## 2026-10-15 能力、序列及 EC 错误修正（r16，部分生效）
 
 已发布 AUR 并安装 `4.24.0.r16.gb549e06-1`，包源码 `b549e06`，三项功能修复为
