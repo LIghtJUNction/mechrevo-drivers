@@ -89,6 +89,7 @@ static int tuxedo_input_init(const struct key_entry key_map[])
 
 err_free_input_device:
 	input_free_device(tuxedo_input_device);
+	tuxedo_input_device = NULL;
 
 	return err;
 }
@@ -105,6 +106,8 @@ struct platform_device *tuxedo_keyboard_init_driver(struct tuxedo_keyboard_drive
 	if (!IS_ERR_OR_NULL(tuxedo_platform_device)) {
 		// If already initialized, don't proceed
 		TUXEDO_DEBUG("platform device already initialized\n");
+		new_platform_device = current_driver == tk_driver ?
+			tuxedo_platform_device : ERR_PTR(-EBUSY);
 		goto init_driver_exit;
 	} else {
 		// Otherwise, attempt to initialize structures
@@ -112,12 +115,12 @@ struct platform_device *tuxedo_keyboard_init_driver(struct tuxedo_keyboard_drive
 		new_platform_device = platform_create_bundle(
 			tk_driver->platform_driver, tk_driver->probe, NULL, 0, NULL, 0);
 
-		tuxedo_platform_device = new_platform_device;
-
-		if (IS_ERR_OR_NULL(tuxedo_platform_device)) {
-			// Normal case probe failed, no init
+		if (IS_ERR_OR_NULL(new_platform_device)) {
+			// Failed bundles have already been unwound by the platform core.
+			tuxedo_platform_device = NULL;
 			goto init_driver_exit;
 		}
+		tuxedo_platform_device = new_platform_device;
 
 		TUXEDO_DEBUG("initialize input device\n");
 		if (tk_driver->key_map != NULL) {
@@ -165,19 +168,19 @@ static void __exit tuxedo_input_exit(void)
 
 void tuxedo_keyboard_remove_driver(struct tuxedo_keyboard_driver *tk_driver)
 {
-	bool specified_driver_differ_from_used =
-		tk_driver != NULL && 
-		(
-			strcmp(
-				tk_driver->platform_driver->driver.name,
-				current_driver->platform_driver->driver.name
-			) != 0
-		);
+	mutex_lock(&tuxedo_keyboard_init_driver_lock);
 
-	if (specified_driver_differ_from_used)
-		return;
+	if (IS_ERR_OR_NULL(current_driver)) {
+		if (IS_ERR_OR_NULL(tuxedo_platform_device))
+			tuxedo_platform_device = NULL;
+		goto remove_driver_exit;
+	}
+	if (tk_driver != NULL && tk_driver != current_driver)
+		goto remove_driver_exit;
 
-	device_remove_file(&tuxedo_platform_device->dev, &dev_attr_fn_lock);
+	current_driver->input_device = NULL;
+	if (!IS_ERR_OR_NULL(tuxedo_platform_device))
+		device_remove_file(&tuxedo_platform_device->dev, &dev_attr_fn_lock);
 
 	TUXEDO_DEBUG("tuxedo_input_exit()\n");
 	tuxedo_input_exit();
@@ -191,6 +194,9 @@ void tuxedo_keyboard_remove_driver(struct tuxedo_keyboard_driver *tk_driver)
 		platform_driver_unregister(current_driver->platform_driver);
 		current_driver = NULL;
 	}
+
+remove_driver_exit:
+	mutex_unlock(&tuxedo_keyboard_init_driver_lock);
 
 }
 EXPORT_SYMBOL(tuxedo_keyboard_remove_driver);
