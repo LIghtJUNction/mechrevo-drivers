@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_uniwill_fan_runtime import function as provider_function
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -58,6 +60,14 @@ class UniwillRuntime(unittest.TestCase):
                 raise AssertionError("Missing driver type: " + name)
             types.append(declaration.group())
         fixture = (ROOT / "tests/fixtures/uniwill_runtime.c").read_text()
+        provider = ""
+        if re.search(r"(?m)^int uw_write_tdp\(", keyboard):
+            provider = "#define ACTUAL_TDP_PROVIDER 1\n" + "\n\n".join(
+                provider_function(keyboard, name) for name in
+                ("uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active", "uw_write_tdp"))
+        else:
+            provider = "#define ACTUAL_TDP_PROVIDER 0\n"
+        fixture = fixture.replace("/* @DRIVER_TDP_PROVIDER@ */", provider)
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(functions))
         fixture = fixture.replace("/* @DRIVER_INTERFACE_TYPES@ */", "\n\n".join(types))
         prototypes = []
@@ -187,8 +197,8 @@ class UniwillRuntime(unittest.TestCase):
     def test_tdp_profile_change_precedes_valid_tdp_write(self):
         self.check_case("tdp_profile_success")
 
-    def test_tdp_profile_helper_error_prevents_tdp_write(self):
-        self.check_case("tdp_profile_helper_error")
+    def test_tdp_provider_gate_error_prevents_tdp_write(self):
+        self.check_case("tdp_provider_gate_error")
 
     def test_tdp_write_error_after_profile_change_is_reported(self):
         self.check_case("tdp_ec_error_after_profile")

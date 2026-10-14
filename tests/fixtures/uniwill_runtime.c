@@ -142,6 +142,18 @@ static int uniwill_get_active_interface_id(char **name)
 /* @DRIVER_INTERFACE_TYPES@ */
 static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile);
 
+/* Use the real cross-module TDP transaction and lifecycle gates. These doubles
+ * supply only the kernel mutex service; profile-routing spies above remain
+ * independent so the ioctl tests can still observe public-profile arguments. */
+struct mutex { bool held; };
+static __attribute__((unused)) struct mutex uniwill_fan_command_lock, uniwill_fan_state_lock;
+static __attribute__((unused)) bool uniwill_fan_removed, uniwill_pm_suspended, uniwill_fan_work_paused;
+static __attribute__((unused)) bool uniwill_pm_ready = true;
+static __attribute__((unused)) void mutex_lock(struct mutex *lock) { assert(!lock->held); lock->held = true; }
+static __attribute__((unused)) void mutex_unlock(struct mutex *lock) { assert(lock->held); lock->held = false; }
+static __attribute__((unused)) void uw_fan_quiesce_locked(void) { assert(0 && "TDP must not cancel fan work"); }
+/* @DRIVER_TDP_PROVIDER@ */
+
 /* @DRIVER_FUNCTIONS@ */
 
 /* Keep the driver's outer ioctl entry intact so signed errno propagation is tested. */
@@ -423,14 +435,14 @@ int main(int argc, char **argv)
 		ec_status = -EIO;
 		value = 30;
 		assert(IOCTL(W_UW_TDP0, value) == -EIO);
-		assert(ec_reads == 1 && ec_writes == 0 && mode_update_calls == 1);
+		assert(ec_reads == 1 && ec_writes == 0 && mode_update_calls == !ACTUAL_TDP_PROVIDER);
 	} else if (strcmp(test, "tdp_profile_write_error") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		ec_write_status = -EIO;
 		value = 30;
 		assert(IOCTL(W_UW_TDP0, value) == -EIO);
 		assert(ec_reads == 1 && ec_writes == 1 && written_addresses[0] == 0x0751);
-		assert(mode_update_calls == 1);
+		assert(mode_update_calls == !ACTUAL_TDP_PROVIDER);
 	} else if (strcmp(test, "tdp_profile_success") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		value = 30;
@@ -438,15 +450,19 @@ int main(int argc, char **argv)
 		assert(ec_reads == 1 && ec_writes == 2);
 		assert(written_addresses[0] == 0x0751 && written_values[0] == 0x50);
 		assert(written_addresses[1] == 0x0783 && written_values[1] == 30);
-		assert(mode_update_calls == 1 && requested_clear_mask == 0xb0 && requested_set_mask == 0x10);
-	} else if (strcmp(test, "tdp_profile_helper_error") == 0) {
+		assert(mode_update_calls == !ACTUAL_TDP_PROVIDER);
+		if (!ACTUAL_TDP_PROVIDER)
+			assert(requested_clear_mask == 0xb0 && requested_set_mask == 0x10);
+	} else if (strcmp(test, "tdp_provider_gate_error") == 0) {
 		const unsigned int commands[] = {W_UW_TDP0, W_UW_TDP1, W_UW_TDP2};
 		features.uniwill_custom_profile_mode_needed = true;
 		mode_status = -ENODEV;
+		uniwill_pm_ready = false;
 		value = 30;
 		for (size_t i = 0; i < COUNT(commands); ++i)
 			assert(IOCTL(commands[i], value) == -ENODEV);
-		assert(mode_update_calls == 3 && mode_calls == 0 && ec_reads == 0 && ec_writes == 0);
+		assert(mode_update_calls == (ACTUAL_TDP_PROVIDER ? 0 : 3));
+		assert(mode_calls == 0 && ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "tdp_ec_error_after_profile") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		ec_write_status = -EIO;
@@ -567,8 +583,9 @@ int main(int argc, char **argv)
 			reset_mode_access();
 			value = 30;
 			assert(IOCTL(commands[i], value) == 0);
-			assert(ec_reads == 1 && ec_writes == 2 && mode_update_calls == 1);
-			assert(requested_clear_mask == 0xb0 && requested_set_mask == 0x10);
+			assert(ec_reads == 1 && ec_writes == 2 && mode_update_calls == !ACTUAL_TDP_PROVIDER);
+			if (!ACTUAL_TDP_PROVIDER)
+				assert(requested_clear_mask == 0xb0 && requested_set_mask == 0x10);
 			assert(written_addresses[0] == 0x0751 && written_values[0] == 0x50);
 			assert(written_addresses[1] == 0x0783 + i && written_values[1] == 30);
 		}
