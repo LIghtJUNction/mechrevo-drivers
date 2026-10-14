@@ -53,6 +53,13 @@ class UniwillRuntime(unittest.TestCase):
         fixture = (ROOT / "tests/fixtures/uniwill_runtime.c").read_text()
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(functions))
         fixture = fixture.replace("/* @DRIVER_INTERFACE_TYPES@ */", "\n\n".join(types))
+        prototypes = []
+        for name in ("uw_set_mode", "uw_update_mode"):
+            prototype = re.search(r"(?m)^int " + name + r"\([^;]+\);$", interfaces)
+            if not prototype:
+                raise AssertionError("Missing driver prototype: " + name)
+            prototypes.append(prototype.group())
+        fixture = fixture.replace("/* @DRIVER_MODE_PROTOTYPES@ */", "\n".join(prototypes))
         fixture = fixture.replace("/* @DRIVER_UNIWILL_IOCTL@ */", function(io, "uniwill_ioctl_interface"))
         fixture = fixture.replace("/* @DRIVER_IOCTL_ENTRY@ */", function(io, "fop_ioctl"))
         source = path / "runtime.c"
@@ -140,6 +147,9 @@ class UniwillRuntime(unittest.TestCase):
     def test_mode_write_ec_failure_reaches_ioctl_entry(self):
         self.check_case("mode_write_error")
 
+    def test_mode_command_uses_serialized_helper_and_propagates_its_errno(self):
+        self.check_case("mode_helper_error")
+
     def test_unsupported_tdp_write_does_not_change_profile(self):
         self.check_case("tdp_write_unsupported")
 
@@ -170,6 +180,9 @@ class UniwillRuntime(unittest.TestCase):
     def test_tdp_profile_change_precedes_valid_tdp_write(self):
         self.check_case("tdp_profile_success")
 
+    def test_tdp_profile_helper_error_prevents_tdp_write(self):
+        self.check_case("tdp_profile_helper_error")
+
     def test_tdp_write_error_after_profile_change_is_reported(self):
         self.check_case("tdp_ec_error_after_profile")
 
@@ -179,11 +192,17 @@ class UniwillRuntime(unittest.TestCase):
     def test_profile_write_error_reaches_ioctl_entry(self):
         self.check_case("profile_write_error")
 
+    def test_profile_command_uses_serialized_helper_and_propagates_its_errno(self):
+        self.check_case("profile_helper_error")
+
     def test_invalid_profile_does_not_write(self):
         self.check_case("profile_invalid")
 
     def test_all_three_profiles_preserve_other_mode_bits(self):
         self.check_case("profile_success")
+
+    def test_all_profiles_pass_exact_masks_for_every_previous_mode_byte(self):
+        self.check_case("profile_masks")
 
     def test_disabled_mode_enable_and_unknown_commands_remain_noops(self):
         self.check_case("unchanged_noop_dispatch")

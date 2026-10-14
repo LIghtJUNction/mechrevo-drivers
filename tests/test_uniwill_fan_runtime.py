@@ -1,11 +1,16 @@
 """Run the actual fan helpers with mocked EC memory and a manually run worker."""
 from pathlib import Path
 import re
+import resource
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def disable_core_dumps():
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def function(source, name):
@@ -39,9 +44,13 @@ class UniwillFanRuntime(unittest.TestCase):
             if not match:
                 raise AssertionError("Missing driver constant: " + name)
             constants.append(match.group())
-        names = ("uniwill_write_ec_ram_with_retry", "set_full_fan_mode", "uw_init_fan",
+        names = ("uniwill_write_ec_ram_with_retry", "uw_fan_quiesce_locked", "uw_fan_lock", "uw_fan_unlock",
+                 "uw_set_mode", "uw_update_mode",
+                 "set_full_fan_mode_locked", "set_full_fan_mode", "uw_init_fan_locked", "uw_init_fan",
                  "restart_direct_fan_control_work_handler", "direct_fan_control",
-                 "uw_set_fan", "uw_set_fan_auto", "uw_restore_fan_state", "uniwill_keyboard_suspend",
+                 "uw_set_fan_locked", "uw_set_fan", "uw_set_fan_auto_locked", "uw_set_fan_auto",
+                 "uw_fan_control_start",
+                 "uw_restore_fan_state_locked", "uniwill_keyboard_suspend",
                  "uniwill_keyboard_resume")
         fixture = (ROOT / "tests/fixtures/uniwill_fan_runtime.c").read_text()
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(
@@ -50,14 +59,15 @@ class UniwillFanRuntime(unittest.TestCase):
         source.write_text(fixture)
         cls.binary = path / "runtime"
         result = subprocess.run(
-            ["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+            ["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
              str(source), "-o", str(cls.binary)], text=True, capture_output=True,
         )
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
 
     def check_case(self, case):
-        result = subprocess.run([str(self.binary), case], text=True, capture_output=True)
+        result = subprocess.run([str(self.binary), case], text=True, capture_output=True, timeout=10,
+                                preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_retry_requires_positive_attempt_count(self):
@@ -155,6 +165,21 @@ class UniwillFanRuntime(unittest.TestCase):
 
     def test_explicit_manual_updates_and_auto_cancels_pending_pm_targets(self):
         self.check_case("pm_explicit_commands")
+
+    def test_mode_helpers_preserve_all_unmasked_bits_and_complete_write_value(self):
+        self.check_case("mode_helpers_success")
+
+    def test_mode_helpers_preserve_read_write_errno_without_extra_ec_access(self):
+        self.check_case("mode_helpers_errors")
+
+    def test_removed_mode_helpers_reject_without_accessing_ec(self):
+        self.check_case("mode_helpers_removed")
+
+    def test_start_failure_keeps_exports_closed_and_retry_starts_new_lifecycle(self):
+        self.check_case("start_errors")
+
+    def test_invalid_manual_request_does_not_cancel_failed_worker_recovery(self):
+        self.check_case("invalid_preserves_recovery")
 
 
 if __name__ == "__main__":

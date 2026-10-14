@@ -1,6 +1,7 @@
 /* The injected functions are compiled verbatim; no hardware or kernel is used. */
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -19,6 +20,14 @@ static bool fans_initialized, direct_fan_control_started, direct_fan_control_res
 static bool direct_fan_control_suspend;
 static u8 direct_fan_control_current_value_fan0_suspend_save;
 static u8 direct_fan_control_current_value_fan1_suspend_save;
+struct mutex { pthread_mutex_t native; };
+#define DEFINE_MUTEX(name) struct mutex name = { PTHREAD_MUTEX_INITIALIZER }
+static DEFINE_MUTEX(uniwill_fan_command_lock);
+static DEFINE_MUTEX(uniwill_fan_state_lock);
+static bool uniwill_fan_work_paused, uniwill_fan_removed;
+static void mutex_lock(struct mutex *lock) { assert(pthread_mutex_lock(&lock->native) == 0); }
+static void mutex_unlock(struct mutex *lock) { assert(pthread_mutex_unlock(&lock->native) == 0); }
+#define lockdep_assert_held(lock) do {} while (0)
 struct platform_device { int unused; };
 typedef int pm_message_t;
 static int backlight_calls, backlight_enabled, leds_calls, priority_calls, profile_calls;
@@ -127,6 +136,7 @@ static void reset(bool universal)
     fans_initialized = direct_fan_control_started = false;
     direct_fan_control_restart_needed = false;
     direct_fan_control_suspend = false;
+    uniwill_fan_work_paused = uniwill_fan_removed = false;
     direct_fan_control_current_value_fan0_suspend_save = 0;
     direct_fan_control_current_value_fan1_suspend_save = 0;
     backlight_calls = leds_calls = priority_calls = profile_calls = 0;
@@ -584,6 +594,65 @@ int main(int argc, char **argv)
         assert(uniwill_keyboard_suspend(NULL, 0) == 0 && uniwill_keyboard_resume(NULL) == 0);
         assert(event_count == count && schedules == queued && ec[0x0751] == 0x11);
         assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "mode_helpers_success") == 0) {
+        const u8 profiles[] = {0xa0, 0x00, 0x10};
+        for (int value = 0; value <= 255; ++value) {
+            for (int profile = 0; profile < 3; ++profile) {
+                reset(false); ec[0x0751] = value;
+                assert(uw_update_mode(0xb0, profiles[profile]) == 0);
+                assert(ec[0x0751] == ((value & ~0xb0) | profiles[profile]));
+                assert(reads == 1 && writes == 1);
+            }
+            reset(false);
+            assert(uw_set_mode(value) == 0 && ec[0x0751] == value);
+            assert(reads == 0 && writes == 1);
+        }
+    } else if (strcmp(test, "mode_helpers_errors") == 0) {
+        const int errnos[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int error = 0; error < 3; ++error) {
+            reset(false); fault_status = errnos[error]; read_failures = 1;
+            assert(uw_update_mode(0xb0, 0xa0) == errnos[error]);
+            assert(reads == 1 && writes == 0 && ec[0x0751] == 0x51);
+            assert(uw_update_mode(0xb0, 0xa0) == 0 && ec[0x0751] == 0xe1);
+            reset(false); fault_status = errnos[error]; write_failures = 1;
+            assert(uw_update_mode(0xb0, 0xa0) == errnos[error]);
+            assert(reads == 1 && writes == 1 && ec[0x0751] == 0x51);
+            assert(uw_set_mode(0x55) == 0 && ec[0x0751] == 0x55);
+            reset(false); fault_status = errnos[error]; write_failures = 1;
+            assert(uw_set_mode(0x55) == errnos[error]);
+            assert(reads == 0 && writes == 1 && ec[0x0751] == 0x51);
+            assert(uw_set_mode(0x55) == 0 && ec[0x0751] == 0x55);
+        }
+    } else if (strcmp(test, "mode_helpers_removed") == 0) {
+        uniwill_fan_removed = true;
+        assert(uw_set_mode(0x55) == -ENODEV && uw_update_mode(0xb0, 0xa0) == -ENODEV);
+        assert(event_count == 0 && cancellations == 0);
+    } else if (strcmp(test, "start_errors") == 0) {
+        const int errnos[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int error = 0; error < 3; ++error) {
+            reset(false); fault_status = errnos[error]; write_failures = 1;
+            direct_fan_control_started = direct_fan_control_suspend = fans_initialized = true;
+            direct_fan_control_restart_delayed_work.pending = true;
+            assert(uw_fan_control_start() == errnos[error] && uniwill_fan_removed);
+            assert(writes == 1 && reads == 0 && !direct_fan_control_restart_delayed_work.pending);
+            assert(!direct_fan_control_started && !direct_fan_control_suspend && !fans_initialized);
+            assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
+            assert(uw_init_fan() == -ENODEV && set_full_fan_mode(true) == -ENODEV);
+            assert(writes == 1 && reads == 0);
+            assert(uw_fan_control_start() == 0 && !uniwill_fan_removed);
+            assert(ec[0x0751] == 0 && uw_set_fan(0, 110) == 0);
+            assert(direct_fan_control_started && direct_fan_control_restart_delayed_work.pending);
+        }
+    } else if (strcmp(test, "invalid_preserves_recovery") == 0) {
+        for (int universal = 0; universal < 2; ++universal) {
+            reset(universal); direct_fan_control_started = direct_fan_control_restart_needed = true;
+            direct_fan_control_restart_delayed_work.pending = true;
+            assert((int)uw_set_fan(2, 100) == -EINVAL);
+            if (universal) assert((int)uw_set_fan(0, 201) == -EINVAL);
+            assert(event_count == 0 && cancellations == 0 && schedules == 0);
+            assert(direct_fan_control_restart_delayed_work.pending && direct_fan_control_restart_needed);
+            assert_cached(83, 97);
+        }
     } else {
         return 2;
     }

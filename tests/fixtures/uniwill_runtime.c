@@ -72,6 +72,34 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
 		return ec_write_status;
 	return 0;
 }
+/* These spies verify ioctl routing and argument/error propagation only.
+ * The actual serialized helpers are exercised by the fan runtime tests. */
+/* @DRIVER_MODE_PROTOTYPES@ */
+static int mode_status, mode_calls, mode_update_calls;
+static u8 requested_mode, requested_clear_mask, requested_set_mask;
+int uw_set_mode(u8 value)
+{
+	++mode_calls;
+	requested_mode = value;
+	if (mode_status)
+		return mode_status;
+	return uniwill_write_ec_ram(0x0751, value);
+}
+int uw_update_mode(u8 clear_mask, u8 set_mask)
+{
+	u8 current_value;
+	int status;
+
+	++mode_update_calls;
+	requested_clear_mask = clear_mask;
+	requested_set_mask = set_mask;
+	if (mode_status)
+		return mode_status;
+	status = uniwill_read_ec_ram(0x0751, &current_value);
+	if (status)
+		return status;
+	return uniwill_write_ec_ram(0x0751, (current_value & ~clear_mask) | set_mask);
+}
 static unsigned long copy_to_user(void *destination, const void *source, size_t length)
 {
 	++copy_attempts;
@@ -279,6 +307,7 @@ int main(int argc, char **argv)
 			assert(IOCTL(writes_cmds[i], value) == -EFAULT);
 		assert(input_copies == 7 && ec_reads == 0 && ec_writes == 0);
 		assert(fan_calls == 0 && fan_auto_calls == 0);
+		assert(mode_calls == 0 && mode_update_calls == 0);
 	} else if (strcmp(test, "fan_write_success") == 0) {
 		for (value = 0; value <= UINT8_MAX; ++value) {
 			assert(IOCTL(W_UW_FANSPEED, value) == 0);
@@ -305,12 +334,27 @@ int main(int argc, char **argv)
 		assert(IOCTL(W_UW_FANAUTO, value) == -EINVAL);
 		assert(fan_calls == 2 && fan_auto_calls == 1);
 	} else if (strcmp(test, "mode_write_success") == 0) {
-		value = 0x1234;
-		assert(IOCTL(W_UW_MODE, value) == 0);
-		assert(ec_writes == 1 && written_addresses[0] == 0x0751 && written_values[0] == 0x34);
+		const u32 values[] = {0, 1, 255, 256, 0x1234, UINT32_MAX};
+		for (size_t i = 0; i < COUNT(values); ++i) {
+			value = values[i];
+			assert(IOCTL(W_UW_MODE, value) == 0);
+			assert(requested_mode == (u8)value && mode_calls == (int)i + 1);
+			assert(written_addresses[i] == 0x0751 && written_values[i] == (u8)value);
+		}
+		assert(ec_writes == 6 && ec_reads == 0 && mode_update_calls == 0);
 	} else if (strcmp(test, "mode_write_error") == 0) {
 		ec_write_status = -EIO;
 		assert(IOCTL(W_UW_MODE, value) == -EIO && ec_writes == 1);
+		assert(mode_calls == 1 && mode_update_calls == 0);
+	} else if (strcmp(test, "mode_helper_error") == 0) {
+		const int errnos[] = {-ENODEV, -EIO, -ETIMEDOUT};
+		value = 0x1234;
+		for (size_t i = 0; i < COUNT(errnos); ++i) {
+			mode_status = errnos[i];
+			assert(IOCTL(W_UW_MODE, value) == errnos[i]);
+			assert(mode_calls == (int)i + 1 && requested_mode == 0x34);
+		}
+		assert(mode_update_calls == 0 && ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "tdp_write_unsupported") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		tdp_min_defs = NULL;
@@ -318,7 +362,7 @@ int main(int argc, char **argv)
 		assert(IOCTL(W_UW_TDP0, value) == -ENODEV);
 		assert(IOCTL(W_UW_TDP1, value) == -ENODEV);
 		assert(IOCTL(W_UW_TDP2, value) == -ENODEV);
-		assert(ec_reads == 0 && ec_writes == 0);
+		assert(ec_reads == 0 && ec_writes == 0 && mode_update_calls == 0);
 	} else if (strcmp(test, "tdp_write_invalid_index") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		assert(uw_set_tdp(3, 30) == -EINVAL);
@@ -366,13 +410,14 @@ int main(int argc, char **argv)
 		ec_status = -EIO;
 		value = 30;
 		assert(IOCTL(W_UW_TDP0, value) == -EIO);
-		assert(ec_reads == 1 && ec_writes == 0);
+		assert(ec_reads == 1 && ec_writes == 0 && mode_update_calls == 1);
 	} else if (strcmp(test, "tdp_profile_write_error") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		ec_write_status = -EIO;
 		value = 30;
 		assert(IOCTL(W_UW_TDP0, value) == -EIO);
 		assert(ec_reads == 1 && ec_writes == 1 && written_addresses[0] == 0x0751);
+		assert(mode_update_calls == 1);
 	} else if (strcmp(test, "tdp_profile_success") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		value = 30;
@@ -380,6 +425,15 @@ int main(int argc, char **argv)
 		assert(ec_reads == 1 && ec_writes == 2);
 		assert(written_addresses[0] == 0x0751 && written_values[0] == 0x50);
 		assert(written_addresses[1] == 0x0783 && written_values[1] == 30);
+		assert(mode_update_calls == 1 && requested_clear_mask == 0xb0 && requested_set_mask == 0x10);
+	} else if (strcmp(test, "tdp_profile_helper_error") == 0) {
+		const unsigned int commands[] = {W_UW_TDP0, W_UW_TDP1, W_UW_TDP2};
+		features.uniwill_custom_profile_mode_needed = true;
+		mode_status = -ENODEV;
+		value = 30;
+		for (size_t i = 0; i < COUNT(commands); ++i)
+			assert(IOCTL(commands[i], value) == -ENODEV);
+		assert(mode_update_calls == 3 && mode_calls == 0 && ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "tdp_ec_error_after_profile") == 0) {
 		features.uniwill_custom_profile_mode_needed = true;
 		ec_write_status = -EIO;
@@ -391,18 +445,29 @@ int main(int argc, char **argv)
 		ec_status = -EIO;
 		value = PROFILE_OVERBOOST;
 		assert(IOCTL(W_UW_PERF_PROF, value) == -EIO);
-		assert(ec_reads == 1 && ec_writes == 0);
+		assert(ec_reads == 1 && ec_writes == 0 && mode_update_calls == 1);
 	} else if (strcmp(test, "profile_write_error") == 0) {
 		ec_write_status = -EIO;
 		value = PROFILE_OVERBOOST;
 		assert(IOCTL(W_UW_PERF_PROF, value) == -EIO);
-		assert(ec_reads == 1 && ec_writes == 1);
+		assert(ec_reads == 1 && ec_writes == 1 && mode_update_calls == 1);
 	} else if (strcmp(test, "profile_invalid") == 0) {
-		value = 0;
-		assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
-		value = 4;
-		assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
-		assert(ec_writes == 0);
+		const u32 invalid[] = {0, 4, 0x101, 0x10003, UINT32_MAX};
+		for (size_t i = 0; i < COUNT(invalid); ++i) {
+			value = invalid[i];
+			assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
+		}
+		assert(mode_update_calls == 0 && mode_calls == 0 && ec_reads == 0 && ec_writes == 0);
+	} else if (strcmp(test, "profile_helper_error") == 0) {
+		const int errnos[] = {-ENODEV, -EIO, -ETIMEDOUT};
+		value = PROFILE_ENTHUSIAST;
+		for (size_t i = 0; i < COUNT(errnos); ++i) {
+			mode_status = errnos[i];
+			assert(IOCTL(W_UW_PERF_PROF, value) == errnos[i]);
+			assert(mode_update_calls == (int)i + 1);
+			assert(requested_clear_mask == 0xb0 && requested_set_mask == 0);
+		}
+		assert(mode_calls == 0 && ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "profile_success") == 0) {
 		u8 expected[] = {0xef, 0x4f, 0x5f};
 		ec_value = 0xff;
@@ -411,10 +476,25 @@ int main(int argc, char **argv)
 			assert(written_addresses[value - 1] == 0x0751);
 			assert(written_values[value - 1] == expected[value - 1]);
 		}
+		assert(mode_update_calls == 3 && mode_calls == 0);
+	} else if (strcmp(test, "profile_masks") == 0) {
+		const u8 bits[] = {0xa0, 0, 0x10};
+		for (unsigned int previous = 0; previous <= UINT8_MAX; ++previous) {
+			for (value = 1; value <= 3; ++value) {
+				ec_value = previous;
+				ec_reads = ec_writes = 0;
+				assert(IOCTL(W_UW_PERF_PROF, value) == 0);
+				assert(requested_clear_mask == 0xb0 && requested_set_mask == bits[value - 1]);
+				assert(ec_reads == 1 && ec_writes == 1 && written_addresses[0] == 0x0751);
+				assert(written_values[0] == ((previous & 0x4f) | bits[value - 1]));
+			}
+		}
+		assert(mode_update_calls == 768 && mode_calls == 0);
 	} else if (strcmp(test, "unchanged_noop_dispatch") == 0) {
 		assert(IOCTL(W_UW_MODE_ENABLE, value) == 0);
 		assert(IOCTL(0xffffffffU, value) == 0);
 		assert(input_copies == 0 && ec_reads == 0 && ec_writes == 0);
+		assert(mode_calls == 0 && mode_update_calls == 0);
 #ifdef DEBUG
 	} else if (strcmp(test, "debug_copy_from_faults") == 0) {
 		u32 args[10] = {0x51, 0x07, 0x34};

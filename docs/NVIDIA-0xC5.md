@@ -59,6 +59,13 @@ NPCF 的动态参数返回值包含这些路径更新的预算变量。
 - 仍需 NVIDIA 或 OEM 明确 `0xC5` 的语义、是否需要独立处理及确认方式。
   本记录可以用于审查或上游反馈，尚未代用户提交任何外部 issue。
 
+2026-10-15 后续核对官方主分支提交
+[`ca2d03e6`](https://github.com/NVIDIA/open-gpu-kernel-modules/commit/ca2d03e6fafd4d4b56b383497d931c25b283bfcf)：
+`nv-acpi.c` 和 `osapi.c` 与本机 `615.78.08` 对应文件逐字节一致，仍没有 `0xC5` 处理。
+另检查 [PR #1299](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1299) 和
+[PR #1181](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181)，它们针对 NVPCF 通知造成的
+待机唤醒，不定义或处理这里的 GPU `0xC5`，不能作为本问题的修复依据。
+
 ## 采集与恢复
 
 使用现有 tracefs 上的独立 instance，探测 GPU/NPCF 通知、DSM 入口与返回状态及 WMI 调用。
