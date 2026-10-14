@@ -2402,6 +2402,7 @@ static u8 uniwill_touchp_toggle_seq[] = {
 	0xe0, 0xdb  // Super up
 };
 static bool uniwill_i8042_filter_installed;
+static u8 uniwill_touchp_toggle_seq_pos;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
@@ -2412,23 +2413,21 @@ static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
 				 void *context __always_unused)
 #endif
 {
-	static u8 seq_pos;
-
 	if (unlikely(str & I8042_STR_AUXDATA))
 		return false;
 
-	if (unlikely(data == uniwill_touchp_toggle_seq[seq_pos])) {
-		++seq_pos;
+	if (unlikely(data == uniwill_touchp_toggle_seq[uniwill_touchp_toggle_seq_pos])) {
+		++uniwill_touchp_toggle_seq_pos;
 		if (unlikely(data == 0x76 || data == 0xf6))
 			return true;
-		else if (unlikely(seq_pos == ARRAY_SIZE(uniwill_touchp_toggle_seq))) {
+		else if (unlikely(uniwill_touchp_toggle_seq_pos == ARRAY_SIZE(uniwill_touchp_toggle_seq))) {
 			schedule_work(&uniwill_key_event_work);
-			seq_pos = 0;
+			uniwill_touchp_toggle_seq_pos = 0;
 		}
 		return false;
 	}
 
-	seq_pos = 0;
+	uniwill_touchp_toggle_seq_pos = 0;
 	return false;
 }
 
@@ -2443,6 +2442,8 @@ static void uniwill_keyboard_prepare_remove(void)
 			pr_info("Could not remove i8042 filter.\n");
 		uniwill_i8042_filter_installed = false;
 	}
+	/* The old callback is synchronized before its partial sequence is reset. */
+	uniwill_touchp_toggle_seq_pos = 0;
 	cancel_work_sync(&uniwill_key_event_work);
 	mutex_unlock(&uniwill_fan_command_lock);
 }
@@ -2506,6 +2507,8 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 	// Ignore return value, it just means there is already a filter active
 	// which is fine, because it is probably just the upstream patch of this
 	// filter.
+	/* Start a fresh sequence before the callback can be published. */
+	uniwill_touchp_toggle_seq_pos = 0;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 	status = i8042_install_filter(uniwill_i8042_filter);
 #else
