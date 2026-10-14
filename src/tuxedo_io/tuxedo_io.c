@@ -58,7 +58,8 @@ static int uw_get_tdp_min(u8 tdp_index);
 static int uw_get_tdp_max(u8 tdp_index);
 static int uw_get_tdp(u8 tdp_index);
 static int uw_set_tdp(u8 tdp_index, int tdp_value);
-static u32 uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile);
+static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile);
+static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile);
 
 /**
  * strstr version of dmi_match
@@ -458,46 +459,56 @@ static int uw_get_tdp(u8 tdp_index)
 
 static int uw_set_tdp(u8 tdp_index, int tdp_value)
 {
-	int tdp_min, tdp_max;
+	int tdp_min, tdp_max, status;
 	u8 tdp_data;
 	u16 tdp_base_addr = 0x0783;
 	u16 tdp_current_addr = tdp_base_addr + tdp_index;
 
+	// Use min tdp to detect support for chosen tdp parameter
+	tdp_min = uw_get_tdp_min(tdp_index);
+	if (tdp_min < 0)
+		return tdp_min;
+	tdp_max = uw_get_tdp_max(tdp_index);
+	if (tdp_max < 0)
+		return tdp_max;
+	if (tdp_value < tdp_min || tdp_value > tdp_max)
+		return -EINVAL;
+
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
 		// Ensure that "overboost" profile is chosen when using TDP set
 		// for devices that require this
-		uw_set_performance_profile_v1(PROFILE_OVERBOOST);
+		/* Custom TDP can require this internal mode even when no public
+		 * profiles are advertised for the device. */
+		status = uw_apply_performance_profile_v1(PROFILE_OVERBOOST);
+		if (status < 0)
+			return status;
 	}
-
-	// Use min tdp to detect support for chosen tdp parameter
-	int min_tdp_status = uw_get_tdp_min(tdp_index);
-	if (min_tdp_status < 0)
-		return min_tdp_status;
-
-	tdp_min = uw_get_tdp_min(tdp_index);
-	tdp_max = uw_get_tdp_max(tdp_index);
-	if (tdp_value < tdp_min || tdp_value > tdp_max)
-		return -EINVAL;
 
 	if (tdp_index == 2 && uw_feats->uniwill_has_double_pl4)
 		tdp_data = tdp_value / 2;
 	else
 		tdp_data = tdp_value;
 
-	uniwill_write_ec_ram(tdp_current_addr, tdp_data);
+	return uniwill_write_ec_ram(tdp_current_addr, tdp_data);
+}
 
+static u32 uw_get_performance_profile_count(void)
+{
+	if (uw_feats->uniwill_profile_v1_two_profs)
+		return 2;
+	if (uw_feats->uniwill_profile_v1_three_profs ||
+	    uw_feats->uniwill_profile_v1_three_profs_leds_only)
+		return 3;
 	return 0;
 }
 
-/**
- * Set profile 1-3 to 0xa0, 0x00 or 0x10 depending on
- * device support.
- */
-static u32 uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
+/* Apply the established mode bits. In addition to public profiles, the
+ * validated custom-TDP path uses OVERBOOST on devices that require it. */
+static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 {
 	u8 current_value = 0x00, next_value;
 	u8 clear_bits = 0xa0 | 0x10;
-	u32 result;
+	int result;
 	result = uniwill_read_ec_ram(0x0751, &current_value);
 	if (result >= 0) {
 		next_value = current_value & ~clear_bits;
@@ -524,11 +535,40 @@ static u32 uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 	return result;
 }
 
+static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
+{
+	u32 count;
+
+	if (profile < PROFILE_POWERSAVE || profile > PROFILE_OVERBOOST)
+		return -EINVAL;
+
+	count = uw_get_performance_profile_count();
+	if (!count)
+		return -ENODEV;
+	if ((u32)profile > count)
+		return -EINVAL;
+
+	return uw_apply_performance_profile_v1(profile);
+}
+
+/* Unsupported TDP queries must return an errno, not an unsigned power value. */
+static long uw_copy_tdp_value(unsigned long arg, int value)
+{
+	u32 user_value;
+
+	if (value < 0)
+		return value;
+
+	user_value = value;
+	return copy_to_user((void __user *) arg, &user_value, sizeof(user_value)) ? -EFAULT : 0;
+}
+
 static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	u32 result = 0;
-	u32 copy_result;
+	u32 copy_result = 0;
 	u32 argument;
+	int status;
 	u8 byte_data;
 	const char str_no_if[] = "";
 	char *str_uniwill_if;
@@ -557,36 +597,48 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FANSPEED:
-			uniwill_read_ec_ram(0x1804, &byte_data);
+			status = uniwill_read_ec_ram(0x1804, &byte_data);
+			if (status < 0)
+				return status;
 			if (uw_feats->uniwill_has_universal_ec_fan_control && byte_data == 1)
 				byte_data = 0; // 1 is 0 behaviour see: uw_set_fan
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FANSPEED2:
-			uniwill_read_ec_ram(0x1809, &byte_data);
+			status = uniwill_read_ec_ram(0x1809, &byte_data);
+			if (status < 0)
+				return status;
 			if (uw_feats->uniwill_has_universal_ec_fan_control && byte_data == 1)
 				byte_data = 0; // 1 is 0 behaviour see: uw_set_fan
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FAN_TEMP:
-			uniwill_read_ec_ram(0x043e, &byte_data);
+			status = uniwill_read_ec_ram(0x043e, &byte_data);
+			if (status < 0)
+				return status;
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FAN_TEMP2:
-			uniwill_read_ec_ram(0x044f, &byte_data);
+			status = uniwill_read_ec_ram(0x044f, &byte_data);
+			if (status < 0)
+				return status;
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_MODE:
-			uniwill_read_ec_ram(0x0751, &byte_data);
+			status = uniwill_read_ec_ram(0x0751, &byte_data);
+			if (status < 0)
+				return status;
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_MODE_ENABLE:
-			uniwill_read_ec_ram(0x0741, &byte_data);
+			status = uniwill_read_ec_ram(0x0741, &byte_data);
+			if (status < 0)
+				return status;
 			result = byte_data;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
@@ -613,54 +665,36 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_TDP0:
-			result = uw_get_tdp(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(0));
 		case R_UW_TDP1:
-			result = uw_get_tdp(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(1));
 		case R_UW_TDP2:
-			result = uw_get_tdp(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(2));
 		case R_UW_TDP0_MIN:
-			result = uw_get_tdp_min(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(0));
 		case R_UW_TDP1_MIN:
-			result = uw_get_tdp_min(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(1));
 		case R_UW_TDP2_MIN:
-			result = uw_get_tdp_min(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(2));
 		case R_UW_TDP0_MAX:
-			result = uw_get_tdp_max(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(0));
 		case R_UW_TDP1_MAX:
-			result = uw_get_tdp_max(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(1));
 		case R_UW_TDP2_MAX:
-			result = uw_get_tdp_max(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(2));
 		case R_UW_PROFS_AVAILABLE:
-			result = 0;
-			if (uw_feats->uniwill_profile_v1_two_profs)
-				result = 2;
-			else if (uw_feats->uniwill_profile_v1_three_profs || uw_feats->uniwill_profile_v1_three_profs_leds_only)
-				result = 3;
+			result = uw_get_performance_profile_count();
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 #ifdef DEBUG
 		case R_TF_BC:
 			copy_result = copy_from_user(&uw_arg, (void *) arg, sizeof(uw_arg));
+			if (copy_result)
+				return -EFAULT;
 			reg_read_return.dword = 0;
-			result = uniwill_read_ec_ram((uw_arg[1] << 8) | uw_arg[0], &reg_read_return.bytes.data_low);
+			status = uniwill_read_ec_ram((uw_arg[1] << 8) | uw_arg[0], &reg_read_return.bytes.data_low);
+			if (status < 0)
+				return status;
 			copy_result = copy_to_user((void *) arg, &reg_read_return.dword, sizeof(reg_read_return.dword));
 			// pr_info("R_TF_BC args [%0#2x, %0#2x, %0#2x, %0#2x]\n", uw_arg[0], uw_arg[1], uw_arg[2], uw_arg[3]);
 			/*if (uniwill_ec_direct) {
@@ -679,13 +713,16 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 		case W_UW_FANSPEED2:
 			// Get fan speed argument
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			u8 fan_select = (cmd == W_UW_FANSPEED2);
-			uw_set_fan(fan_select, argument);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			if (argument > 0xff)
+				return -EINVAL;
+			return (int)uw_set_fan(cmd == W_UW_FANSPEED2, argument);
 		case W_UW_MODE:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			uniwill_write_ec_ram(0x0751, argument & 0xff);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			return uniwill_write_ec_ram(0x0751, argument & 0xff);
 		case W_UW_MODE_ENABLE:
 			// Note: Is for the moment set and cleared on init/exit of module (uniwill mode)
 			/*
@@ -694,29 +731,36 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			*/
 			break;
 		case W_UW_FANAUTO:
-			uw_set_fan_auto();
-			break;
+			return (int)uw_set_fan_auto();
 		case W_UW_TDP0:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			uw_set_tdp(0, argument);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			return uw_set_tdp(0, argument);
 		case W_UW_TDP1:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			uw_set_tdp(1, argument);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			return uw_set_tdp(1, argument);
 		case W_UW_TDP2:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			uw_set_tdp(2, argument);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			return uw_set_tdp(2, argument);
 		case W_UW_PERF_PROF:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
-			uw_set_performance_profile_v1(argument);
-			break;
+			if (copy_result)
+				return -EFAULT;
+			return uw_set_performance_profile_v1(argument);
 #ifdef DEBUG
 		case W_TF_BC:
 			reg_write_return.dword = 0;
 			copy_result = copy_from_user(&uw_arg, (void *) arg, sizeof(uw_arg));
-			uniwill_write_ec_ram((uw_arg[1] << 8) | uw_arg[0], uw_arg[2]);
+			if (copy_result)
+				return -EFAULT;
+			status = uniwill_write_ec_ram((uw_arg[1] << 8) | uw_arg[0], uw_arg[2]);
+			if (status < 0)
+				return status;
 			copy_result = copy_to_user((void *) arg, &reg_write_return.dword, sizeof(reg_write_return.dword));
 			/*if (uniwill_ec_direct) {
 				result = uw_ec_write_addr_direct(uw_arg[0], uw_arg[1], uw_arg[2], uw_arg[3], &reg_write_return);
@@ -734,14 +778,14 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 #endif
 	}
 
-	return 0;
+	return copy_result ? -EFAULT : 0;
 }
 
 static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	u32 status;
+	long status;
 	// u32 result = 0;
-	u32 copy_result;
+	u32 copy_result = 0;
 
 	const char *module_version = THIS_MODULE->version;
 	switch (cmd) {
@@ -758,6 +802,8 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			copy_result = copy_to_user((void *) arg, (void *) &id_check_uniwill, sizeof(id_check_uniwill));
 			break;
 	}
+	if (copy_result)
+		return -EFAULT;
 
 	status = clevo_ioctl_interface(file, cmd, arg);
 	if (status != 0) return status;
