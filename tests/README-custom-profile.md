@@ -28,7 +28,7 @@ failure and continue their existing independent initialization/restoration.
 A successful reset followed by a failed set can leave bit 6 clear; this is not
 a hardware rollback. The patch does not guarantee custom profile mode was
 applied after transport failure. It does not serialize adapter and PM accesses
-or establish firmware support on any additional model. The maintenance
-feature table still leaves this feature disabled. Tests force the capability
+or establish firmware support on any additional model. The current GM6PX0X
+feature flags leave this feature disabled. Tests force the capability
 only in doubles to exercise the guarded code. No hardware with this feature
 enabled was available for physical validation.

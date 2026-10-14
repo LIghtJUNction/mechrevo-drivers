@@ -102,7 +102,21 @@ Uniwill 的准备入口先停止自己安装的 i8042 过滤器，再同步排�
 输入初始化失败时任务应安全忽略空输入设备，但该检查不能代替卸载时停止事件源和排空任务。
 `test_uniwill_key_work_runtime.py` 编译真实 filter、任务、准备入口及卸载函数，
 用 pthread 条件变量固定已排队、正在运行、重复或并行准备与解绑的交错；
-准备回调从实际驱动 initializer 提取。filter 安装状态由 fixture 模拟，尚未覆盖完整 probe 尾部。
+准备回调从实际驱动 initializer 提取。
+`test_uniwill_probe_runtime.py` 另执行完整实际 probe、filter 和 remove，初始化服务使用模拟实现；
+覆盖过滤器安装失败、外部过滤器所有权、重复解绑和重绑，并检查半截按键序列不跨生命周期残留。
+测试保留实际版本条件，分别编译四组 API 宏；这不是旧内核模块构建或实机物理按键验收。
+
+公开 profile 写入与 `R_UW_PROFS_AVAILABLE` 使用同一能力计数：无支持返回 `ENODEV`，
+超出已声明档位或非法枚举返回 `EINVAL`，拒绝前不访问 EC。
+合法 custom TDP 的内部 OVERBOOST 保留；raw MODE 的低字节 ABI 保持。
+`test_uniwill_runtime.py` 覆盖全部 16 种能力标志组合。
+
+`test_uniwill_custom_profile.py` 编译实际 helper、完整 probe 和适配器回调，
+覆盖读取/reset/enable 逐项失败、原 errno、所有初始寄存器字节及其他初始化继续执行。
+reset 成功而 enable 失败可能留下清位状态，不能声称回滚或应用成功。
+当前 GM6PX0X 没有启用 custom-profile 能力；测试强制该能力只用于覆盖错误路径，不能作为开放机型的依据。
+适配器事件与 PM 对该寄存器的竞争仍未解决；仅给事件加锁不足以阻止成功 suspend 后的迟到事件重新置位。
 
 例行更新先在本机检查 PR diff、跑以上测试和对应内核构建，记录结果后再合并、推送。
 不要为日常验收反复触发/等待远程 CI 或远程审查。没有硬件时明确注明未做实机验证。

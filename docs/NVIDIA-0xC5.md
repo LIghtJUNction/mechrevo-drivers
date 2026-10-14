@@ -57,7 +57,9 @@ NPCF 的动态参数返回值包含这些路径更新的预算变量。
 - 现有证据不足以认定 `0xC5` 与 NPCF `0xC0` 完全等价，也不足以保证它可忽略。
 - 不把 `0xC5` 映射为 GPS `0xC0`，不额外转发一次 NVPCF 事件，不删除断言冒充功能修复。
 - 仍需 NVIDIA 或 OEM 明确 `0xC5` 的语义、是否需要独立处理及确认方式。
-  本记录可以用于审查或上游反馈，尚未代用户提交任何外部 issue。
+  已在 [NVIDIA 官方 Q&A #1447](https://github.com/NVIDIA/open-gpu-kernel-modules/discussions/1447)
+  提交协议问题，询问事件含义、是否需要独立处理及可核验的状态；尚待回复，没有提交猜测性修复。
+  公开内容未附原始机器日志，也明确说明尚未对比同版本闭源模块。
 
 2026-10-15 后续核对官方主分支提交
 [`ca2d03e6`](https://github.com/NVIDIA/open-gpu-kernel-modules/commit/ca2d03e6fafd4d4b56b383497d931c25b283bfcf)：

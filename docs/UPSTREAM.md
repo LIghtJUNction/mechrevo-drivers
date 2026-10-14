@@ -5,18 +5,19 @@ GitHub 上的 TUXEDO 仓库是只读镜像，贡献和问题反馈应交到 GitL
 
 ## 2026-10-15 已提交
 
-四组补丁均从正式 `main` 的 `a929f9ce143316b3b18d5f3fbf9cc54f0c1122e2` 分离，
+五组补丁均从正式 `main` 的 `a929f9ce143316b3b18d5f3fbf9cc54f0c1122e2` 分离，
 保留上游 4.25 的新增型号与配置支持，不包含 MECHREVO 品牌匹配、GPU 默认值、AUR 配方或项目规则。
 
 | 合并请求 | 修复 | 本地验证 | 当前状态 |
 | --- | --- | --- | --- |
 | [!58](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/58) | WMI 分配、请求格式及回复缓冲区检查，失败时保留输出 | 18 项实际 C 测试，ASan/UBSan；27 模块编译 | 已提交，待审查 |
-| [!59](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/59) | Uniwill ioctl 错误传播、用户复制检查、风扇参数边界及 TDP 先验证后写入 | 39 项实际 C 测试；两套内核各 27 模块编译 | 已提交，待审查 |
+| [!59](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/59) | Uniwill ioctl 错误传播、用户复制检查、风扇参数边界、TDP 先验证后写入及性能模式能力限制 | 46 项实际 C 测试；当前版本 27 模块编译 | 已更新，待审查 |
 | [!60](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/60) | 仅在支持 Mini LED 且接口创建成功后写默认值 | 3 项实际 C 初始化测试；27 模块编译 | 已提交，待审查 |
-| [!61](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/61) | 风扇状态、错误及并发；失败绑定回退；输入设备释放前排空按键任务 | 77 项实际 C、故障与 pthread 测试；27 模块编译 | Draft，实机验收未完成 |
+| [!61](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/61) | 风扇状态、错误及并发；失败绑定回退；排空按键任务及重置半截按键序列 | 85 项实际 C、故障与 pthread 测试；27 模块编译 | Draft，实机验收未完成 |
+| [!62](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/62) | custom profile 读取/reset/enable 失败后停止依赖操作，调用处报告错误并继续其他初始化 | 16 项实际 C 测试；27 模块编译 | 已提交，待审查 |
 
 同一测试运行原代码能捕获对应错误。故障输入和线程交错由测试模拟，不是实机故障注入。
-四组组合后 **137 项测试通过**，在 `7.2.7-arch1-1` 和 `7.2.9-arch1-1` 下各编译全部 27 个模块。
+此前四组版本组合后 **137 项测试通过**，在 `7.2.7-arch1-1` 和 `7.2.9-arch1-1` 下各编译全部 27 个模块。
 组合时 ioctl 有两处上下文冲突，已同时保留有符号错误返回和模式操作串行化；没有推送组合分支或安装其模块。
 
 !61 与已有 [!55](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/merge_requests/55)
@@ -25,9 +26,10 @@ GitHub 上的 TUXEDO 仓库是只读镜像，贡献和问题反馈应交到 GitL
 
 ## 验证和运行状态
 
-本项目的 4.24 维护分支独立移植了新发现的绑定及按键任务修复，**170 项测试通过**，
-在 `7.2.9-arch1-1` 下独立编译全部 27 个模块。
-这部分新改动尚未安装或加载，当前运行包仍为 `4.24.0.r10.gc79a268-1`；本轮没有发布新 AUR 包。
+本项目的 4.24 维护分支独立移植了绑定、按键任务、序列重置、性能模式能力限制及 custom-profile 错误处理，
+**201 项测试通过**。能力和序列修复组合在两套内核下各编译全部 27 模块；
+最终 custom-profile 源码另做包内隔离 DKMS 验证后安装。
+本节源码验证时新改动尚未安装或加载，运行包仍为 `4.24.0.r10.gc79a268-1`。
 原有 r10 的有限实机验证见 [GM6PX0X 记录](hardware/GM6PX0X.md)。
 
 上游 fork 的自动 CI 无法访问继承的构建模板项目，任务没有开始。
@@ -46,8 +48,8 @@ GitHub 上的 TUXEDO 仓库是只读镜像，贡献和问题反馈应交到 GitL
 
 - NVIDIA GPU `0xC5` 通知断言尚未修复；厂商语义未确认，见 [诊断记录](NVIDIA-0xC5.md)。
 - GM6PX0X 缺少可核验的 TDP 寄存器及安全上下限规范，仍不开放猜测性功耗写入。
-- 性能模式尚未按所有型号的能力完整限制；上游 4.25 独立 custom-profile helper 的 EC 错误处理、Clevo ioctl 错误处理不在本轮修复内。
+- custom-profile 的适配器事件与 PM 仍有竞争：成功 suspend 后的迟到事件可以重新置位，需要独立 PM 状态门禁；尚未实机复现。Clevo ioctl 错误处理未修复。
 - 真实睡眠恢复、重启、手动风扇、长期温度和噪声、电池及物理按键等仍需实机验收，TUXEDO 型号未做硬件矩阵测试。
-- 新按键任务测试模拟过滤器安装状态，未执行完整 probe 尾部；任意诊断 EC 写入也不属于新增状态锁的保障范围。
+- 新增完整实际 probe 的过滤器所有权和序列生命周期回归，初始化服务及同步由测试模拟；任意诊断 EC 写入仍不属于新增状态锁的保障范围。
 
 已提交不代表上游已合并；编译及模拟测试通过不代表硬件完整兼容。
