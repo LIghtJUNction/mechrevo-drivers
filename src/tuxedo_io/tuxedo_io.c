@@ -58,6 +58,7 @@ static int uw_get_tdp_min(u8 tdp_index);
 static int uw_get_tdp_max(u8 tdp_index);
 static int uw_get_tdp(u8 tdp_index);
 static int uw_set_tdp(u8 tdp_index, int tdp_value);
+static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile);
 static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile);
 
 /**
@@ -469,7 +470,9 @@ static int uw_set_tdp(u8 tdp_index, int tdp_value)
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
 		// Ensure that "overboost" profile is chosen when using TDP set
 		// for devices that require this
-		status = uw_set_performance_profile_v1(PROFILE_OVERBOOST);
+		/* Custom TDP can require this internal mode even when no public
+		 * profiles are advertised for the device. */
+		status = uw_apply_performance_profile_v1(PROFILE_OVERBOOST);
 		if (status < 0)
 			return status;
 	}
@@ -482,11 +485,19 @@ static int uw_set_tdp(u8 tdp_index, int tdp_value)
 	return uniwill_write_ec_ram(tdp_current_addr, tdp_data);
 }
 
-/**
- * Set profile 1-3 to 0xa0, 0x00 or 0x10 depending on
- * device support.
- */
-static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
+static u32 uw_get_performance_profile_count(void)
+{
+	if (uw_feats->uniwill_profile_v1_two_profs)
+		return 2;
+	if (uw_feats->uniwill_profile_v1_three_profs ||
+	    uw_feats->uniwill_profile_v1_three_profs_leds_only)
+		return 3;
+	return 0;
+}
+
+/* Apply the established mode bits. In addition to public profiles, the
+ * validated custom-TDP path uses OVERBOOST on devices that require it. */
+static int uw_apply_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 {
 	u8 profile_bits;
 
@@ -505,6 +516,22 @@ static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 	}
 
 	return uw_update_mode(0xb0, profile_bits);
+}
+
+static int uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
+{
+	u32 count;
+
+	if (profile < PROFILE_POWERSAVE || profile > PROFILE_OVERBOOST)
+		return -EINVAL;
+
+	count = uw_get_performance_profile_count();
+	if (!count)
+		return -ENODEV;
+	if ((u32)profile > count)
+		return -EINVAL;
+
+	return uw_apply_performance_profile_v1(profile);
 }
 
 /* Unsupported TDP queries must return an errno, not an unsigned power value. */
@@ -639,11 +666,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 		case R_UW_TDP2_MAX:
 			return uw_copy_tdp_value(arg, uw_get_tdp_max(2));
 		case R_UW_PROFS_AVAILABLE:
-			result = 0;
-			if (uw_feats->uniwill_profile_v1_two_profs)
-				result = 2;
-			else if (uw_feats->uniwill_profile_v1_three_profs || uw_feats->uniwill_profile_v1_three_profs_leds_only)
-				result = 3;
+			result = uw_get_performance_profile_count();
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 #ifdef DEBUG

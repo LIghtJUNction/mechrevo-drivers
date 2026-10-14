@@ -1,5 +1,6 @@
 """Compile real Uniwill driver functions with safe userspace mocks (requires cc)."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import tempfile
@@ -33,13 +34,19 @@ class UniwillRuntime(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
-        keyboard = (ROOT / "src/uniwill_keyboard.h").read_text()
-        io = (ROOT / "src/tuxedo_io/tuxedo_io.c").read_text()
-        interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
+        source_root = Path(os.environ.get("UNIWILL_IO_SOURCE_ROOT", ROOT))
+        keyboard = (source_root / "src/uniwill_keyboard.h").read_text()
+        io = (source_root / "src/tuxedo_io/tuxedo_io.c").read_text()
+        interfaces = (source_root / "src/uniwill_interfaces.h").read_text()
         fan_constant = re.search(r"(?m)^#define FAN_ON_MIN_SPEED_PERCENT\s+.+$", io)
         if not fan_constant:
             raise AssertionError("Missing fan minimum speed definition")
         functions = [fan_constant.group(), function(keyboard, "uw_mini_led_local_dimming_init")]
+        # Baseline sensitivity runs use the same fixture against the prior
+        # source. New private helpers are absent there, rather than mocked.
+        for name in ("uw_get_performance_profile_count", "uw_apply_performance_profile_v1"):
+            if re.search(r"(?m)^static[^;{]*\b" + name + r"\([^;{]*\)\s*\{", io):
+                functions.append(function(io, name))
         functions.extend(function(io, name) for name in
                          ("uw_get_tdp_min", "uw_get_tdp_max", "uw_get_tdp", "uw_set_tdp",
                           "uw_set_performance_profile_v1", "uw_copy_tdp_value"))
@@ -203,6 +210,27 @@ class UniwillRuntime(unittest.TestCase):
 
     def test_all_profiles_pass_exact_masks_for_every_previous_mode_byte(self):
         self.check_case("profile_masks")
+
+    def test_profile_counts_preserve_all_feature_flag_combinations(self):
+        self.check_case("profile_count_matrix")
+
+    def test_public_profile_writes_follow_all_advertised_capabilities(self):
+        self.check_case("profile_capability_matrix")
+
+    def test_two_profile_device_rejects_overboost_without_ec_access(self):
+        self.check_case("profile_two_rejects_overboost")
+
+    def test_two_profile_flag_keeps_precedence_over_three_and_leds_only(self):
+        self.check_case("profile_two_precedence")
+
+    def test_leds_only_profiles_keep_the_established_mode_bits(self):
+        self.check_case("profile_leds_only")
+
+    def test_custom_only_device_rejects_public_profiles_but_keeps_tdp_mode(self):
+        self.check_case("profile_custom_only_tdp")
+
+    def test_invalid_profiles_remain_einval_for_every_capability_combination(self):
+        self.check_case("profile_invalid_capability_matrix")
 
     def test_disabled_mode_enable_and_unknown_commands_remain_noops(self):
         self.check_case("unchanged_noop_dispatch")
