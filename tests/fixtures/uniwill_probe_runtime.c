@@ -41,7 +41,7 @@ static void cancel_delayed_work_sync(int *work) {
     ++quiesces;
 }
 static bool uniwill_pm_ready, uniwill_pm_suspended;
-static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
+static __attribute__((unused)) int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 enum filter_slot { EMPTY, OURS, FOREIGN };
 static enum filter_slot active_filter;
@@ -130,6 +130,13 @@ static void uw_show_hidden_bios_options(void) {}
 static void uw_battery_init(void) { ++resources; }
 static void uw_battery_uninit(void) { ++resource_removals; }
 static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)group; }
+/* Charging lifecycle is exercised with its real implementation separately. */
+static __attribute__((unused)) void uw_charging_uninit(struct platform_device *dev)
+{
+    (void)dev;
+    if (uw_charging_prio_loaded) sysfs_remove_group(NULL, &uw_charging_prio_attr_group);
+    if (uw_charging_profile_loaded) sysfs_remove_group(NULL, &uw_charging_profile_attr_group);
+}
 static void uniwill_leds_remove(struct platform_device *dev) { assert(dev == &platform); ++resource_removals; }
 static void uw_lightbar_remove(struct platform_device *dev) { assert(dev == &platform); }
 /* @DRIVER_FUNCTIONS@ */

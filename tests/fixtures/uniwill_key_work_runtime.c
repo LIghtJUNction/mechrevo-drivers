@@ -116,6 +116,13 @@ static bool sparse_keymap_report_known_event(struct input_dev *dev, u32 code, in
     assert(value == 1 && repeat); ++reports; return true;
 }
 static void sysfs_remove_group(void *kobj, void *group) { (void)kobj; (void)group; }
+/* Charging lifecycle is exercised with its real implementation separately. */
+static __attribute__((unused)) void uw_charging_uninit(struct platform_device *dev)
+{
+    (void)dev;
+    if (uw_charging_prio_loaded) sysfs_remove_group(NULL, &uw_charging_prio_attr_group);
+    if (uw_charging_profile_loaded) sysfs_remove_group(NULL, &uw_charging_profile_attr_group);
+}
 static void uw_battery_uninit(void) {}
 static void uniwill_leds_remove(struct platform_device *dev) { assert(dev == &platform); }
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
