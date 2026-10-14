@@ -1,5 +1,6 @@
 """Run the actual fan helpers with mocked EC memory and a manually run worker."""
 from pathlib import Path
+import os
 import re
 import resource
 import subprocess
@@ -30,8 +31,8 @@ def function(source, name):
 class UniwillFanRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(prefix="fan-runtime-", dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
@@ -39,12 +40,13 @@ class UniwillFanRuntime(unittest.TestCase):
         interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
         constants = []
         for source, name in ((keyboard, "FAN_ON_MIN_SPEED_PERCENT"),
-                             (interfaces, "NB02_FAN_SPEED_MAX")):
+                             (interfaces, "NB02_FAN_SPEED_MAX"),
+                             (interfaces, "UW_EC_REG_CUSTOM_PROFILE")):
             match = re.search(r"(?m)^#define " + name + r"\s+.+$", source)
             if not match:
                 raise AssertionError("Missing driver constant: " + name)
             constants.append(match.group())
-        names = ("uniwill_write_ec_ram_with_retry", "uw_fan_quiesce_locked", "uw_fan_lock", "uw_fan_unlock",
+        names = ("uniwill_set_custom_profile_mode", "uniwill_write_ec_ram_with_retry", "uw_fan_quiesce_locked", "uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active",
                  "uw_set_mode", "uw_update_mode",
                  "set_full_fan_mode_locked", "set_full_fan_mode", "uw_init_fan_locked", "uw_init_fan",
                  "restart_direct_fan_control_work_handler", "direct_fan_control",
@@ -145,7 +147,7 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_suspend_resume_preserves_both_nonzero_fan_targets(self):
         self.check_case("pm_success")
 
-    def test_resume_second_fan_failure_cannot_make_queued_worker_write_zero(self):
+    def test_resume_second_fan_failure_quiesces_worker_and_manual_recovery_preserves_targets(self):
         self.check_case("pm_resume_second_fan_error")
 
     def test_suspend_fan_errors_keep_saved_targets_and_do_not_disable_backlight(self):
@@ -163,7 +165,7 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_failed_suspend_rolls_back_without_a_resume_callback(self):
         self.check_case("pm_suspend_abort_recovery")
 
-    def test_explicit_manual_updates_and_auto_cancels_pending_pm_targets(self):
+    def test_suspended_exports_reject_then_resumed_manual_and_auto_recover_pending_targets(self):
         self.check_case("pm_explicit_commands")
 
     def test_mode_helpers_preserve_all_unmasked_bits_and_complete_write_value(self):
@@ -175,7 +177,7 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_removed_mode_helpers_reject_without_accessing_ec(self):
         self.check_case("mode_helpers_removed")
 
-    def test_start_failure_keeps_exports_closed_and_retry_starts_new_lifecycle(self):
+    def test_start_failure_and_successful_start_keep_exports_closed_until_probe_finishes(self):
         self.check_case("start_errors")
 
     def test_invalid_manual_request_does_not_cancel_failed_worker_recovery(self):

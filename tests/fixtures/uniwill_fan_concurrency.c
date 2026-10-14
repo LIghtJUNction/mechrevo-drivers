@@ -19,6 +19,8 @@ struct uniwill_device_features_t {
     bool uniwill_custom_profile_mode_needed;
 };
 static struct uniwill_device_features_t uniwill_device_features;
+static __attribute__((unused)) struct uniwill_device_features_t *uniwill_get_device_features(void) { return &uniwill_device_features; }
+/* @LEGACY_PM_DECL@ */
 struct platform_device { struct { struct { int unused; } kobj; } dev; };
 typedef int pm_message_t;
 static bool uw_charging_prio_loaded, uw_charging_profile_loaded, uw_lightbar_loaded;
@@ -220,7 +222,8 @@ static void interleave(enum operation first, enum operation second)
     pthread_t two = start(2, second);
     wait_contender();
     assert(pthread_join(one, NULL) == 0 && pthread_join(two, NULL) == 0);
-    assert(result[1] == 0 && result[2] == 0);
+    assert(result[1] == 0);
+    assert(result[2] == (first == SUSPEND ? -EBUSY : 0));
 }
 static void prepare_manual(void)
 {
@@ -243,6 +246,8 @@ int main(int argc, char **argv)
     assert(argc == 2);
     const char *test = argv[1];
     actor = 0;
+    /* Fan-only schedules start after probe; the PM suite runs the real probe. */
+    uniwill_pm_ready = true;
     if (strcmp(test, "auto_manual") == 0) {
         prepare_manual(); pause_address = 0x0751;
         interleave(AUTO, MANUAL);
@@ -273,7 +278,12 @@ int main(int argc, char **argv)
     } else if (strcmp(test, "suspend_manual") == 0) {
         prepare_manual(); pause_address = 0x0751;
         interleave(SUSPEND, MANUAL);
+        assert(uniwill_pm_suspended);
+        assert(direct_fan_control_current_value_fan0_suspend_save == 83);
+        assert(direct_fan_control_current_value_fan1_suspend_save == 97);
         assert(uniwill_keyboard_resume(NULL) == 0);
+        assert(!uniwill_pm_suspended);
+        assert(uw_set_fan(0, 110) == 0);
         assert(direct_fan_control_current_value_fan0 == 110 && direct_fan_control_current_value_fan1 == 97);
     } else if (strcmp(test, "resume_auto") == 0) {
         prepare_manual(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
@@ -312,8 +322,12 @@ int main(int argc, char **argv)
         assert(uw_fan_control_start() == 0);
         assert(!direct_fan_control_started && !fans_initialized);
         assert(!direct_fan_control_restart_delayed_work.pending);
-        assert(uw_set_mode(0x11) == 0 && uw_set_fan(0, 110) == 0);
-        assert(direct_fan_control_current_value_fan0 == 110);
+        assert(!uniwill_pm_ready && !uniwill_pm_suspended);
+        int before = event_count;
+        assert(uw_set_mode(0x11) == -ENODEV && (int)uw_set_fan(0, 110) == -ENODEV);
+        assert((int)uw_set_fan_auto() == -ENODEV && uw_init_fan() == -ENODEV);
+        assert(set_full_fan_mode(true) == -ENODEV && uw_update_mode(0xb0, 0xa0) == -ENODEV);
+        assert(event_count == before && direct_fan_control_current_value_fan0 == 0);
     } else return 2;
     return 0;
 }

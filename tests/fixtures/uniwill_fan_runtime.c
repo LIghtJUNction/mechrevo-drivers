@@ -14,6 +14,7 @@ struct uniwill_device_features_t {
     bool uniwill_custom_profile_mode_needed;
 };
 static struct uniwill_device_features_t uniwill_device_features;
+static struct uniwill_device_features_t *uniwill_get_device_features(void) { return &uniwill_device_features; }
 static u8 direct_fan_control_current_value_fan0;
 static u8 direct_fan_control_current_value_fan1;
 static bool fans_initialized, direct_fan_control_started, direct_fan_control_restart_needed;
@@ -25,6 +26,7 @@ struct mutex { pthread_mutex_t native; };
 static DEFINE_MUTEX(uniwill_fan_command_lock);
 static DEFINE_MUTEX(uniwill_fan_state_lock);
 static bool uniwill_fan_work_paused, uniwill_fan_removed;
+static bool uniwill_pm_ready, uniwill_pm_suspended;
 static void mutex_lock(struct mutex *lock) { assert(pthread_mutex_lock(&lock->native) == 0); }
 static void mutex_unlock(struct mutex *lock) { assert(pthread_mutex_unlock(&lock->native) == 0); }
 #define lockdep_assert_held(lock) do {} while (0)
@@ -137,6 +139,9 @@ static void reset(bool universal)
     direct_fan_control_restart_needed = false;
     direct_fan_control_suspend = false;
     uniwill_fan_work_paused = uniwill_fan_removed = false;
+    /* This isolated fan fixture starts in an already completed lifecycle. */
+    uniwill_pm_ready = true;
+    uniwill_pm_suspended = false;
     direct_fan_control_current_value_fan0_suspend_save = 0;
     direct_fan_control_current_value_fan1_suspend_save = 0;
     backlight_calls = leds_calls = priority_calls = profile_calls = 0;
@@ -505,6 +510,11 @@ int main(int argc, char **argv)
         assert_cached(83, 97); assert_saved(83, 97);
         assert(queued_fan0[queue_index] == 83 && queued_fan1[queue_index] == 97);
         assert(backlight_enabled == 1 && leds_calls == 1 && priority_calls == 1 && profile_calls == 1);
+        assert(!uniwill_pm_suspended && !direct_fan_control_restart_delayed_work.pending);
+        assert(direct_fan_control_restart_needed);
+        /* Resume is allowed to fail without a second PM callback. A new manual
+         * request must queue recovery with both saved targets intact. */
+        assert(uw_set_fan(0, 83) == 0);
         run_worker();
         for (int i = begin; i < event_count; ++i) {
             if (events[i].kind == 'w' && events[i].address == 0x1809)
@@ -529,16 +539,21 @@ int main(int argc, char **argv)
             }
         }
     } else if (strcmp(test, "pm_resume_retry_errors") == 0) {
-        for (int failure = 0; failure < 2; ++failure) {
-            prepare_suspended(); write_failures = 1;
-            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
-            fail_after = event_count + failure;
-            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
-            assert_cached(83, 97); assert_saved(83, 97);
-            assert(backlight_enabled == 1 && leds_calls == 2 && priority_calls == 2 && profile_calls == 2);
-            fail_after = -1; run_worker();
-            assert(ec[0x1804] == 83 && ec[0x1809] == 97);
+        const int errnos[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int error = 0; error < 3; ++error) {
+            prepare_suspended(); fault_status = errnos[error];
+            for (int attempt = 1; attempt <= 3; ++attempt) {
+                write_failures = 1;
+                assert(uniwill_keyboard_resume(NULL) == errnos[error] && direct_fan_control_suspend);
+                assert_cached(83, 97); assert_saved(83, 97);
+                assert(backlight_enabled == 1 && leds_calls == attempt);
+                assert(priority_calls == attempt && profile_calls == attempt);
+                assert(!uniwill_pm_suspended && !direct_fan_control_restart_delayed_work.pending);
+                assert(direct_fan_control_restart_needed);
+            }
             assert(uniwill_keyboard_resume(NULL) == 0 && !direct_fan_control_suspend);
+            run_worker();
+            assert(ec[0x1804] == 83 && ec[0x1809] == 97);
         }
     } else if (strcmp(test, "pm_repeated_suspend") == 0) {
         prepare_suspended();
@@ -585,6 +600,27 @@ int main(int argc, char **argv)
         }
     } else if (strcmp(test, "pm_explicit_commands") == 0) {
         prepare_suspended();
+        int before = event_count, previous_schedules = schedules;
+        assert(uniwill_pm_suspended);
+        assert((int)uw_set_fan(0, 110) == -EBUSY);
+        assert((int)uw_set_fan_auto() == -EBUSY);
+        assert(uw_init_fan() == -EBUSY && set_full_fan_mode(true) == -EBUSY);
+        assert(uw_set_mode(0x55) == -EBUSY && uw_update_mode(0xb0, 0xa0) == -EBUSY);
+        assert(event_count == before && schedules == previous_schedules);
+        assert_saved(83, 97); assert_cached(0, 0);
+        assert(uniwill_keyboard_resume(NULL) == 0 && !uniwill_pm_suspended);
+        assert(uw_set_fan(0, 110) == 0); assert_cached(110, 97);
+        run_worker();
+        assert(ec[0x1804] == 110 && ec[0x1809] == 97);
+        assert(uw_set_fan_auto() == 0 && !direct_fan_control_suspend);
+        assert_cached(0, 0);
+
+        /* A failed resume also leaves ordinary commands usable, and the
+         * explicit AUTO request cancels saved restoration rather than
+         * requiring another resume to complete. */
+        prepare_suspended(); write_failures = 1;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && !uniwill_pm_suspended);
+        assert(direct_fan_control_suspend && !direct_fan_control_restart_delayed_work.pending);
         assert(uw_set_fan(0, 110) == 0); assert_cached(110, 97); assert_saved(110, 97);
         run_worker();
         assert(ec[0x1804] == 110 && ec[0x1809] == 97);
@@ -640,8 +676,13 @@ int main(int argc, char **argv)
             assert(uw_init_fan() == -ENODEV && set_full_fan_mode(true) == -ENODEV);
             assert(writes == 1 && reads == 0);
             assert(uw_fan_control_start() == 0 && !uniwill_fan_removed);
-            assert(ec[0x0751] == 0 && uw_set_fan(0, 110) == 0);
-            assert(direct_fan_control_started && direct_fan_control_restart_delayed_work.pending);
+            assert(!uniwill_pm_ready && !uniwill_pm_suspended && ec[0x0751] == 0);
+            int before = event_count;
+            assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
+            assert(uw_init_fan() == -ENODEV && set_full_fan_mode(true) == -ENODEV);
+            assert(uw_set_mode(0x55) == -ENODEV && uw_update_mode(0xb0, 0xa0) == -ENODEV);
+            assert(event_count == before);
+            assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
         }
     } else if (strcmp(test, "invalid_preserves_recovery") == 0) {
         for (int universal = 0; universal < 2; ++universal) {

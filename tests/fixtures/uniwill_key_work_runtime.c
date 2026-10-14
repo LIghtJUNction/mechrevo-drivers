@@ -46,6 +46,7 @@ static bool uw_charging_prio_loaded, uw_charging_profile_loaded, uw_lightbar_loa
 static int uw_charging_prio_attr_group, uw_charging_profile_attr_group, dev_attr_fn_lock;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 static bool uniwill_fan_removed;
+static bool uniwill_pm_ready, uniwill_pm_suspended;
 #define LINUX_VERSION_CODE 0x070209
 #define KERNEL_VERSION(a,b,c) (((a)<<16)|((b)<<8)|(c))
 #define EXPORT_SYMBOL(n)

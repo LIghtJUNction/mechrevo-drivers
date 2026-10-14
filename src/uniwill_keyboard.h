@@ -71,6 +71,7 @@
 static void uw_charging_priority_write_state(void);
 static void uw_charging_profile_write_state(void);
 static int uniwill_set_custom_profile_mode(bool zero_bit_initially);
+static void uniwill_restore_adapter_state(void);
 
 struct tuxedo_keyboard_driver uniwill_keyboard_driver;
 
@@ -324,8 +325,6 @@ static int uniwill_write_kbd_bl_enable(u8 enable)
 
 void uniwill_event_callb(u32 code)
 {
-	int status;
-
 	switch (code) {
 		case UNIWILL_OSD_MODE_CHANGE_KEY_EVENT:
 			if (!uniwill_keyboard_driver.input_device)
@@ -344,13 +343,7 @@ void uniwill_event_callb(u32 code)
 		case UNIWILL_OSD_DC_ADAPTER_CHANGE:
 			// Refresh keyboard state and charging settings on cable switch event and make sure that the custom
 			// profile mode is still applied in case it's needed.
-			status = uniwill_set_custom_profile_mode(false);
-			if (status)
-				TUXEDO_ERROR("Could not restore custom profile mode: %d\n", status);
-			uniwill_leds_restore_state_extern();
-			msleep(50);
-			uw_charging_priority_write_state();
-			uw_charging_profile_write_state();
+			uniwill_restore_adapter_state();
 			break;
 		case UNIWILL_KEY_KBDILLUMTOGGLE:
 		case UNIWILL_OSD_KB_LED_LEVEL0:
@@ -1951,6 +1944,9 @@ static bool fans_initialized = false;
 static bool direct_fan_control_started = false;
 static bool direct_fan_control_restart_needed = false;
 static bool direct_fan_control_suspend = false;
+/* The fan-restore flag above is false in AUTO. It cannot describe device PM. */
+static bool uniwill_pm_ready;
+static bool uniwill_pm_suspended;
 /* Lock order: command -> state -> EC transport. The worker only takes state.
  * Never wait for that worker with state held: cancellation first blocks its
  * entry/requeue under state, drops state, and drains it under command. */
@@ -1992,9 +1988,27 @@ static void uw_fan_unlock(void)
 	mutex_unlock(&uniwill_fan_command_lock);
 }
 
-int uw_set_mode(u8 value)
+static int uw_fan_lock_active(bool cancel_work)
 {
 	int status = uw_fan_lock(false);
+	if (status)
+		return status;
+	if (!uniwill_pm_ready) {
+		uw_fan_unlock();
+		return -ENODEV;
+	}
+	if (uniwill_pm_suspended) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	if (cancel_work)
+		uw_fan_quiesce_locked();
+	return 0;
+}
+
+int uw_set_mode(u8 value)
+{
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
 	status = uniwill_write_ec_ram(0x0751, value);
@@ -2006,7 +2020,7 @@ EXPORT_SYMBOL(uw_set_mode);
 int uw_update_mode(u8 clear_mask, u8 set_mask)
 {
 	u8 value;
-	int status = uw_fan_lock(false);
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
 	status = uniwill_read_ec_ram(0x0751, &value);
@@ -2039,7 +2053,7 @@ static int set_full_fan_mode_locked(bool enable) {
 
 int set_full_fan_mode(bool enable)
 {
-	int status = uw_fan_lock(false);
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
 	status = set_full_fan_mode_locked(enable);
@@ -2140,7 +2154,7 @@ static int uw_init_fan_locked(void) {
 
 int uw_init_fan(void)
 {
-	int status = uw_fan_lock(false);
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
 	status = uw_init_fan_locked();
@@ -2156,7 +2170,7 @@ static void restart_direct_fan_control_work_handler(struct work_struct *work)
 	u16 addr_fan1 = 0x1809;
 
 	mutex_lock(&uniwill_fan_state_lock);
-	if (uniwill_fan_work_paused || uniwill_fan_removed || !direct_fan_control_started)
+	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started)
 		goto unlock;
 	pr_debug("restart fan control\n");
 
@@ -2188,7 +2202,7 @@ failed:
 	pr_err("Could not restart direct fan control: %d\n", status);
 
 reschedule:
-	if (!uniwill_fan_work_paused && !uniwill_fan_removed)
+	if (!uniwill_fan_work_paused && !uniwill_fan_removed && uniwill_pm_ready && !uniwill_pm_suspended)
 		schedule_delayed_work(&direct_fan_control_restart_delayed_work, msecs_to_jiffies(50 * 60 * 1000));
 unlock:
 	mutex_unlock(&uniwill_fan_state_lock);
@@ -2304,7 +2318,7 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 
 u32 uw_set_fan(u32 fan_index, u8 fan_speed)
 {
-	int status = uw_fan_lock(false);
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
 	if (fan_index > 1 ||
@@ -2377,7 +2391,7 @@ static u32 uw_set_fan_auto_locked(void)
 
 u32 uw_set_fan_auto(void)
 {
-	int status = uw_fan_lock(true);
+	int status = uw_fan_lock_active(true);
 	if (status)
 		return status;
 	status = (int)uw_set_fan_auto_locked();
@@ -2393,6 +2407,8 @@ static int uw_fan_control_start(void)
 	mutex_lock(&uniwill_fan_state_lock);
 	uw_fan_quiesce_locked();
 	uniwill_fan_removed = false;
+	uniwill_pm_ready = false;
+	uniwill_pm_suspended = false;
 	fans_initialized = false;
 	direct_fan_control_started = false;
 	direct_fan_control_restart_needed = false;
@@ -2445,10 +2461,33 @@ static bool uniwill_i8042_filter(unsigned char data, unsigned char str,
 	return false;
 }
 
+static void uniwill_restore_adapter_state(void)
+{
+	int status = uw_fan_lock(false);
+	if (status)
+		return;
+	/* A late event must not undo suspend's custom-profile reset or touch
+	 * LED/charging resources before probe or after removal. */
+	if (uniwill_pm_ready && !uniwill_pm_suspended) {
+		status = uniwill_set_custom_profile_mode(false);
+		if (status)
+			TUXEDO_ERROR("Could not restore custom profile mode: %d\n", status);
+		uniwill_leds_restore_state_extern();
+		msleep(50);
+		uw_charging_priority_write_state();
+		uw_charging_profile_write_state();
+	}
+	uw_fan_unlock();
+}
+
 static void uniwill_keyboard_prepare_remove(void)
 {
 	/* The common hook and a direct platform unbind may both quiesce us. */
 	mutex_lock(&uniwill_fan_command_lock);
+	mutex_lock(&uniwill_fan_state_lock);
+	uniwill_pm_ready = false;
+	uniwill_pm_suspended = true;
+	mutex_unlock(&uniwill_fan_state_lock);
 	/* i8042_remove_filter() synchronizes the filter before work is drained,
 	 * so no new touchpad workaround can be queued after cancellation. */
 	if (uniwill_i8042_filter_installed) {
@@ -2572,6 +2611,13 @@ static int uniwill_keyboard_probe(struct platform_device *dev)
 	if (status)
 		pr_info("Could not install i8042 filter.\n");
 
+	/* Only a completed probe may accept cable-change restoration. */
+	mutex_lock(&uniwill_fan_command_lock);
+	mutex_lock(&uniwill_fan_state_lock);
+	uniwill_pm_ready = true;
+	mutex_unlock(&uniwill_fan_state_lock);
+	mutex_unlock(&uniwill_fan_command_lock);
+
 	return 0;
 }
 
@@ -2652,10 +2698,19 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 	u8 data;
 	int status, restore_status;
+	bool profile_was_enabled = false;
 
 	status = uw_fan_lock(true);
 	if (status)
 		return status;
+	if (!uniwill_pm_ready) {
+		uw_fan_unlock();
+		return -ENODEV;
+	}
+	if (uniwill_pm_suspended) {
+		uw_fan_unlock();
+		return 0;
+	}
 	if (direct_fan_control_started) {
 		direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
 		direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
@@ -2668,22 +2723,33 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 	}
 
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
+		bool was_enabled;
 		// Unset "customer mode light" before suspend. Otherwise at
 		// least one device is known to immediately wake up.
 		status = uniwill_read_ec_ram(0x0727, &data);
 		if (status)
 			goto failed;
+		was_enabled = !!(data & (1 << 6));
 		data &= ~(1 << 6);
 		status = uniwill_write_ec_ram(0x0727, data);
 		if (status)
 			goto failed;
+		profile_was_enabled = was_enabled;
 	}
-	uniwill_write_kbd_bl_enable(0);
+	status = uniwill_write_kbd_bl_enable(0);
+	if (status)
+		goto failed;
+	uniwill_pm_suspended = true;
 	uw_fan_unlock();
 	return 0;
 
 failed:
 	/* A failed suspend is not guaranteed to receive a resume callback. */
+	if (profile_was_enabled) {
+		restore_status = uniwill_set_custom_profile_mode(false);
+		if (restore_status)
+			pr_err("Could not restore custom profile mode after failed suspend: %d\n", restore_status);
+	}
 	restore_status = uw_restore_fan_state_locked();
 	if (restore_status)
 		pr_err("Could not restore direct fan control after failed suspend: %d\n", restore_status);
@@ -2696,10 +2762,18 @@ static int uniwill_keyboard_resume(struct platform_device *dev)
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 	u8 data;
 	int result, status;
+	bool restore_fans;
 
 	result = uw_fan_lock(false);
 	if (result)
 		return result;
+	if (!uniwill_pm_ready) {
+		uw_fan_unlock();
+		return -ENODEV;
+	}
+	/* Keep queued fan work out until this complete callback releases state. */
+	uniwill_pm_suspended = true;
+	restore_fans = direct_fan_control_suspend;
 	if (direct_fan_control_restart_needed)
 		uw_fan_quiesce_locked();
 	result = uw_restore_fan_state_locked();
@@ -2715,10 +2789,23 @@ static int uniwill_keyboard_resume(struct platform_device *dev)
 			result = status;
 	}
 	uniwill_leds_restore_state_extern();
-	uniwill_write_kbd_bl_enable(1);
+	status = uniwill_write_kbd_bl_enable(1);
+	if (status && !result)
+		result = status;
 	// Restore charging settings on resume
 	uw_charging_priority_write_state();
 	uw_charging_profile_write_state();
+	if (result) {
+		/* Later EC failures must not consume saved manual targets. A failed
+		 * resume need not be retried by PM, so ordinary commands remain a
+		 * recovery path once this callback returns. */
+		if (restore_fans) {
+			direct_fan_control_suspend = true;
+			direct_fan_control_restart_needed = direct_fan_control_started;
+		}
+		uw_fan_quiesce_locked();
+	}
+	uniwill_pm_suspended = false;
 	uw_fan_unlock();
 	return result;
 }
