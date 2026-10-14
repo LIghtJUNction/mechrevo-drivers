@@ -1404,11 +1404,14 @@ static void uw_mini_led_local_dimming_init(struct platform_device *dev)
 {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
 
-	if (uw_feats->uniwill_has_mini_led_local_dimming)
-		uw_mini_led_local_dimming_loaded = sysfs_create_group(&dev->dev.kobj, &uw_mini_led_local_dimming_attr_group) == 0;
+	if (!uw_feats->uniwill_has_mini_led_local_dimming)
+		return;
 
-	// Set default to off
-	uw_set_mini_led_local_dimming(false);
+	uw_mini_led_local_dimming_loaded = sysfs_create_group(&dev->dev.kobj, &uw_mini_led_local_dimming_attr_group) == 0;
+
+	// Only initialize a supported panel with an available control interface.
+	if (uw_mini_led_local_dimming_loaded)
+		uw_set_mini_led_local_dimming(false);
 }
 
 static ssize_t uw_mini_led_local_dimming_show(struct device *child,

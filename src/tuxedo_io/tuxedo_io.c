@@ -517,6 +517,18 @@ static u32 uw_set_performance_profile_v1(enum uw_perf_profiles_v1 profile)
 	return result;
 }
 
+/* Unsupported TDP queries must return an errno, not an unsigned power value. */
+static long uw_copy_tdp_value(unsigned long arg, int value)
+{
+	u32 user_value;
+
+	if (value < 0)
+		return value;
+
+	user_value = value;
+	return copy_to_user((void __user *) arg, &user_value, sizeof(user_value)) ? -EFAULT : 0;
+}
+
 static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	u32 result = 0;
@@ -606,41 +618,23 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_TDP0:
-			result = uw_get_tdp(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(0));
 		case R_UW_TDP1:
-			result = uw_get_tdp(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(1));
 		case R_UW_TDP2:
-			result = uw_get_tdp(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp(2));
 		case R_UW_TDP0_MIN:
-			result = uw_get_tdp_min(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(0));
 		case R_UW_TDP1_MIN:
-			result = uw_get_tdp_min(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(1));
 		case R_UW_TDP2_MIN:
-			result = uw_get_tdp_min(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_min(2));
 		case R_UW_TDP0_MAX:
-			result = uw_get_tdp_max(0);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(0));
 		case R_UW_TDP1_MAX:
-			result = uw_get_tdp_max(1);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(1));
 		case R_UW_TDP2_MAX:
-			result = uw_get_tdp_max(2);
-			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
-			break;
+			return uw_copy_tdp_value(arg, uw_get_tdp_max(2));
 		case R_UW_PROFS_AVAILABLE:
 			result = 0;
 			if (uw_feats->uniwill_profile_v1_two_profs)
@@ -732,7 +726,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 
 static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	u32 status;
+	long status;
 	// u32 result = 0;
 	u32 copy_result;
 
