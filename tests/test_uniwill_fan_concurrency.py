@@ -19,8 +19,8 @@ def disable_core_dumps():
 class UniwillFanConcurrency(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", tempfile.gettempdir()))
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(prefix="fan-concurrency-", dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
@@ -32,7 +32,8 @@ class UniwillFanConcurrency(unittest.TestCase):
         interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
         constants = []
         for source, name in ((keyboard, "FAN_ON_MIN_SPEED_PERCENT"),
-                             (interfaces, "NB02_FAN_SPEED_MAX")):
+                             (interfaces, "NB02_FAN_SPEED_MAX"),
+                             (interfaces, "UW_EC_REG_CUSTOM_PROFILE")):
             constants.append(re.search(r"(?m)^#define " + name + r"\s+.+$", source).group())
         start = keyboard.index("static u8 direct_fan_control_current_value_fan0")
         end = keyboard.index("static u8 uniwill_touchp_toggle_seq", start)
@@ -71,8 +72,13 @@ static int uw_set_mode(u8 value) { (void)value; return -ENOSYS; }
 static int uw_fan_control_start(void) { return -ENOSYS; }
 """
         fixture = fixture.replace("/* @BASELINE_COMPAT@ */", compat)
+        fixture = fixture.replace("/* @LEGACY_PM_DECL@ */",
+                                  "static bool uniwill_pm_ready, uniwill_pm_suspended;"
+                                  if "static bool uniwill_pm_ready;" not in fan else "")
+        custom_helper = ([function(keyboard, "uniwill_set_custom_profile_mode")]
+                         if any("uniwill_set_custom_profile_mode(" in body for body in tail) else [])
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(
-            constants + [tail.pop(0), fan] + tail))
+            constants + custom_helper + [tail.pop(0), fan] + tail))
         source = path / "runtime.c"
         source.write_text(fixture)
         cls.binary = path / "runtime"
@@ -106,7 +112,7 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
     def test_auto_cannot_be_overwritten_by_older_full_mode_request(self):
         self.check_case("full_auto")
 
-    def test_suspend_preserves_concurrent_manual_update_for_resume(self):
+    def test_manual_waiting_for_suspend_is_rejected_until_resume_completes(self):
         self.check_case("suspend_manual")
 
     def test_resume_cannot_repopulate_cache_after_newer_auto(self):
@@ -121,7 +127,7 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
     def test_mode_updates_preserve_bits_from_other_serialized_update(self):
         self.check_case("mode_update")
 
-    def test_reprobe_reenables_exports_and_clears_stale_cache(self):
+    def test_reprobe_start_clears_stale_cache_and_keeps_exports_closed_until_complete(self):
         if self.baseline:
             self.skipTest("New lifecycle start helper has no baseline equivalent")
         self.check_case("reprobe")

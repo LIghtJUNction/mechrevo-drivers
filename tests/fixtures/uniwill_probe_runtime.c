@@ -40,6 +40,7 @@ static void cancel_delayed_work_sync(int *work) {
     assert(uniwill_fan_command_lock.held && !uniwill_fan_state_lock.held);
     ++quiesces;
 }
+static bool uniwill_pm_ready, uniwill_pm_suspended;
 static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
 static u8 uniwill_kbd_bl_enable_state_on_start = 0xff;
 enum filter_slot { EMPTY, OURS, FOREIGN };

@@ -49,6 +49,9 @@ class UniwillBindingRuntime(unittest.TestCase):
         probe = probe[:probe.index('\n\tif (uw_feats->uniwill_profile_v1)')] + '\n\treturn 0;\n}'
         pieces = [function(fixed, name) for name in
                   ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start')]
+        if 'static void uniwill_restore_adapter_state(' in keyboard:
+            pieces += [function(keyboard, name) for name in
+                       ('uw_fan_lock', 'uniwill_restore_adapter_state')]
         pieces += [probe]
         pieces += [extract(common, name) for name in
                    ('tuxedo_input_init', 'tuxedo_keyboard_init_driver',
@@ -57,6 +60,9 @@ class UniwillBindingRuntime(unittest.TestCase):
                    ('uniwill_add_interface', 'uniwill_remove_interface', 'uniwill_event_callb')]
         pieces += [function(wmi, 'uniwill_wmi_probe')]
         fixture = (ROOT / 'tests/fixtures/uniwill_binding_runtime.c').read_text()
+        fixture = fixture.replace('/* @ADAPTER_DECL@ */',
+                                  'static void uniwill_restore_adapter_state(void);'
+                                  if 'static void uniwill_restore_adapter_state(' in keyboard else '')
         source = path / 'runtime.c'
         source.write_text(fixture.replace('/* @DRIVER_FUNCTIONS@ */', '\n\n'.join(pieces)))
         cls.binary = path / 'runtime'
