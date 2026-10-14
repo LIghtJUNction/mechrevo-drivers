@@ -38,3 +38,9 @@ or a complete write/retry/readback sequence. It does not replace LED, charging
 or fan multi-operation/cache transactions. No hardware or module is accessed by
 the runtime tests. Compilation and pthread execution are not physical EC or
 scheduler/lockdep validation.
+
+The read retry helper has a separate invalid-budget guard: retries <= 0 returns
+-EINVAL before transport or mutex access. Actual-source cases also retain first
+success, transient failure recovery, strict retry-budget exhaustion, final
+transport errno, output preservation, absent interface, and NULL delegation.
+These attempts remain independent public read transactions.

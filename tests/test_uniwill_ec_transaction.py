@@ -45,7 +45,7 @@ class UniwillECTransaction(unittest.TestCase):
         pieces = [lock] + [function(source, name) for name in (
             'uniwill_read_ec_ram_unlocked', 'uniwill_read_ec_ram',
             'uniwill_write_ec_ram_unlocked', 'uniwill_write_ec_ram',
-            'uniwill_update_ec_ram')]
+            'uniwill_update_ec_ram', 'uniwill_read_ec_ram_with_retry')]
         fixture = (ROOT / 'tests/fixtures/uniwill_ec_transaction.c').read_text()
         fixture = fixture.replace('/* @INTERFACE_TYPES@ */', '\n'.join(typedefs + [structure]))
         fixture = fixture.replace('/* @DRIVER_FUNCTIONS@ */', '\n\n'.join(pieces))
@@ -115,6 +115,28 @@ class UniwillECTransaction(unittest.TestCase):
 
     def test_repeated_failure_and_recovery_never_recursively_lock_or_leak_lock(self):
         self.check_case('lock_release')
+
+
+    def test_read_retry_rejects_zero_negative_and_int_min_without_ec_access(self):
+        self.check_case('retry_invalid')
+
+    def test_read_retry_first_success_stops_even_with_int_max_budget(self):
+        self.check_case('retry_first_success')
+
+    def test_read_retry_transient_errors_then_success_preserve_byte_and_attempt_count(self):
+        self.check_case('retry_transient')
+
+    def test_read_retry_exhaustion_returns_each_original_errno_and_keeps_output(self):
+        self.check_case('retry_exhausted')
+
+    def test_read_retry_budget_stops_before_later_success_and_returns_last_errno(self):
+        self.check_case('retry_budget')
+
+    def test_read_retry_missing_interface_keeps_eio_without_transport_calls(self):
+        self.check_case('retry_missing')
+
+    def test_read_retry_null_pointer_preserves_provider_errno_per_attempt(self):
+        self.check_case('retry_null')
 
 
 if __name__ == '__main__':
