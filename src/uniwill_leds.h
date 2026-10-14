@@ -93,13 +93,17 @@ static int uniwill_write_kbd_bl_brightness_white_workaround(u8 brightness)
 	// these devices.
 
 	result = uniwill_read_ec_ram(UW_EC_REG_KBD_BL_RGB_BLUE_BRIGHTNESS_IMMEDIATE, &data);
-	if (result)
+	if (result) {
 		pr_debug("uniwill_write_kbd_bl_white(): Get UW_EC_REG_KBD_BL_RGB_BLUE_BRIGHTNESS_IMMEDIATE failed.\n");
+		return result;
+	}
 
 	if (!data && brightness) {
 		result = uniwill_write_ec_ram(UW_EC_REG_KBD_BL_RGB_BLUE_BRIGHTNESS_IMMEDIATE, 0x01);
-		if (result)
+		if (result) {
 			pr_debug("uniwill_write_kbd_bl_white(): Set UW_EC_REG_KBD_BL_RGB_BLUE_BRIGHTNESS_IMMEDIATE failed.\n");
+			return result;
+		}
 	}
 
 	return uniwill_write_kbd_bl_brightness(brightness);
@@ -144,19 +148,19 @@ static int uniwill_write_kbd_bl_color(u8 red, u8 green, u8 blue)
 	return result;
 }
 
-static void uniwill_leds_set_brightness(struct led_classdev *led_cdev __always_unused, enum led_brightness brightness) {
+static int uniwill_leds_set_brightness(struct led_classdev *led_cdev __always_unused, enum led_brightness brightness) {
 	int result = 0;
 
 	result = uniwill_write_kbd_bl_brightness_white_workaround(brightness);
 	if (result) {
 		pr_debug("uniwill_leds_set_brightness(): uniwill_write_kbd_bl_white() failed\n");
-		return;
+		return result;
 	}
 
-	led_cdev->brightness = brightness;
+	return 0;
 }
 
-static void uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
+static int uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
 	int result = 0;
 	struct led_classdev_mc *mcled_cdev = lcdev_to_mccdev(led_cdev);
 
@@ -167,7 +171,7 @@ static void uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum l
 		result = uniwill_write_kbd_bl_brightness(0);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_brightness() failed\n");
-			return;
+			return result;
 		}
 	}
 	else {
@@ -176,23 +180,23 @@ static void uniwill_leds_set_brightness_mc(struct led_classdev *led_cdev, enum l
 					       mcled_cdev->subled_info[2].intensity);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_rgb() failed\n");
-			return;
+			return result;
 		}
 
 		result = uniwill_write_kbd_bl_brightness(brightness);
 		if (result) {
 			pr_debug("uniwill_leds_set_brightness_mc(): uniwill_write_kbd_bl_brightness() failed\n");
-			return;
+			return result;
 		}
 	}
 
-	led_cdev->brightness = brightness;
+	return 0;
 }
 
 static struct led_classdev uniwill_led_cdev = {
 	.name = "white:" LED_FUNCTION_KBD_BACKLIGHT,
 	.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_WHITE,
-	.brightness_set = &uniwill_leds_set_brightness,
+	.brightness_set_blocking = &uniwill_leds_set_brightness,
 	.brightness = UNIWILL_KBD_BRIGHTNESS_DEFAULT_WHITE,
 };
 
@@ -226,7 +230,7 @@ static struct mc_subled uw_mcled_cdev_subleds[3] = {
 static struct led_classdev_mc uniwill_mcled_cdev = {
 	.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT,
 	.led_cdev.max_brightness = UNIWILL_KBD_BRIGHTNESS_MAX_1_ZONE_RGB,
-	.led_cdev.brightness_set = &uniwill_leds_set_brightness_mc,
+	.led_cdev.brightness_set_blocking = &uniwill_leds_set_brightness_mc,
 	.led_cdev.brightness = UNIWILL_KBD_BRIGHTNESS_DEFAULT_1_ZONE_RGB,
 	.num_colors = 3,
 	.subled_info = uw_mcled_cdev_subleds
