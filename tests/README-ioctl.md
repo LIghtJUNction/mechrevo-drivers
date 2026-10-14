@@ -9,9 +9,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_uniwill_
 Requires Python 3 and a C compiler. The tests extract the actual ioctl and
 profile/TDP functions and inject usercopy and EC failures. Fan internals and
 the Clevo dispatcher are mocked. No module is installed and no hardware is
-accessed. Passing these tests does not validate physical fans or power limits.
+accessed. The TDP path executes the actual provider and lifecycle gates with
+kernel mutex services mocked; public-profile helpers remain routing spies.
+Passing these tests does not validate physical fans or power limits.
 
-The 46 cases include all 16 combinations of the existing two-profile,
+The 47 cases include all 16 combinations of the existing two-profile,
 three-profile, LED-only and custom-TDP flags. Public profile writes must
 match the advertised count; rejected values cannot access the EC. Custom-only
 devices still apply the required internal OVERBOOST mode after valid TDP

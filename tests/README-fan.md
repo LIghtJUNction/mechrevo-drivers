@@ -73,10 +73,11 @@ remove preparation. These tests use the full source functions with mock
 services; they do not establish real firmware, WMI/LED core lock ordering,
 suspend or hotkey behavior on a physical device.
 
-The final branch suite contains 131 tests: 37 fan/fault/boundary, 12 deterministic
+The !61 lifecycle contribution supplies 131 tests: 37 fan/fault/boundary, 12 deterministic
 fan concurrency, 4 ioctl routing, 13 binding, 11 deferred-key, 23 complete probe
 and backlight, 16 custom-profile, and 15 PM/adapter cases. The probe cases also
 run across four API version macro selections. The independent custom-profile
 change is merged as a prerequisite so the adapter and failed-suspend paths can
-retain its original-errno handling. Uniwill usercopy/capability and Clevo ioctl
-patches remain independent contributions.
+retain its original-errno handling. This TDP transaction branch merges the
+independent !59 usercopy/capability prerequisite and adds IO/provider coverage;
+its complete suite contains 201 tests. Clevo ioctl changes remain independent.
