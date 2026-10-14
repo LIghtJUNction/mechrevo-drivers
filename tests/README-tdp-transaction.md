@@ -46,12 +46,12 @@ all three addresses, limits, unsupported models and double-PL4 encoding.
 
 For sensitivity checks, `UNIWILL_TDP_SOURCE_ROOT=/absolute/source/tree`
 selects all production input files from that source tree. Against old
-`2dae6977965786019307413bb0bd0ca272d3294d`, the fixture executes the actual old
-IO and provider; it does not supply a fake new TDP helper. Only the direct
-new-API index case is explicitly skipped. The old source fails 32 subtests
-(16 methods across the two builds). Restoring only the actual old IO setter
-in otherwise fixed source likewise fails 32 subtests. A mode-unlock-relock
-mutation fails 22 subtests (the 11 interleavings across both builds); this
+upstream dependency baseline `55086e338bbe108ee4a086c9929026efbc9fabc2`,
+which merges the still-independent !59 and !61 changes, the fixture executes
+the actual old IO and provider; it does not supply a fake new TDP helper.
+Only the direct new-API index case is explicitly skipped. The old source fails
+32 subtests (16 methods across the two builds). A mode-unlock-relock mutation
+of the fixed upstream source fails 22 subtests (the 11 interleavings across both builds); this
 demonstrates the command-boundary observation is necessary.
 
 These tests force feature flags and power-limit arrays in mocks. They do not
