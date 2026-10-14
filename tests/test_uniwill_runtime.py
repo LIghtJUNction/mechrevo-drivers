@@ -35,29 +35,47 @@ class UniwillRuntime(unittest.TestCase):
         path = Path(cls.temp.name)
         keyboard = (ROOT / "src/uniwill_keyboard.h").read_text()
         io = (ROOT / "src/tuxedo_io/tuxedo_io.c").read_text()
-        functions = [function(keyboard, "uw_mini_led_local_dimming_init")]
+        interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
+        fan_constant = re.search(r"(?m)^#define FAN_ON_MIN_SPEED_PERCENT\s+.+$", io)
+        if not fan_constant:
+            raise AssertionError("Missing fan minimum speed definition")
+        functions = [fan_constant.group(), function(keyboard, "uw_mini_led_local_dimming_init")]
         functions.extend(function(io, name) for name in
-                         ("uw_get_tdp_min", "uw_get_tdp_max", "uw_get_tdp", "uw_copy_tdp_value"))
-        cases = re.search(r"(?ms)^\s*case R_UW_TDP0:.*?(?=^\s*case R_UW_PROFS_AVAILABLE:)", io)
-        if not cases:
-            raise AssertionError("Missing TDP ioctl dispatch")
+                         ("uw_get_tdp_min", "uw_get_tdp_max", "uw_get_tdp", "uw_set_tdp",
+                          "uw_set_performance_profile_v1", "uw_copy_tdp_value"))
+        types = []
+        for kind, name in (("union", "uw_ec_read_return"), ("union", "uw_ec_write_return"),
+                           ("enum", "uw_perf_profiles_v1")):
+            declaration = re.search(r"(?ms)^" + kind + " " + name + r" \{.*?^};", interfaces)
+            if not declaration:
+                raise AssertionError("Missing driver type: " + name)
+            types.append(declaration.group())
         fixture = (ROOT / "tests/fixtures/uniwill_runtime.c").read_text()
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(functions))
-        fixture = fixture.replace("/* @DRIVER_TDP_CASES@ */", cases.group())
+        fixture = fixture.replace("/* @DRIVER_INTERFACE_TYPES@ */", "\n\n".join(types))
+        fixture = fixture.replace("/* @DRIVER_UNIWILL_IOCTL@ */", function(io, "uniwill_ioctl_interface"))
         fixture = fixture.replace("/* @DRIVER_IOCTL_ENTRY@ */", function(io, "fop_ioctl"))
         source = path / "runtime.c"
         source.write_text(fixture)
-        cls.binary = path / "runtime"
-        result = subprocess.run(
-            ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(cls.binary)],
-            text=True, capture_output=True,
-        )
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
+        cls.binaries = {}
+        for debug in (False, True):
+            binary = path / ("runtime-debug" if debug else "runtime")
+            result = subprocess.run(
+                ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                 "-I", str(ROOT / "src/tuxedo_io"), *(["-DDEBUG"] if debug else []),
+                 str(source), "-o", str(binary)], text=True, capture_output=True,
+            )
+            if result.returncode:
+                raise AssertionError(result.stdout + result.stderr)
+            cls.binaries[debug] = binary
 
-    def check_case(self, case):
-        result = subprocess.run([str(self.binary), case], text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def check_case(self, case, debug_only=False):
+        for debug, binary in self.binaries.items():
+            if debug_only and not debug:
+                continue
+            with self.subTest(debug=debug):
+                result = subprocess.run([str(binary), case], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_miniled_unsupported_does_not_write(self):
         self.check_case("miniled_unsupported")
@@ -88,6 +106,99 @@ class UniwillRuntime(unittest.TestCase):
 
     def test_tdp_double_pl4_is_preserved(self):
         self.check_case("tdp_double_pl4")
+
+    def test_all_six_ec_read_failures_return_errno_without_copy(self):
+        self.check_case("ec_read_error")
+
+    def test_all_six_successful_ec_reads_keep_u32_abi(self):
+        self.check_case("ec_read_success")
+
+    def test_fan_zero_mapping_is_preserved(self):
+        self.check_case("fan_zero_mapping")
+
+    def test_all_uniwill_and_generic_read_copy_faults_return_efault(self):
+        self.check_case("all_read_copy_faults")
+
+    def test_interface_strings_and_metadata_abi_are_preserved(self):
+        self.check_case("read_metadata_success")
+
+    def test_partial_copy_from_fault_never_reaches_any_write_helper(self):
+        self.check_case("write_copy_faults")
+
+    def test_successful_fan_commands_preserve_index_and_byte_conversion(self):
+        self.check_case("fan_write_success")
+
+    def test_unsigned_fan_helper_errno_reaches_ioctl_as_signed(self):
+        self.check_case("fan_write_error")
+
+    def test_successful_mode_write_keeps_low_byte_abi(self):
+        self.check_case("mode_write_success")
+
+    def test_mode_write_ec_failure_reaches_ioctl_entry(self):
+        self.check_case("mode_write_error")
+
+    def test_unsupported_tdp_write_does_not_change_profile(self):
+        self.check_case("tdp_write_unsupported")
+
+    def test_invalid_tdp_index_does_not_change_profile(self):
+        self.check_case("tdp_write_invalid_index")
+
+    def test_invalid_tdp_value_does_not_change_profile(self):
+        self.check_case("tdp_write_invalid_value")
+
+    def test_missing_or_disabled_tdp_max_does_not_change_profile(self):
+        self.check_case("tdp_write_invalid_max")
+
+    def test_successful_tdp_writes_preserve_all_three_addresses(self):
+        self.check_case("tdp_write_success")
+
+    def test_double_pl4_write_preserves_integer_division(self):
+        self.check_case("tdp_write_double_pl4")
+
+    def test_all_three_tdp_write_errors_reach_ioctl_entry(self):
+        self.check_case("tdp_write_ec_error")
+
+    def test_tdp_profile_read_error_prevents_all_writes(self):
+        self.check_case("tdp_profile_read_error")
+
+    def test_tdp_profile_write_error_prevents_tdp_write(self):
+        self.check_case("tdp_profile_write_error")
+
+    def test_tdp_profile_change_precedes_valid_tdp_write(self):
+        self.check_case("tdp_profile_success")
+
+    def test_tdp_write_error_after_profile_change_is_reported(self):
+        self.check_case("tdp_ec_error_after_profile")
+
+    def test_profile_read_error_does_not_write(self):
+        self.check_case("profile_read_error")
+
+    def test_profile_write_error_reaches_ioctl_entry(self):
+        self.check_case("profile_write_error")
+
+    def test_invalid_profile_does_not_write(self):
+        self.check_case("profile_invalid")
+
+    def test_all_three_profiles_preserve_other_mode_bits(self):
+        self.check_case("profile_success")
+
+    def test_disabled_mode_enable_and_unknown_commands_remain_noops(self):
+        self.check_case("unchanged_noop_dispatch")
+
+    def test_debug_partial_input_copy_fault_prevents_ec_access(self):
+        self.check_case("debug_copy_from_faults", debug_only=True)
+
+    def test_debug_read_error_prevents_output_copy(self):
+        self.check_case("debug_read_error", debug_only=True)
+
+    def test_debug_write_error_prevents_output_copy(self):
+        self.check_case("debug_write_error", debug_only=True)
+
+    def test_debug_output_copy_fault_is_reported(self):
+        self.check_case("debug_copy_to_faults", debug_only=True)
+
+    def test_debug_successful_register_command_abi_is_preserved(self):
+        self.check_case("debug_success", debug_only=True)
 
 
 if __name__ == "__main__":

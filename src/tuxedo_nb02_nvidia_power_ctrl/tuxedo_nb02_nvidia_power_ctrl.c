@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
+#include <linux/dmi.h>
 #include <linux/pci.h>
 
 #include "../uniwill_interfaces.h"
@@ -46,10 +47,17 @@ static ssize_t ctgp_offset_store(struct device * __unused dev,
 {
 	int result = 0;
 	u8 data = 0;
+	u8 current_data;
 
 	result = kstrtou8(buf, 0, &data);
 	if (result < 0)
 		return result;
+
+	result = uniwill_read_ec_ram(UW_EC_REG_CTGP_DB_CTGP_OFFSET, &current_data);
+	if (result < 0)
+		return result;
+	if (current_data == data)
+		return count;
 
 	result = uniwill_write_ec_ram(UW_EC_REG_CTGP_DB_CTGP_OFFSET, data);
 	if (result < 0)
@@ -237,9 +245,23 @@ static ssize_t tpp_offset_store(struct device * __unused dev,
 DEVICE_ATTR_RW(tpp_offset);
 #endif // DEBUG
 
+static bool uw_preserve_firmware_power_config(void)
+{
+	return dmi_match(DMI_SYS_VENDOR, "MECHREVO") &&
+	       dmi_match(DMI_BOARD_NAME, "GM6PX0X");
+}
+
 static int __init init_db_and_ctgp(void)
 {
 	int result = 0;
+
+	/*
+	 * Preserve firmware/user power settings across driver loads on the
+	 * verified GM6PX0X. Its firmware emits NVIDIA-unsupported ACPI 0xc5
+	 * notifications for power updates, so do not force these defaults.
+	 */
+	if (uw_preserve_firmware_power_config())
+		return 0;
 
 	result = uniwill_write_ec_ram(UW_EC_REG_CTGP_DB_ENABLE,
 				      UW_EC_REG_CTGP_DB_ENABLE_BIT_GENERAL_ENABLE |
