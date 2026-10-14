@@ -125,7 +125,7 @@ static void input_report_key(struct input_dev *d, int key, int down) {
     assert(d == &input && !input_freed); (void)key; (void)down; ++key_events;
 }
 static void input_sync(struct input_dev *d) { assert(d == &input && !input_freed); }
-static void uniwill_set_custom_profile_mode(bool b) { (void)b; }
+static int uniwill_set_custom_profile_mode(bool b) { (void)b; return 0; }
 static void uniwill_leds_restore_state_extern(void) {}
 static void msleep(int n) { (void)n; }
 static void uw_charging_priority_write_state(void) {}

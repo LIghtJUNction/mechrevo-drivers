@@ -81,7 +81,7 @@ static struct uniwill_device_features_t *uniwill_get_device_features(void) { ret
 static int uw_fan_control_start(void) { uniwill_fan_removed = start_errno != 0; return start_errno; }
 static int uniwill_read_ec_ram(unsigned int address, u8 *data) { (void)address; *data = 0; return 0; }
 static int uniwill_write_ec_ram(unsigned int address, u8 data) { (void)address; (void)data; return 0; }
-static void uniwill_set_custom_profile_mode(bool enabled) { assert(enabled); ++tail_initializations; }
+static int uniwill_set_custom_profile_mode(bool enabled) { assert(enabled); ++tail_initializations; return 0; }
 static void uniwill_leds_init(struct platform_device *dev) { assert(dev == &platform); }
 static void uniwill_write_kbd_bl_enable(u8 enabled) { assert(enabled <= 1); }
 static int uw_lightbar_init(struct platform_device *dev) { assert(dev == &platform); return -ENODEV; }
