@@ -138,6 +138,19 @@ static const unsigned int writes_cmds[] = {
 #define COUNT(array) (sizeof(array) / sizeof((array)[0]))
 #define IOCTL(command, value) fop_ioctl(NULL, command, (unsigned long)&(value))
 
+static void set_profile_features(unsigned int mask)
+{
+	features.uniwill_profile_v1_two_profs = (mask & 1) != 0;
+	features.uniwill_profile_v1_three_profs = (mask & 2) != 0;
+	features.uniwill_profile_v1_three_profs_leds_only = (mask & 4) != 0;
+	features.uniwill_custom_profile_mode_needed = (mask & 8) != 0;
+}
+
+static void reset_mode_access(void)
+{
+	ec_reads = ec_writes = 0;
+}
+
 int main(int argc, char **argv)
 {
 	assert(argc == 2);
@@ -353,11 +366,13 @@ int main(int argc, char **argv)
 		assert(IOCTL(W_UW_TDP0, value) == -EIO);
 		assert(ec_writes == 2 && written_addresses[1] == 0x0783);
 	} else if (strcmp(test, "profile_read_error") == 0) {
+		features.uniwill_profile_v1_three_profs = true;
 		ec_status = -EIO;
 		value = PROFILE_OVERBOOST;
 		assert(IOCTL(W_UW_PERF_PROF, value) == -EIO);
 		assert(ec_reads == 1 && ec_writes == 0);
 	} else if (strcmp(test, "profile_write_error") == 0) {
+		features.uniwill_profile_v1_three_profs = true;
 		ec_write_status = -EIO;
 		value = PROFILE_OVERBOOST;
 		assert(IOCTL(W_UW_PERF_PROF, value) == -EIO);
@@ -369,6 +384,7 @@ int main(int argc, char **argv)
 		assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
 		assert(ec_writes == 0);
 	} else if (strcmp(test, "profile_success") == 0) {
+		features.uniwill_profile_v1_three_profs = true;
 		u8 expected[] = {0xef, 0x4f, 0x5f};
 		ec_value = 0xff;
 		for (value = 1; value <= 3; ++value) {
@@ -376,6 +392,78 @@ int main(int argc, char **argv)
 			assert(written_addresses[value - 1] == 0x0751);
 			assert(written_values[value - 1] == expected[value - 1]);
 		}
+	} else if (strcmp(test, "profile_count_matrix") == 0) {
+		for (unsigned int mask = 0; mask < 16; ++mask) {
+			set_profile_features(mask);
+			assert(IOCTL(R_UW_PROFS_AVAILABLE, value) == 0);
+			assert(value == ((mask & 1) ? 2u : (mask & 6) ? 3u : 0u));
+		}
+		assert(ec_reads == 0 && ec_writes == 0);
+	} else if (strcmp(test, "profile_capability_matrix") == 0) {
+		const u8 bits[] = {0xa0, 0, 0x10};
+		for (unsigned int mask = 0; mask < 16; ++mask) {
+			set_profile_features(mask);
+			const u32 count = (mask & 1) ? 2 : (mask & 6) ? 3 : 0;
+			for (value = 1; value <= 3; ++value) {
+				reset_mode_access();
+				const int expected = !count ? -ENODEV : value > count ? -EINVAL : 0;
+				assert(IOCTL(W_UW_PERF_PROF, value) == expected);
+				if (expected) {
+					assert(ec_reads == 0 && ec_writes == 0);
+				} else {
+					assert(ec_reads == 1 && ec_writes == 1);
+					assert(written_addresses[0] == 0x0751);
+					assert(written_values[0] == ((ec_value & 0x4f) | bits[value - 1]));
+				}
+			}
+		}
+	} else if (strcmp(test, "profile_two_rejects_overboost") == 0) {
+		set_profile_features(1);
+		value = PROFILE_OVERBOOST;
+		assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
+		assert(ec_reads == 0 && ec_writes == 0);
+	} else if (strcmp(test, "profile_two_precedence") == 0) {
+		set_profile_features(15);
+		assert(IOCTL(R_UW_PROFS_AVAILABLE, value) == 0 && value == 2);
+		value = PROFILE_OVERBOOST;
+		assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
+		assert(ec_reads == 0 && ec_writes == 0);
+	} else if (strcmp(test, "profile_leds_only") == 0) {
+		const u8 expected[] = {0xef, 0x4f, 0x5f};
+		set_profile_features(4);
+		ec_value = 0xff;
+		assert(IOCTL(R_UW_PROFS_AVAILABLE, value) == 0 && value == 3);
+		for (value = 1; value <= 3; ++value) {
+			assert(IOCTL(W_UW_PERF_PROF, value) == 0);
+			assert(written_addresses[value - 1] == 0x0751);
+			assert(written_values[value - 1] == expected[value - 1]);
+		}
+		assert(ec_reads == 3 && ec_writes == 3);
+	} else if (strcmp(test, "profile_custom_only_tdp") == 0) {
+		const unsigned int commands[] = {W_UW_TDP0, W_UW_TDP1, W_UW_TDP2};
+		set_profile_features(8);
+		assert(IOCTL(R_UW_PROFS_AVAILABLE, value) == 0 && value == 0);
+		for (value = 1; value <= 3; ++value)
+			assert(IOCTL(W_UW_PERF_PROF, value) == -ENODEV);
+		assert(ec_reads == 0 && ec_writes == 0);
+		for (size_t i = 0; i < COUNT(commands); ++i) {
+			reset_mode_access();
+			value = 30;
+			assert(IOCTL(commands[i], value) == 0);
+			assert(ec_reads == 1 && ec_writes == 2);
+			assert(written_addresses[0] == 0x0751 && written_values[0] == 0x50);
+			assert(written_addresses[1] == 0x0783 + i && written_values[1] == 30);
+		}
+	} else if (strcmp(test, "profile_invalid_capability_matrix") == 0) {
+		const u32 invalid[] = {0, 4, 0x101, 0x10003, UINT32_MAX};
+		for (unsigned int mask = 0; mask < 16; ++mask) {
+			set_profile_features(mask);
+			for (size_t i = 0; i < COUNT(invalid); ++i) {
+				value = invalid[i];
+				assert(IOCTL(W_UW_PERF_PROF, value) == -EINVAL);
+			}
+		}
+		assert(ec_reads == 0 && ec_writes == 0);
 	} else if (strcmp(test, "unchanged_noop_dispatch") == 0) {
 		assert(IOCTL(W_UW_MODE_ENABLE, value) == 0);
 		assert(IOCTL(0xffffffffU, value) == 0);

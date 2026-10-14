@@ -1,5 +1,6 @@
 """Compile real Uniwill driver functions with safe userspace mocks (requires cc)."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import tempfile
@@ -33,12 +34,18 @@ class UniwillRuntime(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
-        io = (ROOT / "src/tuxedo_io/tuxedo_io.c").read_text()
-        interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
+        source_root = Path(os.environ.get("UNIWILL_IO_SOURCE_ROOT", ROOT))
+        io = (source_root / "src/tuxedo_io/tuxedo_io.c").read_text()
+        interfaces = (source_root / "src/uniwill_interfaces.h").read_text()
         fan_constant = re.search(r"(?m)^#define FAN_ON_MIN_SPEED_PERCENT\s+.+$", io)
         if not fan_constant:
             raise AssertionError("Missing fan minimum speed definition")
         functions = [fan_constant.group()]
+        # Run the same fixture against a baseline lacking the new helpers;
+        # extract its real setter rather than synthesizing a replacement.
+        for name in ("uw_get_performance_profile_count", "uw_apply_performance_profile_v1"):
+            if re.search(r"(?m)^static[^;{]*\b" + name + r"\([^;{]*\)\s*\{", io):
+                functions.append(function(io, name))
         functions.extend(function(io, name) for name in
                          ("uw_get_tdp_min", "uw_get_tdp_max", "uw_get_tdp", "uw_set_tdp",
                           "uw_set_performance_profile_v1"))
@@ -178,6 +185,27 @@ class UniwillRuntime(unittest.TestCase):
 
     def test_all_three_profiles_preserve_other_mode_bits(self):
         self.check_case("profile_success")
+
+    def test_profile_counts_preserve_all_feature_flag_combinations(self):
+        self.check_case("profile_count_matrix")
+
+    def test_public_profile_writes_follow_all_advertised_capabilities(self):
+        self.check_case("profile_capability_matrix")
+
+    def test_two_profile_device_rejects_overboost_without_ec_access(self):
+        self.check_case("profile_two_rejects_overboost")
+
+    def test_two_profile_flag_keeps_precedence_over_three_and_leds_only(self):
+        self.check_case("profile_two_precedence")
+
+    def test_leds_only_profiles_keep_the_established_mode_bits(self):
+        self.check_case("profile_leds_only")
+
+    def test_custom_only_device_rejects_public_profiles_but_keeps_tdp_mode(self):
+        self.check_case("profile_custom_only_tdp")
+
+    def test_invalid_profiles_remain_einval_for_every_capability_combination(self):
+        self.check_case("profile_invalid_capability_matrix")
 
     def test_disabled_mode_enable_and_unknown_commands_remain_noops(self):
         self.check_case("unchanged_noop_dispatch")
