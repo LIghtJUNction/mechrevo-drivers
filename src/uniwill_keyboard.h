@@ -1979,24 +1979,10 @@ static int uniwill_wmi_fn_lock_get(int *on)
 
 static int uniwill_wmi_fn_lock_set(int on)
 {
-	u8 data;
-	int err;
-
-	// possible race condition
-	err = uniwill_read_ec_ram(UW_EC_REG_KBD_FN_LOCK_STATUS_BIT, &data);
-	if (err)
-		return err;
-
-	if (on)
-		data = data | UNIWILL_FN_LOCK_MASK;
-	else
-		data = data & ~UNIWILL_FN_LOCK_MASK;
-
-	err = uniwill_write_ec_ram(UW_EC_REG_KBD_FN_LOCK_STATUS_BIT, data);
-	if (err)
-		return err;
-
-	return 0;
+	/* Preserve the other fields across a single shared EC transaction. */
+	return uniwill_update_ec_ram(UW_EC_REG_KBD_FN_LOCK_STATUS_BIT,
+				    UNIWILL_FN_LOCK_MASK,
+				    on ? UNIWILL_FN_LOCK_MASK : 0);
 }
 
 static ssize_t uniwill_fn_lock_show(struct device *dev,

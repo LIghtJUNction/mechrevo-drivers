@@ -44,3 +44,25 @@ The read retry helper has a separate invalid-budget guard: retries <= 0 returns
 success, transient failure recovery, strict retry-budget exhaustion, final
 transport errno, output preservation, absent interface, and NULL delegation.
 These attempts remain independent public read transactions.
+
+## Fn-lock caller integration
+
+`test_uniwill_fn_lock.py` combines the actual Fn-lock getter/setter and sysfs
+functions with all five actual provider read/write/update functions, the real
+address/mask definitions, and the existing pthread/transport scheduler doubles.
+The setter updates only the existing `0x10` bit at `0x074e` within one shared
+transaction; it does not define a new register or change capability detection.
+Internal nonzero inputs retain their boolean semantics, while sysfs still accepts
+only 0/1. The parsing double is not a replacement test of kernel `kstrtoint`.
+
+Twelve cases cover all 256 register bytes, read/write failures, partial failed
+write side effects, NULL getter output, missing interface, sysfs validation and
+errno, and both orders of a competing public bit update or full-byte write.
+The fixed schedules expose the old setter releasing its lock after read: the
+competing operation completes before the stale Fn write, losing an unrelated
+bit or overwriting a completed write. The old setter fails both forward-order
+cases; the transaction implementation preserves complete-operation traces.
+`UNIWILL_FN_LOCK_HEADER` selects a historical header without replacing its bodies
+for a red regression run. These are simulated provider races, not proof that
+this machine has experienced a physical lost-update incident. Firmware remains
+outside this provider mutex, and the tests do not use real EC writes.
