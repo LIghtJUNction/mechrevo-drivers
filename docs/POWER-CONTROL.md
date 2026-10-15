@@ -49,6 +49,10 @@ sudo mechrevo-power clear
 
 ## 本地打包
 
+需要记录温度、PL1／PL2 和故障前样本时，可使用同包的
+[`mechrevo-thermal`](THERMAL-OBSERVATION.md)。该命令只读，GPU 已失联时拒绝开始采样，
+新增 Xid／不可纠正 PCIe 错误时会停止并标记结果无效。
+
 配方在 `packaging/arch/mechrevo-power-control/`，只安装命令和说明，安装本身不会
 启用功耗上限。它没有加入现有 DKMS 包，也没有作为新包发布到 AUR。
 使用配方指定的源码提交构建；本地验证可以将来源切换为同一提交的本地 Git 仓库：
