@@ -108,8 +108,8 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_invalid_fan_index_and_universal_speed_never_access_ec(self):
         self.check_case("fan_invalid")
 
-    def test_universal_full_fan_mode_still_leaves_manual_request_unchanged(self):
-        self.check_case("fan_full_mode_noop")
+    def test_universal_full_fan_mode_returns_busy_without_changing_ec_or_targets(self):
+        self.check_case("fan_full_mode_busy")
 
     def test_universal_read_init_and_two_write_failures_reach_exported_helper(self):
         self.check_case("fan_errors")

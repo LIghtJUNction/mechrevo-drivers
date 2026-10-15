@@ -2,6 +2,7 @@ obj-m += clevo_acpi.o
 obj-m += clevo_wmi.o
 obj-m += tuxedo_keyboard.o
 obj-m += uniwill_wmi.o
+obj-m += mechrevo_ec_sensors.o
 
 obj-y += ite_8291/
 obj-y += ite_8291_lb/

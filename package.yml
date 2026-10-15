@@ -39,6 +39,7 @@ dkms_modules:
   - ["tuxedo_tuxi_fan_control", "/kernel/lib/", "tuxedo_tuxi"]
   - ["stk8321", "/kernel/lib/", "stk8321"]
   - ["gxtp7380", "/kernel/lib/", "gxtp7380"]
+  - ["mechrevo_ec_sensors", "/kernel/lib/"]
 
 recommends:
   - udev-hid-bpf

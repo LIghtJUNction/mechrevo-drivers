@@ -334,12 +334,40 @@ int main(int argc, char **argv)
         for (int speed = 201; speed <= 255; ++speed)
             assert((int)uw_set_fan(0, speed) == -EINVAL);
         assert(event_count == 0 && schedules == 0 && !fans_initialized);
-    } else if (strcmp(test, "fan_full_mode_noop") == 0) {
-        for (u32 fan = 0; fan < 2; ++fan) {
-            assert(uw_set_fan(fan, 100) == 0);
-            assert_cached(83, 97);
+    } else if (strcmp(test, "fan_full_mode_busy") == 0) {
+        const u8 speeds[] = {0, 24, 25, 49, 50, 100, 200};
+        u8 previous_ec[sizeof(ec)];
+        for (unsigned int mode = 0; mode <= UINT8_MAX; ++mode) {
+            if (!(mode & 0x40))
+                continue;
+            for (int initialized = 0; initialized <= 1; ++initialized) {
+                for (u32 fan = 0; fan < 2; ++fan) {
+                    for (unsigned int speed = 0; speed < sizeof(speeds); ++speed) {
+                        reset(true);
+                        fans_initialized = initialized;
+                        ec[0x0751] = mode;
+                        ec[0x0f20] = 61; ec[0x0f50] = 73;
+                        ec[0x1804] = 85; ec[0x1809] = 99;
+                        memcpy(previous_ec, ec, sizeof(ec));
+                        assert((int)uw_set_fan(fan, speeds[speed]) == -EBUSY);
+                        assert(reads == 1 && writes == 0 && event_count == 1);
+                        assert(events[0].kind == 'r' && events[0].address == 0x0751);
+                        assert(memcmp(previous_ec, ec, sizeof(ec)) == 0);
+                        assert_cached(83, 97);
+                        assert(fans_initialized == (bool)initialized);
+                        assert(schedules == 0 && cancellations == 0 && sleeps == 0);
+                        assert(!direct_fan_control_started && !direct_fan_control_restart_needed);
+                        assert(!direct_fan_control_restart_delayed_work.pending);
+                    }
+                }
+            }
         }
-        assert(reads == 2 && writes == 0 && schedules == 0 && !fans_initialized);
+        /* A later request can succeed once the conflicting mode is absent. */
+        ec[0x0751] &= ~0x40;
+        fans_initialized = true;
+        assert(uw_set_fan(1, 100) == 0);
+        assert(ec[0x0f50] == 100 && ec[0x1809] == 100);
+        assert_cached(83, 100);
     } else if (strcmp(test, "fan_errors") == 0) {
         /* Include every initialization operation through the exported helper. */
         ec[0x0751] = 0x11;

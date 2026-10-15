@@ -2414,6 +2414,8 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 
 			return direct_fan_control(fan_index, fan_speed, false);
 		}
+		/* Full fan mode owns fan control; do not claim an unapplied target. */
+		return -EBUSY;
 	}
 	else { // old workaround using full fan mode
 		if (direct_fan_control_suspend && !direct_fan_control_started) {

@@ -1,6 +1,8 @@
 """Local AUR packaging checks; no network, system installation or module loading."""
 
 import hashlib
+import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,8 +18,8 @@ PKGNAME = "mechrevo-drivers-dkms-git"
 
 class AurPackaging(unittest.TestCase):
     def setUp(self):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("MECHREVO_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
@@ -112,8 +114,20 @@ class AurPackaging(unittest.TestCase):
             self.assertTrue(destination.startswith("/kernel/"))
             self.assertNotIn(name, actual)
             actual[name] = directory.rstrip("/")
-        self.assertEqual(len(actual), 27)
+        self.assertEqual(len(actual), 28)
         self.assertEqual(actual, expected)
+        # Both packaging paths must ship every module, including root-level ones.
+        mapping = (ROOT / "package.yml").read_text().split("dkms_modules:\n", 1)[1]
+        mapping = mapping.split("\nrecommends:", 1)[0]
+        mapped = {}
+        for row in re.findall(r"-\s*(\[[^]]+\])", mapping):
+            fields = json.loads(re.sub(r",\s*]", "]", row))
+            name, destination, *directory = fields
+            self.assertNotIn(name, mapped)
+            self.assertTrue(destination.startswith("/kernel/"))
+            mapped[name] = directory[0].rstrip("/") if directory else "."
+        self.assertEqual(mapped, expected)
+        self.assertEqual(actual["mechrevo_ec_sensors"], ".")
 
     def test_version_uses_only_reachable_final_tags(self):
         source = self.source_repo()
@@ -136,7 +150,8 @@ class AurPackaging(unittest.TestCase):
     def test_staged_package_layout_and_permissions(self):
         source = self.path / "mechrevo-drivers"
         tracked = subprocess.check_output(
-            ["git", "ls-files", "src", "files", "LICENSE", "README.md", "docs"],
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard",
+             "src", "files", "LICENSE", "README.md", "docs"],
             cwd=ROOT, text=True,
         ).splitlines()
         for relative in tracked:
@@ -153,6 +168,7 @@ class AurPackaging(unittest.TestCase):
         self.assertIn('PACKAGE_VERSION="' + version + '"', config)
         self.assertNotIn("@PKGVER@", config)
         self.assertTrue((dkmsdir / "Kbuild").is_file())
+        self.assertTrue((dkmsdir / "mechrevo_ec_sensors.c").is_file())
         self.assertFalse((dkmsdir / "src").exists())
         self.assertFalse(list(pkgdir.rglob("*.ko")))
         for relative in tracked:
