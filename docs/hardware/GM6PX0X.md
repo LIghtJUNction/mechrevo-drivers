@@ -4,6 +4,37 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
+## 2026-10-16 一秒轮询续验
+
+前轮日志确认原生降限存在约三秒的递进间隔，且低于轮询控制点后基础检查恢复四秒。
+新增显式 `--polling-seconds 1`，必须同时指定 90°C 目标；仅缩短基础检查，不改防抖、
+温度回差或风扇曲线。旧版90°C配置的 XML 哈希保持，成功、失败回滚、孤儿事务恢复、
+损坏状态与旧状态迁移均有回归。相关回归共200项通过：功耗事务101、PL2试验24、
+观测及分析47、原生thermald控制20、打包8；完整引擎启动另由实机核对。
+
+工具包 `mechrevo-power-control 0.1.0-10` 已安装，源码固定于
+`2c5daf5937f899280044366dc464dc8823e7e756`。10个安装文件与包、固定提交的字节及权限一致，
+`pacman -Qkk` 为22个文件、0改动；升级保持配置及服务PID。
+随后执行 `sudo mechrevo-power set 55 --target-celsius 90 --polling-seconds 1`，
+thermald PID变为249017，日志明确报告 `Poll interval is defined in XML config 1 seconds`，
+并保留有效传感器及四个本机原生降温绑定。TCC 97821、nvidia-powerd 1003保持。
+
+E轮约120秒／90样本有效，零采集错误、无新增受监测GPU／PCIe故障。封装采样温度
+64–95°C、样本均温72.43°C、平均封装功耗16.338W，CPU0封装热节流计数增加1327。
+但同一采样窗口内，thermald自己的温度日志最高为 **99°C**；用单调时钟核对确认处于窗口内。
+因此不能把较慢观测工具的95°C最高值当成实机温度上限，也不能用前后自然负载不同的窗口
+宣称性能／散热改善。策略确已更早检查和降限，但热尖峰仍未解决；长期及满载散热未验收。
+
+当前保留55W PL1上限、90°C软件目标与一秒基础轮询；PL2仍为140W，原生温控可继续降低
+实际PL1。只撤销一秒轮询用 `sudo mechrevo-power set 55 --target-celsius 90`，
+撤销温度目标和轮询用 `sudo mechrevo-power set 55`。已核验r8／r9／r10恢复包及配置快照
+在统一备份目录；不要直接把旧状态文件覆盖回系统或在新配置活动时降级旧程序。
+证据：`target90-poll1-E.json`、其summary、`runtime-target90-poll1-verification.json`、
+`journal-thermal-crosscheck.json`、`installed-package-r10-verification.json`，均位于
+`.local-tests/postboot-20261016/power-thermal/`，原始私有日志不上传。
+源码已同步远端，未更新AUR。文件跟踪因执行服务中断及权限／短暂文件事件存在缺口，
+实机状态和包完整性采用独立核验；不把恢复后的扫描说成完整事件历史。
+
 ## 2026-10-16 功耗与散热续修
 
 本轮将长期功耗 PL1 和短时功耗 PL2 分开显示：`holding_now` 只确认 CPU 封装
