@@ -105,7 +105,7 @@ class PowerPackaging(unittest.TestCase):
         self.assertEqual(metadata["pkgbase"], [PKGNAME])
         self.assertEqual(metadata["pkgname"], [PKGNAME])
         self.assertEqual(metadata["pkgver"], ["0.1.0"])
-        self.assertEqual(metadata["pkgrel"], ["3"])
+        self.assertEqual(metadata["pkgrel"], ["4"])
         self.assertEqual(metadata["arch"], ["x86_64"])
         self.assertEqual(metadata["depends"], ["python", "thermald=2:2.5.13", "systemd"])
         self.assertEqual(metadata["makedepends"], ["git"])
@@ -154,7 +154,7 @@ class PowerPackaging(unittest.TestCase):
         self.git("commit", "-m", "Later fixture change")
         result = self.makepkg("--nodeps", "--noconfirm", "--nocolor")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-3-x86_64.pkg.tar.*"))
+        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-4-x86_64.pkg.tar.*"))
         self.assertEqual(len(archives), 1, result.stdout + result.stderr)
         archive = archives[0]
         listing = subprocess.check_output(["bsdtar", "-tf", str(archive)], text=True).splitlines()
