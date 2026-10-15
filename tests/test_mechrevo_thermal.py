@@ -106,7 +106,7 @@ class ThermalObservation(unittest.TestCase):
         self.assertTrue(result["complete"])
         self.assertEqual(len(result["samples"]), 3)
         self.assertEqual(result["faults"], [])
-        self.assertEqual(self.system.gpu_calls, 2)
+        self.assertEqual(self.system.gpu_calls, 8)
         self.assertTrue(self.system.closed)
 
     def test_unavailable_gpu_prevents_sensor_open_or_any_samples(self):
@@ -132,10 +132,50 @@ class ThermalObservation(unittest.TestCase):
         self.assertEqual(self.system.sample_count, 0)
 
     def test_silent_gpu_loss_in_final_probe_invalidates_complete_samples(self):
-        self.system.fail_gpu = 2
+        self.system.fail_gpu = 8
         result = self.observe()
         self.assert_invalid(result)
         self.assertEqual(len(result["samples"]), 3)
+
+    def test_silent_gpu_loss_before_sample_stops_without_waiting_for_journal(self):
+        self.system.fail_gpu = 4
+        result = self.observe(seconds=60)
+        self.assert_invalid(result)
+        self.assertEqual(self.system.sample_count, 1)
+        self.assertEqual(result["faults"], [])
+        self.assertEqual(self.system.now, 1)
+
+    def test_silent_gpu_loss_during_sample_stops_before_next_ec_read(self):
+        self.system.fail_gpu = 3
+        result = self.observe(seconds=60)
+        self.assert_invalid(result)
+        self.assertEqual(self.system.sample_count, 1)
+        self.assertEqual(result["faults"], [])
+        self.assertEqual(self.system.now, 0)
+
+    def test_changed_gpu_set_before_first_sample_is_rejected(self):
+        original = self.system.gpu_health
+        def changed():
+            rows = original()
+            return rows if self.system.gpu_calls == 1 else ["00000000:02:00.0"]
+        self.system.gpu_health = changed
+        result = self.observe()
+        self.assert_invalid(result)
+        self.assertEqual(self.system.sample_count, 0)
+
+    def test_fault_during_gpu_probe_prevents_following_ec_read(self):
+        original = self.system.gpu_health
+        def fault():
+            rows = original()
+            if self.system.gpu_calls == 2:
+                self.system.pending.append({"MESSAGE": "NVRM: Xid (PCI:0000:01:00): 79, lost",
+                                            "__CURSOR": "probe-fault"})
+            return rows
+        self.system.gpu_health = fault
+        result = self.observe()
+        self.assert_invalid(result)
+        self.assertEqual(self.system.sample_count, 0)
+        self.assertEqual(len(result["faults"]), 1)
 
     def test_journal_failure_is_not_treated_as_zero_errors(self):
         self.system.fail_journal = True

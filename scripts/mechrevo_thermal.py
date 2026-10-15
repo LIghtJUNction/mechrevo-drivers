@@ -226,14 +226,23 @@ def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.s
             if faults:
                 raise ObservationError("New GPU/PCIe kernel fault; observation invalidated")
 
+        def check_gpu():
+            # The journal can lag behind a failed NVML probe. Do not continue
+            # EC sampling until the end of a long capture in that case.
+            if system.gpu_health() != result["gpu_before"]:
+                raise ObservationError("GPU device set changed during observation")
+
         start = clock()
         while True:
             check_kernel()
+            check_gpu()
+            check_kernel()  # Include faults raised while nvidia-smi was running.
             sample = system.sample()
             result["samples"].append(sample)
             if cap is not None and any(z["constraint_0_power_limit_uw"] > cap
                                        for z in sample["rapl"].values()):
                 raise ObservationError("PL1 exceeded the managed ceiling during observation")
+            check_gpu()
             check_kernel()  # Catch a fault during the EC/thermal read sequence.
             checkpoint(result)
             elapsed = clock() - start
