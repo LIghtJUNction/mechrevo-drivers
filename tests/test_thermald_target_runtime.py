@@ -144,6 +144,16 @@ class ThermaldTargetRuntime(unittest.TestCase):
     def test_generated_target90_xml_replaces_passive95_preserves_active_and_escalates_native_order(self):
         self.run_case()
 
+    def test_one_second_platform_polling_preserves_native_trip_and_controller_behavior(self):
+        root = ET.fromstring(POWER.PowerController.xml(55_000_000, 'ENERGY_CONSERVE', 90, 1))
+        self.assertEqual(root.findtext('./Platform/PollingInterval'), '1')
+        self.run_case(root=root)
+        # This fixture executes trips/controllers, not the engine polling loop.
+        # Removing only the platform interval must recover the legacy policy.
+        platform = root.find('Platform')
+        platform.remove(platform.find('PollingInterval'))
+        self.assertEqual(ET.tostring(root), ET.tostring(self.xml()))
+
     def test_old95_counterexample_fails_the_same_runtime_qualification(self):
         root = self.xml()
         root.find('./Platform/ThermalZones/ThermalZone/TripPoints/TripPoint/Temperature').text = '95000'

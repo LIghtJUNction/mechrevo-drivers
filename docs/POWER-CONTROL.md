@@ -21,7 +21,7 @@ RAPL 和服务配置条件。其他型号、BIOS、PPCC 或自适应温控平台
 ```sh
 sudo mechrevo-power status
 sudo mechrevo-power set 55
-sudo mechrevo-power set 55 --target-celsius 90
+sudo mechrevo-power set 55 --target-celsius 90 --polling-seconds 1
 sudo mechrevo-power status
 sudo mechrevo-power clear
 ```
@@ -55,6 +55,8 @@ sudo mechrevo-power clear
 ## 提前软件降温
 
 本机实测温度目标寄存器对应 TjMAX 100°C、TCC offset 5°C，硬件热保护从 95°C 开始。
+寄存器语义参考 [Intel Adaptive Thermal Monitor](https://edc.intel.com/content/www/us/en/design/ipla/software-development-platforms/client/platforms/alder-lake-desktop/12th-generation-intel-core-processors-datasheet-volume-1-of-2/011/adaptive-thermal-monitor/)
+及 [Linux Intel TCC 实现](https://github.com/torvalds/linux/blob/master/drivers/thermal/intel/intel_tcc.c)。
 已冻结 thermald 2.5.13 的默认 CPU PASSIVE 阈值也计算为 95°C，缺少提前控制的余量。
 `--target-celsius 90` 是显式的 Linux 用户策略，给该硬件保护点留出 5°C 余量；
 不是原厂档位、额定温度或保证永不超过 90°C 的硬上限。
@@ -69,6 +71,11 @@ sudo mechrevo-power clear
 `status` 的 `desired_temperature_celsius` 只是受管目标；实际温度与控制效果仍须观测。
 启用目标时服务额外使用 `--loglevel=info`，便于从真实启动日志核对 CPU trip 和降温绑定；
 不修改日志轮转或开放 D-Bus。更早降低功耗/频率可能影响性能。
+
+`--polling-seconds 1` 必须同时指定 90°C 目标，将匹配平台的基础轮询缩为每秒一次。
+本机原生冷态每 4 秒检查，超过 81°C 的轮询控制点后热态本来已每秒检查；
+缩短基础轮询主要针对冷态突然升温的首次介入。原生降温设备的防抖和降限递进不变，
+不能保证消除短时尖峰。省略此参数保持原生轮询，也保留旧版 90°C 状态的字节兼容。
 
 恢复原生温度阈值而保留 55 W 长期上限：
 

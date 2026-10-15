@@ -10,7 +10,7 @@
 
 pkgname=mechrevo-power-control
 pkgver=0.1.0
-pkgrel=9
+pkgrel=10
 pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
 arch=('x86_64')
 url='https://github.com/LIghtJUNction/mechrevo-drivers'

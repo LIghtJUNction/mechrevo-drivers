@@ -78,6 +78,12 @@ def temperature_target(target):
         raise ValueError("Only the qualified optional 90 Celsius passive target is supported")
 
 
+def polling_target(polling_seconds, target_celsius):
+    if polling_seconds is not None and (type(polling_seconds) is not int
+                                       or polling_seconds != 1 or target_celsius != 90):
+        raise ValueError("Optional 1 second polling requires the qualified 90 Celsius passive target")
+
+
 def managed_exec_start(target_celsius=None):
     temperature_target(target_celsius)
     return MANAGED_EXEC_START + (" --loglevel=info" if target_celsius is not None else "")
@@ -280,6 +286,7 @@ class PowerController:
                 or not MIN_LIMIT_UW <= state["cap_uw"] <= state["initial_ceiling_uw"]):
             raise ValueError("Invalid state schema or cap")
         self.validate_target(state.get("target_celsius"))
+        polling_target(state.get("polling_seconds"), state.get("target_celsius"))
         preference = state["preference"]
         if (state["host"] != IDENTITY or not isinstance(preference, dict)
                 or type(preference["value"]) is not int or preference["value"] not in (0, 1)
@@ -308,10 +315,11 @@ class PowerController:
                     or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
                     or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
                 raise ValueError("Invalid transaction owner")
-            if any(key in pending for key in ("prior_managed_hashes", "prior_cap_uw", "prior_target_celsius")):
+            if any(key in pending for key in ("prior_managed_hashes", "prior_cap_uw", "prior_target_celsius", "prior_polling_seconds")):
                 prior = pending["prior_managed_hashes"]
                 cap = pending["prior_cap_uw"]
                 self.validate_target(pending.get("prior_target_celsius"))
+                polling_target(pending.get("prior_polling_seconds"), pending.get("prior_target_celsius"))
                 if cap is None and pending.get("prior_target_celsius") is not None:
                     raise ValueError("Unconfigured prior state cannot have a temperature target")
                 if (not isinstance(prior, dict) or set(prior) != {XML, DROPIN}
@@ -474,7 +482,7 @@ class PowerController:
                 expected_prior = {XML: None, DROPIN: None}
             elif type(prior_cap) is int and MIN_LIMIT_UW <= prior_cap <= state["initial_ceiling_uw"]:
                 expected_prior = {XML: digest(self.xml(prior_cap, state["preference"]["name"],
-                                                      pending.get("prior_target_celsius"))),
+                                                      pending.get("prior_target_celsius"), pending.get("prior_polling_seconds"))),
                                   DROPIN: digest(self.dropin(pending.get("prior_target_celsius")))}
             else:
                 raise PowerError("Invalid previous managed cap in interrupted transaction")
@@ -486,7 +494,7 @@ class PowerController:
                 continue
             if digest(raw) not in (expected, prior.get(path)):
                 raise PowerError(f"Managed file changed; refusing overwrite: {path}")
-        expected_xml = self.xml(state["cap_uw"], state["preference"]["name"], state.get("target_celsius"))
+        expected_xml = self.xml(state["cap_uw"], state["preference"]["name"], state.get("target_celsius"), state.get("polling_seconds"))
         if (state["managed_hashes"][XML] != digest(expected_xml)
                 or state["managed_hashes"][DROPIN] != digest(self.dropin(state.get("target_celsius")))):
             raise PowerError("Managed configuration does not match state")
@@ -591,13 +599,16 @@ class PowerController:
         return host, preference, observed, service, tcc
 
     @staticmethod
-    def xml(cap_uw, preference, target_celsius=None):
+    def xml(cap_uw, preference, target_celsius=None, polling_seconds=None):
         temperature_target(target_celsius)
+        polling_target(polling_seconds, target_celsius)
         root = ET.Element("ThermalConfiguration")
         platform = ET.SubElement(root, "Platform")
         ET.SubElement(platform, "Name").text = "MECHREVO GM6PX0X user PL1 ceiling"
         ET.SubElement(platform, "ProductName").text = IDENTITY["product_name"]
         ET.SubElement(platform, "Preference").text = preference
+        if polling_seconds is not None:
+            ET.SubElement(platform, "PollingInterval").text = str(polling_seconds)
         cooling = ET.SubElement(platform, "CoolingDevices")
         for name in ("rapl_controller", "rapl_controller_mmio"):
             device = ET.SubElement(cooling, "CoolingDevice")
@@ -690,6 +701,7 @@ class PowerController:
                                         "owner": self.env.process_identity(),
                                         "prior_cap_uw": current["cap_uw"],
                                         "prior_target_celsius": current.get("target_celsius"),
+                                        "prior_polling_seconds": current.get("polling_seconds"),
                                         "prior_managed_hashes": expected_hashes})
             self.env.atomic(STATE, json_bytes(barrier))
             for path in (XML, DROPIN):
@@ -717,7 +729,7 @@ class PowerController:
                                                         cap_uw=current["cap_uw"], transaction=transaction)
                 self.env.atomic(STATE, json_bytes(current))
 
-    def _stage_set(self, watts, transaction, context, target_celsius=None):
+    def _stage_set(self, watts, transaction, context, target_celsius=None, polling_seconds=None):
         with self.lock():
             previous = self.load_state()
             if previous and previous.get("transaction"):
@@ -732,10 +744,11 @@ class PowerController:
             old_files = {path: self.env.regular(path, missing=True) for path in (XML, DROPIN, STATE, PREF)}
             backup = self.backup("set", old_files, {"host": host, "preference": preference,
                                                      "observed": observed, "tcc": tcc})
-            xml, dropin = self.xml(cap, preference["name"], target_celsius), self.dropin(target_celsius)
+            xml, dropin = self.xml(cap, preference["name"], target_celsius, polling_seconds), self.dropin(target_celsius)
             hashes = {XML: digest(xml), DROPIN: digest(dropin)}
             state = {"version": 1, "cap_uw": cap, "initial_ceiling_uw": ceiling,
                      "target_celsius": target_celsius,
+                     "polling_seconds": polling_seconds,
                      "initial_limits": previous["initial_limits"] if previous else observed,
                      "host": host, "preference": preference, "tcc": tcc,
                      "managed_hashes": hashes, "stock_unit_sha256": digest(self.env.regular(STOCK_UNIT)),
@@ -746,6 +759,7 @@ class PowerController:
                                      "owner": self.env.process_identity(),
                                      "prior_cap_uw": previous["cap_uw"] if previous else None,
                                      "prior_target_celsius": previous.get("target_celsius") if previous else None,
+                                     "prior_polling_seconds": previous.get("polling_seconds") if previous else None,
                                      "prior_managed_hashes": previous["managed_hashes"] if previous else {XML: None, DROPIN: None}},
                      "last_apply": None}
             context.update(old_files=old_files, hashes=hashes, backup=backup, cap=cap, phase="staging")
@@ -770,9 +784,10 @@ class PowerController:
                 raise PowerError(f"Configuration staging failed: {exc}") from exc
             context["phase"] = "staged"
 
-    def set_limit(self, watts, target_celsius=None):
+    def set_limit(self, watts, target_celsius=None, polling_seconds=None):
         self.require_root()
         self.validate_target(target_celsius)
+        polling_target(polling_seconds, target_celsius)
         if type(watts) is not int:
             raise PowerError("Limit must be an integer number of watts")
         transaction = str(uuid.uuid4())
@@ -780,7 +795,7 @@ class PowerController:
         try:
             # Includes lock.__exit__: signals during the staging/restart handoff
             # receive the same rollback as signals in the service command.
-            self._stage_set(watts, transaction, context, target_celsius)
+            self._stage_set(watts, transaction, context, target_celsius, polling_seconds)
             cap, backup = context["cap"], context["backup"]
             self.restart()
             with self.lock():
@@ -868,6 +883,7 @@ class PowerController:
                                         "owner": self.env.process_identity(),
                                         "prior_cap_uw": state["cap_uw"],
                                         "prior_target_celsius": state.get("target_celsius"),
+                                        "prior_polling_seconds": state.get("polling_seconds"),
                                         "prior_managed_hashes": state["managed_hashes"]})
             context.update(old_files=old_files, state=state, backup=backup, phase="staging")
             try:
@@ -953,6 +969,7 @@ class PowerController:
                                             "owner": self.env.process_identity(),
                                             **({"prior_cap_uw": pending.get("prior_cap_uw"),
                                                 "prior_target_celsius": pending.get("prior_target_celsius"),
+                                                "prior_polling_seconds": pending.get("prior_polling_seconds"),
                                                 "prior_managed_hashes": pending["prior_managed_hashes"]}
                                                if "prior_managed_hashes" in pending else {})})
                 self.env.atomic(STATE, json_bytes(barrier))
@@ -982,6 +999,7 @@ class PowerController:
     def status(self):
         result = {"managed": False, "desired_limit_uw": None, "observed": {},
                   "desired_temperature_celsius": None,
+                  "desired_polling_seconds": None,
                   "thermald": {}, "holding_now": False, "errors": [],
                   "holding_scope": "cpu_package_pl1", "pl2_managed": False}
         try:
@@ -995,6 +1013,7 @@ class PowerController:
             if state:
                 result["desired_limit_uw"] = state["cap_uw"]
                 result["desired_temperature_celsius"] = state.get("target_celsius")
+                result["desired_polling_seconds"] = state.get("polling_seconds")
                 result["pending_transaction"] = state.get("transaction")
                 result["last_apply"] = state.get("last_apply")
         except (PowerError, OSError) as exc:
@@ -1033,6 +1052,7 @@ def main(argv=None):
     setter = commands.add_parser("set", help="Configure a PL1 ceiling (qualified host only)")
     setter.add_argument("watts", type=int)
     setter.add_argument("--target-celsius", type=int, choices=(90,), help="Optional CPU passive cooling target; not a hard temperature limit")
+    setter.add_argument("--polling-seconds", type=int, choices=(1,), help="Optional cold-state polling interval; requires --target-celsius 90")
     commands.add_parser("clear", help="Restore the stock thermald configuration")
     commands.add_parser("apply", help="Apply managed PL1 once; used by thermald ExecStartPost")
     commands.add_parser("recover", help="Restore stock policy after an interrupted transaction owner exits")
@@ -1042,7 +1062,7 @@ def main(argv=None):
         raise PowerError("Interrupted by " + signal.Signals(signum).name)
     previous_handler = signal.signal(signal.SIGTERM, interrupted)
     try:
-        result = (controller.set_limit(args.watts, target_celsius=args.target_celsius) if args.command == "set"
+        result = (controller.set_limit(args.watts, target_celsius=args.target_celsius, polling_seconds=args.polling_seconds) if args.command == "set"
                   else getattr(controller, args.command)())
         print(json.dumps(result, indent=2, sort_keys=True))
         # Keep JSON available to diagnostics while making failed checks visible

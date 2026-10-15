@@ -1511,5 +1511,116 @@ class PassiveTemperatureTarget(unittest.TestCase):
             self.assertEqual(self.controller.status()["desired_temperature_celsius"], expected)
 
 
+class PassivePollingInterval(unittest.TestCase):
+    setUp = PassiveTemperatureTarget.setUp
+    state = PassiveTemperatureTarget.state
+
+    def test_absent_polling_keeps_preexisting_native_and_r9_target_xml_hashes(self):
+        self.assertEqual(POWER.digest(self.controller.xml(55_000_000, "ENERGY_CONSERVE")),
+                         "df2e2c43d6b5a866d3780a326cdc7450aea07a4e0e9716e1fc912f811c6191c8")
+        self.assertEqual(POWER.digest(self.controller.xml(55_000_000, "ENERGY_CONSERVE", 90)),
+                         "49a0c2679fa6ffd1b7cbf60dff7d275f6fcece27ca1ad2b2cf4c8e18b4bef229")
+
+    def test_one_second_polling_changes_only_platform_interval_and_reports_desired_value(self):
+        baseline = self.controller.xml(55_000_000, "ENERGY_CONSERVE", 90)
+        status = self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        self.assertTrue(status["holding_now"])
+        self.assertEqual(status["desired_polling_seconds"], 1)
+        self.assertEqual(self.state()["polling_seconds"], 1)
+        root = ET.fromstring(self.host.read(POWER.XML))
+        platform = root.find("Platform")
+        self.assertEqual(platform.findtext("PollingInterval"), "1")
+        platform.remove(platform.find("PollingInterval"))
+        # Whitespace after removing a node differs; compare complete XML
+        # structure to confirm sensor, bindings, hysteresis and ranges unchanged.
+        def shape(node):
+            return (node.tag, node.attrib, (node.text or "").strip(), [shape(n) for n in node])
+        self.assertEqual(shape(root), shape(ET.fromstring(baseline)))
+        self.assertEqual(self.host.path(POWER.DROPIN).read_bytes(), self.controller.dropin(90))
+
+    def test_legacy_90_missing_polling_field_keeps_xml_and_survives_enable_disable(self):
+        self.controller.set_limit(55, target_celsius=90)
+        value = self.state()
+        value.pop("polling_seconds")
+        self.host.write(POWER.STATE, json.dumps(value))
+        before = self.host.path(POWER.XML).read_bytes()
+        self.assertTrue(self.controller.status()["holding_now"])
+        self.assertIsNone(self.controller.status()["desired_polling_seconds"])
+        self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        status = self.controller.set_limit(55, target_celsius=90)
+        self.assertIsNone(status["desired_polling_seconds"])
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), before)
+        self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        status = self.controller.set_limit(55)
+        self.assertIsNone(status["desired_temperature_celsius"])
+        self.assertIsNone(status["desired_polling_seconds"])
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), self.controller.xml(55_000_000, "ENERGY_CONSERVE"))
+
+    def test_failed_restart_restores_legacy90_or_polling90_exact_previous_bytes(self):
+        for polling in (None, 1):
+            self.controller.set_limit(55, target_celsius=90, polling_seconds=polling)
+            value = self.state()
+            if polling is None:
+                value.pop("polling_seconds")
+                self.host.write(POWER.STATE, json.dumps(value))
+            before = {p: self.host.path(p).read_bytes() for p in (POWER.XML, POWER.DROPIN)}
+            self.host.restart_failures = [True, False]
+            with self.assertRaises(POWER.PowerError):
+                self.controller.set_limit(35, target_celsius=90, polling_seconds=1 if polling is None else None)
+            self.assertEqual(before, {p: self.host.path(p).read_bytes() for p in before})
+            self.assertEqual(self.controller.status()["desired_polling_seconds"], polling)
+            self.assertTrue(self.controller.status()["holding_now"])
+
+    def test_interrupted_transaction_validates_prior_polling_xml_and_recovers_stock(self):
+        self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        before = self.host.path(POWER.XML).read_bytes()
+        self.controller._stage_set(35, str(uuid.uuid4()), {}, target_celsius=90)
+        self.assertEqual(self.state()["transaction"]["prior_polling_seconds"], 1)
+        self.host.path(POWER.XML).write_bytes(before)
+        identity = self.host.env.process_identity
+        with mock.patch.object(self.host.env, "process_identity", side_effect=lambda pid=None: identity() if pid is None else None):
+            self.assertTrue(self.controller.recover()["success"])
+        self.assertFalse(self.controller.status()["managed"])
+
+    def test_clear_restores_stock_after_polling90(self):
+        self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        self.assertTrue(self.controller.clear()["success"])
+        self.assertFalse(self.controller.status()["managed"])
+        self.assertFalse(self.host.path(POWER.XML).exists())
+
+    def test_invalid_polling_and_missing_target_reject_before_mutation(self):
+        for polling, target in ((True, 90), (False, 90), (1.0, 90), ("1", 90), (0, 90), (2, 90), (1, None)):
+            with self.subTest(polling=polling, target=target):
+                with self.assertRaises(ValueError):
+                    self.controller.set_limit(55, target_celsius=target, polling_seconds=polling)
+                self.assertFalse(self.host.path(POWER.STATE).exists())
+        self.assertEqual(self.host.commands, [])
+
+    def test_corrupt_current_or_prior_polling_blocks_all_mutations(self):
+        self.controller.set_limit(55, target_celsius=90, polling_seconds=1)
+        original = self.state()
+        for polling in (True, 1.0, "1", 0, 2, {}):
+            for prior in (False, True):
+                value = json.loads(json.dumps(original))
+                if prior:
+                    value["transaction"] = {"id": "pending", "operation": "set", "owner": self.host.env.process_identity(),
+                                            "prior_cap_uw": 55_000_000, "prior_target_celsius": 90,
+                                            "prior_polling_seconds": polling, "prior_managed_hashes": value["managed_hashes"]}
+                else:
+                    value["polling_seconds"] = polling
+                self.host.write(POWER.STATE, json.dumps(value))
+                before = {p: self.host.path(p).read_bytes() for p in (POWER.STATE, POWER.XML, POWER.DROPIN)}
+                for operation in (lambda: self.controller.set_limit(55), self.controller.apply,
+                                  self.controller.clear, self.controller.recover):
+                    with self.assertRaises(POWER.PowerError):
+                        operation()
+                self.assertEqual(before, {p: self.host.path(p).read_bytes() for p in before})
+
+    def test_cli_explicit_polling_option_reaches_transaction(self):
+        with mock.patch.object(POWER, "PowerController", return_value=self.controller), mock.patch("sys.stdout"):
+            self.assertEqual(POWER.main(["set", "55", "--target-celsius", "90", "--polling-seconds", "1"]), 0)
+        self.assertEqual(self.controller.status()["desired_polling_seconds"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
