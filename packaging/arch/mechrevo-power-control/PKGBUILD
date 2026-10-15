@@ -21,7 +21,7 @@ depends=('python' 'thermald=2:2.5.13' 'systemd')
 makedepends=('git')
 options=('!strip' '!debug' '!lto')
 
-_source_commit=${MECHREVO_POWER_COMMIT-2c5daf5937f899280044366dc464dc8823e7e756}
+_source_commit=${MECHREVO_POWER_COMMIT-558ccef7cc9d7d7997fdd532dcfd52e5c99be87f}
 _source_url=${MECHREVO_POWER_SOURCE:-"${url}.git"}
 if [[ ! $_source_commit =~ ^[0-9a-f]{40}$ ]]; then
     printf '%s\n' 'Set MECHREVO_POWER_COMMIT to a reviewed full 40-character Git commit.' >&2
