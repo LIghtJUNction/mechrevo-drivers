@@ -6,7 +6,7 @@ convert bytes to RPM, or replace the installed driver. No automatic loading,
 DKMS registration, service, or persistent configuration is included.
 
 Only MECHREVO `Kuangshi16Pro Series GM6PX0X`, BIOS `N.1.09MRO07`, is accepted.
-The fixed address list comes from this host's DSDT, OEM metadata, and existing
+The fixed address list comes from this host's DSDT, recovered OEM method bodies, metadata, and existing
 driver reads. No arbitrary address or write interface is exposed. The snapshot
 is root-readable only. A failed ACPI call or non-byte value fails the whole
 snapshot instead of publishing plausible zeroes. Existing WMI reads use the
@@ -55,3 +55,8 @@ Regression tests:
 ```sh
 python -m unittest discover -s tests -p test_compare_ec_paths.py -v
 ```
+
+The fixed snapshot now includes `0x078e`. The recovered OEM `IsSuportRamFan1p5`
+reads its bit 6; combined with project `0x0740`, this allows a fresh transport-level
+check of the native factory selection. It still does not enable manual fan control
+or infer write ordering from a capability bit alone. See `docs/OEM-METHOD-BODIES.md`.

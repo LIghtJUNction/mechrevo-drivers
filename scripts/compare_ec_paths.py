@@ -12,7 +12,7 @@ from mechrevo_thermal import CheckpointFile, ObservationError, System
 
 
 SNAPSHOT = "/sys/module/mechrevo_ec_probe/snapshot"
-ADDRESSES = ("043e", "044f", "0740", "0765", "0766", "0464", "0465",
+ADDRESSES = ("043e", "044f", "0740", "0765", "0766", "078e", "0464", "0465",
              "046b", "046c", "1804", "1809", "0e0d")
 READS = ("ec_cpu_c", "ec_gpu_c", "fan1_raw", "fan2_raw")
 

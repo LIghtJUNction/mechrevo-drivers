@@ -1,4 +1,6 @@
 import copy
+import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -16,7 +18,7 @@ class FakeSystem:
         (self.hwmon / "temp1_input").write_text("94000")
         self.snapshot = self.root / "snapshot"
         self.snapshot.write_text("\n".join(f"{a}={v:02x}" for a, v in zip(
-            probe.ADDRESSES, (95, 63, 16, 161, 180, 14, 70, 75, 19, 255, 255, 0))) + "\n")
+            probe.ADDRESSES, (95, 63, 16, 161, 180, 236, 14, 70, 75, 19, 255, 255, 0))) + "\n")
         self.opened = self.closed = False
         self.values = dict(zip(probe.READS, (95, 63, 170, 170)))
 
@@ -36,9 +38,18 @@ class FakeSystem:
 
 class CompareTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("MECHREVO_TEST_TMPDIR"))
         self.addCleanup(self.tmp.cleanup)
         self.system = FakeSystem(self.tmp.name)
+
+    def test_probe_and_reader_agree_and_require_oem_layout_capability(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts/ec_path_probe/mechrevo_ec_probe.c").read_text()
+        array = source.split("static const u16 addresses[] = {", 1)[1].split("};", 1)[0]
+        self.assertEqual(tuple(re.findall(r"0x([0-9a-f]{4})", array)), probe.ADDRESSES)
+        good = self.system.snapshot.read_text()
+        self.assertEqual(probe.parse_snapshot(good)["078e"], 0xec)
+        with self.assertRaisesRegex(probe.ObservationError, "Incomplete"):
+            probe.parse_snapshot(good.replace("078e=ec\n", ""))
 
     def test_realistic_transport_difference_is_preserved(self):
         checkpoints, waits = [], []
