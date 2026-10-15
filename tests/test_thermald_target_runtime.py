@@ -7,7 +7,9 @@ to the upstream parser's typed structures (a parser double). The existing-zone
 positive-temperature sensor/binding branch, zone add_trip/update_trip_temp,
 trip selection and RAPL controller are exact pinned upstream C++. Engine and
 sensor discovery, non-RAPL cooling devices, sysfs, polling-trip maintenance,
-PPCC, PID and process-exit restoration are doubles or excluded. This does not
+PPCC, PID and process-exit restoration are doubles or excluded. time() is a
+controlled clock double; original native debounce and controller functions run
+unchanged against one-second observations, without sleeping or adjusting clocks. This does not
 execute libxml parsing, complete engine startup, IRQs or physical cooling.
 """
 import hashlib
@@ -62,6 +64,9 @@ def parser_double(root):
                    binding.findtext('SamplingPeriod')]
     if any(not isinstance(token, str) or not token or any(c.isspace() for c in token) for token in tokens):
         raise AssertionError('Missing or malformed product XML field')
+    # Absent parameter retains constructor default, rather than synthesizing 0.
+    debounce = rapl.findtext('DebouncePeriod')
+    tokens.append('-1' if debounce is None else debounce)
     return ' '.join(tokens) + '\n'
 
 
@@ -153,6 +158,30 @@ class ThermaldTargetRuntime(unittest.TestCase):
         platform = root.find('Platform')
         platform.remove(platform.find('PollingInterval'))
         self.assertEqual(ET.tostring(root), ET.tostring(self.xml()))
+
+    def test_native_default_two_second_debounce_reacts_every_third_one_second_observation(self):
+        result = self.run_case('debounce_default')
+        self.assertIn('RAPL action seconds: 1000 1003 1006', result.stdout)
+
+    def test_explicit_zero_debounce_reacts_each_second_without_changing_native_fallbacks(self):
+        root = ET.fromstring(POWER.PowerController.xml(55_000_000, 'ENERGY_CONSERVE', 90, 1, 0))
+        rapl = root.find('./Platform/CoolingDevices/CoolingDevice')
+        self.assertEqual(rapl.findtext('Type'), 'rapl_controller')
+        self.assertEqual(rapl.findtext('DebouncePeriod'), '0')
+        result = self.run_case('debounce_zero', root)
+        self.assertIn('RAPL action seconds: 1000 1001 1002', result.stdout)
+        # Product policy changes only the MSR RAPL device's native debounce.
+        rapl.remove(rapl.find('DebouncePeriod'))
+        platform = root.find('Platform')
+        platform.remove(platform.find('PollingInterval'))
+        self.assertEqual(ET.canonicalize(ET.tostring(root), strip_text=True),
+                         ET.canonicalize(ET.tostring(self.xml()), strip_text=True))
+
+    def test_reverting_zero_debounce_to_native_default_fails_one_second_qualification(self):
+        root = ET.fromstring(POWER.PowerController.xml(55_000_000, 'ENERGY_CONSERVE', 90, 1, 0))
+        root.find('./Platform/CoolingDevices/CoolingDevice/DebouncePeriod').text = '2'
+        result = self.run_case('debounce_zero', root, expected=1)
+        self.assertIn('debounce did not select', result.stderr)
 
     def test_old95_counterexample_fails_the_same_runtime_qualification(self):
         root = self.xml()

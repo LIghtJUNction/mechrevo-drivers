@@ -77,6 +77,25 @@ sudo mechrevo-power clear
 缩短基础轮询主要针对冷态突然升温的首次介入。原生降温设备的防抖和降限递进不变，
 不能保证消除短时尖峰。省略此参数保持原生轮询，也保留旧版 90°C 状态的字节兼容。
 
+连续降限还受原生降温设备默认两秒防抖控制：源码比较使用 `<= 2`，每秒检查时实际约每三秒
+才推进一次。可显式使用快速 RAPL 递进，仅支持已核验的 90°C／每秒轮询组合：
+
+```sh
+sudo mechrevo-power set 55 --target-celsius 90 --polling-seconds 1 --rapl-debounce-seconds 0
+```
+
+此选项仅将 CPU trip 使用的 `rapl_controller` 的 `DebouncePeriod` 设为0，保留原生功耗范围、
+递进公式、频率限制后备顺序与低温释放；不改MMIO控制器的防抖。同秒重复观察仍不连续降限。
+状态字段 `desired_rapl_debounce_seconds` 只是配置目标，实际动作仍需核对日志。
+省略此参数恢复原生防抖，旧版XML及状态保持兼容；更快限制功耗可能影响短时性能，
+软件延迟、温度缓存与风扇响应仍可能造成超温，不能视为硬温度上限。
+
+恢复每秒检查但撤销快速递进：
+
+```sh
+sudo mechrevo-power set 55 --target-celsius 90 --polling-seconds 1
+```
+
 恢复原生温度阈值而保留 55 W 长期上限：
 
 ```sh

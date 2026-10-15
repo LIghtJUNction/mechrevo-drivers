@@ -1622,5 +1622,184 @@ class PassivePollingInterval(unittest.TestCase):
         self.assertEqual(self.controller.status()["desired_polling_seconds"], 1)
 
 
+class RaplDebounceInterval(unittest.TestCase):
+    def setUp(self):
+        self.host = FakeHost(self)
+        self.controller = self.host.controller
+        self.host.write("/sys/class/thermal/thermal_zone0/type", "x86_pkg_temp\n")
+        self.host.write("/sys/class/thermal/thermal_zone0/temp", "65000\n")
+
+    state = PassiveTemperatureTarget.state
+
+    def fast(self, watts=55):
+        return self.controller.set_limit(watts, target_celsius=90, polling_seconds=1,
+                                         rapl_debounce_seconds=0)
+
+    def test_absent_debounce_preserves_frozen_r10_xml_digest(self):
+        self.assertEqual(POWER.digest(self.controller.xml(55_000_000, "ENERGY_CONSERVE", 90, 1)),
+                         "feecbf58256bd6ac75598a889ab4b3a65eeb71997a41e2c3eaddf94373bd28b7")
+
+    def test_failed_clear_restores_explicit_zero_configuration(self):
+        self.fast()
+        before = self.host.path(POWER.XML).read_bytes()
+        self.host.restart_failures = [True, False]
+        with self.assertRaises(POWER.PowerError):
+            self.controller.clear()
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), before)
+        self.assertEqual(self.controller.status()["desired_rapl_debounce_seconds"], 0)
+        self.assertTrue(self.controller.status()["holding_now"])
+
+    def test_zero_option_still_rejects_unqualified_host_before_staging(self):
+        self.host.write("/sys/class/dmi/id/bios_version", "foreign BIOS\n")
+        with self.assertRaises(POWER.PowerError):
+            self.fast()
+        self.assertFalse(self.host.path(POWER.STATE).exists())
+        self.assertFalse(self.host.path(POWER.XML).exists())
+
+    def test_zero_changes_only_bound_msr_device_and_reports_explicit_value(self):
+        baseline = ET.fromstring(self.controller.xml(55_000_000, "ENERGY_CONSERVE", 90, 1))
+        result = self.fast()
+        self.assertTrue(result["holding_now"])
+        self.assertEqual(result["desired_rapl_debounce_seconds"], 0)
+        actual = ET.fromstring(self.host.read(POWER.XML))
+        devices = actual.findall("Platform/CoolingDevices/CoolingDevice")
+        self.assertEqual([(d.findtext("Type"), d.findtext("DebouncePeriod")) for d in devices],
+                         [("rapl_controller", "0"), ("rapl_controller_mmio", None)])
+        devices[0].remove(devices[0].find("DebouncePeriod"))
+        def shape(node):
+            return (node.tag, node.attrib, (node.text or "").strip(), [shape(n) for n in node])
+        self.assertEqual(shape(actual), shape(baseline))
+
+    def test_old_r8_r9_r10_states_load_and_enable_disable_preserves_exact_xml(self):
+        for target, polling in ((None, None), (90, None), (90, 1)):
+            with self.subTest(target=target, polling=polling):
+                self.controller.set_limit(55, target_celsius=target, polling_seconds=polling)
+                value = self.state()
+                value.pop("rapl_debounce_seconds")
+                self.host.write(POWER.STATE, json.dumps(value))
+                original = self.host.path(POWER.XML).read_bytes()
+                self.assertTrue(self.controller.status()["holding_now"])
+                self.assertIsNone(self.controller.status()["desired_rapl_debounce_seconds"])
+                self.fast()
+                result = self.controller.set_limit(55, target_celsius=target, polling_seconds=polling)
+                self.assertIsNone(result["desired_rapl_debounce_seconds"])
+                self.assertEqual(self.host.path(POWER.XML).read_bytes(), original)
+
+    def test_restart_failure_restores_both_native_and_zero_debounce_policy(self):
+        for prior in (None, 0):
+            with self.subTest(prior=prior):
+                self.controller.set_limit(55, target_celsius=90, polling_seconds=1, rapl_debounce_seconds=prior)
+                files = {p: self.host.path(p).read_bytes() for p in (POWER.XML, POWER.DROPIN)}
+                self.host.restart_failures = [True, False]
+                with self.assertRaises(POWER.PowerError):
+                    self.controller.set_limit(35, target_celsius=90, polling_seconds=1,
+                                              rapl_debounce_seconds=0 if prior is None else None)
+                self.assertEqual(files, {p: self.host.path(p).read_bytes() for p in files})
+                self.assertEqual(self.controller.status()["desired_rapl_debounce_seconds"], prior)
+                self.assertTrue(self.controller.status()["holding_now"])
+
+    def test_pending_prior_zero_xml_is_validated_and_recovered_without_upward_write(self):
+        self.fast()
+        old_xml = self.host.path(POWER.XML).read_bytes()
+        self.controller._stage_set(35, str(uuid.uuid4()), {}, target_celsius=90, polling_seconds=1)
+        self.assertEqual(self.state()["transaction"]["prior_rapl_debounce_seconds"], 0)
+        self.host.path(POWER.XML).write_bytes(old_xml)
+        identity = self.host.env.process_identity
+        with mock.patch.object(self.host.env, "process_identity", side_effect=lambda pid=None: identity() if pid is None else None), \
+                mock.patch.object(self.host.env, "write_control", wraps=self.host.env.write_control) as writes:
+            self.assertTrue(self.controller.recover()["success"])
+        writes.assert_not_called()
+        self.assertFalse(self.controller.status()["managed"])
+
+    def test_actual_sigkill_zero_debounce_transaction_recovers_stock(self):
+        code = r'''
+import os, signal, sys, unittest
+from pathlib import Path
+sys.path.insert(0, str(Path.cwd() / 'tests'))
+from test_mechrevo_power import FakeHost
+host = FakeHost(unittest.TestCase(), root=Path(sys.argv[1]))
+host.write('/sys/class/thermal/thermal_zone0/type', 'x86_pkg_temp\n')
+host.write('/sys/class/thermal/thermal_zone0/temp', '65000\n')
+run = host.env.runner
+def killed_at_restart(argv):
+    if argv == ['systemctl', 'restart', 'thermald.service']:
+        os.kill(os.getpid(), signal.SIGKILL)
+    return run(argv)
+host.env.runner = killed_at_restart
+host.controller.set_limit(55, target_celsius=90, polling_seconds=1, rapl_debounce_seconds=0)
+'''
+        child = subprocess.run([sys.executable, "-B", "-c", code, str(self.host.root)],
+                               cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(child.returncode, -signal.SIGKILL, child.stdout + child.stderr)
+        self.assertEqual(self.state()["rapl_debounce_seconds"], 0)
+        with mock.patch.object(self.host.env, "write_control", wraps=self.host.env.write_control) as writes:
+            self.assertTrue(self.controller.recover()["success"])
+        writes.assert_not_called()
+        self.assertFalse(self.controller.status()["managed"])
+
+    def test_clear_removes_zero_policy(self):
+        self.fast()
+        self.assertTrue(self.controller.clear()["success"])
+        self.assertFalse(self.host.path(POWER.XML).exists())
+        self.assertIsNone(self.controller.status()["desired_rapl_debounce_seconds"])
+
+    def test_reject_nonzero_and_implicit_dependencies_before_any_change(self):
+        cases = [(v, 90, 1) for v in (True, False, "0", 0.0, -1, 1, {}, [])]
+        cases += [(0, None, None), (0, 90, None), (0, None, 1)]
+        for seconds, target, polling in cases:
+            with self.subTest(seconds=seconds, target=target, polling=polling):
+                with self.assertRaises(ValueError):
+                    self.controller.set_limit(55, target_celsius=target, polling_seconds=polling,
+                                              rapl_debounce_seconds=seconds)
+        self.assertFalse(self.host.path(POWER.STATE).exists())
+        self.assertEqual(self.host.commands, [])
+
+    def test_corrupt_current_and_prior_reject_all_mutations_without_overwrite(self):
+        self.fast()
+        original = self.state()
+        for seconds in (True, False, "0", 0.0, -1, 1, {}, []):
+            for prior in (False, True):
+                with self.subTest(seconds=seconds, prior=prior):
+                    value = json.loads(json.dumps(original))
+                    if prior:
+                        value["transaction"] = {"id": "pending", "operation": "set", "owner": self.host.env.process_identity(),
+                                                "prior_cap_uw": 55_000_000, "prior_target_celsius": 90,
+                                                "prior_polling_seconds": 1, "prior_rapl_debounce_seconds": seconds,
+                                                "prior_managed_hashes": value["managed_hashes"]}
+                    else:
+                        value["rapl_debounce_seconds"] = seconds
+                    self.host.write(POWER.STATE, json.dumps(value))
+                    before = {p: self.host.path(p).read_bytes() for p in (POWER.STATE, POWER.XML, POWER.DROPIN)}
+                    for operation in (lambda: self.controller.set_limit(55), self.controller.apply,
+                                      self.controller.clear, self.controller.recover):
+                        with self.assertRaises(POWER.PowerError):
+                            operation()
+                    self.assertEqual(before, {p: self.host.path(p).read_bytes() for p in before})
+
+    def test_zero_requires_dependencies_in_stored_current_and_prior_records(self):
+        self.fast()
+        original = self.state()
+        for prior in (False, True):
+            for target, polling in ((None, None), (90, None)):
+                value = json.loads(json.dumps(original))
+                if prior:
+                    value["transaction"] = {"id": "pending", "operation": "set", "owner": self.host.env.process_identity(),
+                                            "prior_cap_uw": 55_000_000, "prior_target_celsius": target,
+                                            "prior_polling_seconds": polling, "prior_rapl_debounce_seconds": 0,
+                                            "prior_managed_hashes": value["managed_hashes"]}
+                else:
+                    value.update(target_celsius=target, polling_seconds=polling)
+                self.host.write(POWER.STATE, json.dumps(value))
+                with self.assertRaises(POWER.PowerError):
+                    self.controller.load_state()
+
+    def test_cli_requires_explicit_dependencies_and_applies_zero(self):
+        with mock.patch.object(POWER, "PowerController", return_value=self.controller), mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            self.assertEqual(POWER.main(["set", "55", "--rapl-debounce-seconds", "0"]), 1)
+            self.assertEqual(POWER.main(["set", "55", "--target-celsius", "90", "--polling-seconds", "1",
+                                         "--rapl-debounce-seconds", "0"]), 0)
+        self.assertEqual(self.controller.status()["desired_rapl_debounce_seconds"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

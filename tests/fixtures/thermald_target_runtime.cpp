@@ -3,6 +3,15 @@
 // selection run against in-memory parser/sensor/engine/sysfs services.
 #include <iostream>
 #include <mutex>
+#include <ctime>
+
+// Clock service double only: production time(&tm) calls remain unchanged.
+// No real sleep or hardware clock changes are performed by this fixture.
+static time_t fixture_seconds = 1000;
+extern "C" time_t time(time_t *out) noexcept {
+    if (out) *out = fixture_seconds;
+    return fixture_seconds;
+}
 #include "thd_cdev_rapl.h"
 #include "thd_trip_point.h"
 
@@ -43,8 +52,10 @@ void cthd_trip_point::set_dependency(const std::string &, const std::string &) {
 class test_rapl : public cthd_sysfs_cdev_rapl {
 public:
     test_rapl() : cthd_sysfs_cdev_rapl(1, 0) {
-        set_cdev_type("rapl_controller"); set_debounce_interval(-1);
+        set_cdev_type("rapl_controller");
     }
+    fake_state &hardware() { return cdev_sysfs.state(); }
+    int debounce_seconds() const { return debounce_interval; }
     void configure(int ceiling, int floor) {
         require(update() == THD_SUCCESS, "native RAPL init failed");
         thd_cdev_set_min_state_param(ceiling);
@@ -56,7 +67,7 @@ public:
     int writes = 0;
     next_cdev(int index, const std::string &name) : cthd_cdev(index, name) {
         set_cdev_type(name); set_min_state(0); set_max_state(100);
-        set_inc_dec_value(1); set_debounce_interval(-1);
+        set_inc_dec_value(1);
     }
     void set_curr_state(int state, int) override { curr_state = state; ++writes; }
 };
@@ -168,8 +179,14 @@ int main(int argc, char **argv) {
         config.influence = influence; config.sampling_period = sampling;
         trip.cdev_trips.push_back(config);
     }
+    int configured_debounce;
+    require(bool(std::cin >> configured_debounce), "missing XML debounce mapping");
+    require(configured_debounce == -1 || configured_debounce == 0 || configured_debounce == 2,
+            "unexpected debounce mapping");
     test_rapl rapl;
     rapl.configure(ceiling, floor);
+    // Model the parser/engine parameter setter, not the libxml parse itself.
+    if (configured_debounce >= 0) rapl.set_debounce_interval(configured_debounce);
     next_cdev pstate(2, "intel_pstate"), powerclamp(3, "intel_powerclamp"),
               cpufreq(4, "cpufreq"), processor(5, "Processor");
     devices = {{"rapl_controller", &rapl}, {"intel_pstate", &pstate},
@@ -215,9 +232,38 @@ int main(int argc, char **argv) {
             "matching sensor failed below threshold");
     require(rapl.get_curr_state() == ceiling && pstate.writes == 0,
             "below-target reading activated cooling");
-    for (int i = 0; i < 12 && !rapl.in_max_state(); ++i)
+    const bool cadence_case = name == "debounce_default" || name == "debounce_zero";
+    const int interval = cadence_case ? 1 : 3;
+    const int expected_debounce = name == "debounce_zero" ? 0 : 2;
+    if (cadence_case)
+        require(rapl.debounce_seconds() == expected_debounce,
+                "XML debounce did not select intended native controller parameter");
+    std::vector<time_t> actions;
+    for (int i = 0; i < 40 && !rapl.in_max_state(); ++i) {
+        const int before = rapl.get_curr_state();
         require(passive.thd_trip_point_check(7, 92000, PREF_ENERGY_CONSERVE, &reset),
                 "matching sensor rejected hot reading");
+        const int after = rapl.get_curr_state();
+        require(after >= floor && after <= ceiling, "RAPL state exceeded paired range");
+        if (after != before) actions.push_back(fixture_seconds);
+        if (cadence_case && !rapl.in_max_state()) {
+            require(passive.thd_trip_point_check(7, 92000, PREF_ENERGY_CONSERVE, &reset),
+                    "same-second hot observation rejected");
+            require(rapl.get_curr_state() == after,
+                    "native debounce failed to suppress repeat action in same second");
+        }
+        require(pstate.writes == 0, "SEQUENTIAL activated next device before RAPL floor");
+        fixture_seconds += interval;
+    }
+    require(actions.size() >= 3, "insufficient native controller actions to prove cadence");
+    if (cadence_case) {
+        for (unsigned i = 1; i < actions.size(); ++i)
+            require(actions[i] - actions[i-1] == expected_debounce + 1,
+                    "native debounce cadence differs from expected one-second observations");
+        std::cout << "RAPL action seconds:";
+        for (auto second : actions) std::cout << ' ' << second;
+        std::cout << '\n';
+    }
     require(rapl.in_max_state() && rapl.get_curr_state() == floor,
             "actual RAPL did not reach paired floor");
     require(pstate.writes == 0, "SEQUENTIAL activated next device before RAPL floor");
@@ -227,5 +273,21 @@ int main(int argc, char **argv) {
             "actual trip did not escalate to native intel_pstate");
     require(powerclamp.writes == 0 && cpufreq.writes == 0 && processor.writes == 0,
             "SEQUENTIAL activated later devices too early");
+    // Cool readings release the most recently active device first, then RAPL.
+    // The native RAPL release must restore the configured ceiling, never the
+    // unqualified 140 W power-on value retained by the sysfs double.
+    for (int i = 0; i < 40 && (pstate.get_curr_state() || rapl.get_curr_state() != ceiling); ++i) {
+        fixture_seconds += 1;
+        require(passive.thd_trip_point_check(7, 89000, PREF_ENERGY_CONSERVE, &reset),
+                "cool reading failed to release native cooling");
+        require(rapl.get_curr_state() >= floor && rapl.get_curr_state() <= ceiling,
+                "release escaped configured RAPL range");
+    }
+    require(pstate.get_curr_state() == 0 && rapl.get_curr_state() == ceiling,
+            "native cooling did not fully recover after temperature fell");
+    for (const auto &write : rapl.hardware().writes)
+        if (write.key == "constraint_0_power_limit_uw" && write.status > 0)
+            require(write.value >= floor && write.value <= ceiling,
+                    "actual RAPL sysfs write exceeded qualified range");
     return 0;
 }
