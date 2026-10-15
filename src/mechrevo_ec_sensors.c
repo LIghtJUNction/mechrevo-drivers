@@ -3,6 +3,7 @@
 #include <linux/dmi.h>
 #include <linux/err.h>
 #include <linux/hwmon.h>
+#include <linux/kmod.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
@@ -115,6 +116,15 @@ static int __init mechrevo_sensors_init(void)
 	if (!mechrevo_sensors_supported())
 		return -ENODEV;
 	ret = uniwill_get_active_interface_id(&interface_id);
+	if (ret == -ENODEV) {
+		/* Load the transport on demand without owning its removal lifecycle.
+		 * A modprobe softdep would also remove WMI when removing this module.
+		 */
+		ret = request_module("uniwill_wmi");
+		if (ret)
+			return ret < 0 ? ret : -EIO;
+		ret = uniwill_get_active_interface_id(&interface_id);
+	}
 	if (ret)
 		return ret < 0 ? ret : -EIO;
 	if (!interface_id || strcmp(interface_id, UNIWILL_INTERFACE_WMI_STRID))
@@ -154,6 +164,5 @@ static void __exit mechrevo_sensors_exit(void)
 
 module_init(mechrevo_sensors_init);
 module_exit(mechrevo_sensors_exit);
-MODULE_SOFTDEP("pre: uniwill_wmi");
 MODULE_DESCRIPTION("Read-only MECHREVO GM6PX0X EC temperatures (N.1.09MRO07)");
 MODULE_LICENSE("GPL");

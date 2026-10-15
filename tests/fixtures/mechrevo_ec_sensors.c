@@ -15,7 +15,6 @@ typedef unsigned short umode_t;
 #define module_exit(x)
 #define MODULE_DESCRIPTION(x)
 #define MODULE_LICENSE(x)
-#define MODULE_SOFTDEP(x)
 #define MODULE_DEVICE_TABLE(t, x)
 #define DMI_SYS_VENDOR 0
 #define DMI_PRODUCT_NAME 1
@@ -51,6 +50,7 @@ static const char *identity[] = { "MECHREVO", "Kuangshi16Pro Series GM6PX0X", "N
 static const char *dmi_values[3];
 static char *active_id;
 static int active_ret, active_calls, ec_calls, ec_ret[2], register_ret[2];
+static int load_ret, load_calls, after_load_ret;
 static int platform_registers, platform_unregisters, hwmon_registers, hwmon_unregisters;
 static u8 temps[2];
 static struct platform_device mock_platform;
@@ -61,6 +61,13 @@ static bool dmi_match(int field, const char *value)
 { return dmi_values[field] && strcmp(dmi_values[field], value) == 0; }
 static int uniwill_get_active_interface_id(char **id)
 { active_calls++; if (!active_ret) *id = active_id; return active_ret; }
+static int request_module(const char *name)
+{
+    assert(strcmp(name, "uniwill_wmi") == 0);
+    load_calls++;
+    if (!load_ret) active_ret = after_load_ret;
+    return load_ret;
+}
 static int uniwill_read_ec_ram(u16 address, u8 *value)
 {
     assert(address == 0x043e || address == 0x044f);
@@ -104,6 +111,7 @@ static void reset(void)
 {
     for (int i = 0; i < 3; i++) dmi_values[i] = identity[i];
     active_id = "uniwill_wmi"; active_ret = 0; active_calls = 0; ec_calls = 0;
+    load_ret = load_calls = after_load_ret = 0;
     ec_ret[0] = ec_ret[1] = register_ret[0] = register_ret[1] = 0;
     temps[0] = 63; temps[1] = 55;
     platform_registers = platform_unregisters = hwmon_registers = hwmon_unregisters = 0;
@@ -118,7 +126,7 @@ static void identity_case(void)
             reset(); snprintf(suffixed, sizeof(suffixed), "%s extra", identity[field]);
             dmi_values[field] = variant == 0 ? NULL : variant == 1 ? "other" : suffixed;
             assert(mechrevo_sensors_init() == -ENODEV);
-            assert(active_calls == 0 && ec_calls == 0 && platform_registers == 0);
+            assert(active_calls == 0 && load_calls == 0 && ec_calls == 0 && platform_registers == 0);
         }
     }
 }
@@ -126,7 +134,7 @@ static void transport_case(void)
 {
     int errors[] = {-ENODEV, -EIO, -ETIMEDOUT, 1};
     for (unsigned i = 0; i < sizeof(errors)/sizeof(errors[0]); i++) {
-        reset(); active_ret = errors[i];
+        reset(); active_ret = after_load_ret = errors[i];
         assert(mechrevo_sensors_init() == (errors[i] < 0 ? errors[i] : -EIO));
         assert(ec_calls == 0 && platform_registers == 0);
         for (int channel = 0; channel < 2; channel++) {
@@ -142,6 +150,35 @@ static void transport_case(void)
     assert(ec_calls == 0);
     reset(); active_id = "other"; assert(mechrevo_sensors_init() == -ENODEV);
     assert(ec_calls == 0);
+}
+static void loading_case(void)
+{
+    reset();
+    assert(mechrevo_sensors_init() == 0 && load_calls == 0 && active_calls == 1);
+    mechrevo_sensors_exit();
+    assert(load_calls == 0);
+    reset(); active_ret = -ENODEV;
+    assert(mechrevo_sensors_init() == 0 && load_calls == 1 && active_calls == 2);
+    assert(ec_calls == 2);
+    mechrevo_sensors_exit();
+    assert(load_calls == 1); /* Exit never touches the transport lifecycle. */
+    int errors[] = {-ENOENT, -EPERM, -ETIMEDOUT, 1};
+    for (unsigned i = 0; i < sizeof(errors)/sizeof(errors[0]); i++) {
+        reset(); active_ret = -ENODEV; load_ret = errors[i];
+        assert(mechrevo_sensors_init() == (errors[i] < 0 ? errors[i] : -EIO));
+        assert(load_calls == 1 && active_calls == 1 && ec_calls == 0 && platform_registers == 0);
+    }
+    for (unsigned i = 0; i < sizeof(errors)/sizeof(errors[0]); i++) {
+        reset(); active_ret = -ENODEV; after_load_ret = errors[i];
+        assert(mechrevo_sensors_init() == (errors[i] < 0 ? errors[i] : -EIO));
+        assert(load_calls == 1 && active_calls == 2 && ec_calls == 0 && platform_registers == 0);
+    }
+    reset(); active_ret = -ENODEV; active_id = "other";
+    assert(mechrevo_sensors_init() == -ENODEV && load_calls == 1 && ec_calls == 0);
+    reset(); active_id = "other";
+    assert(mechrevo_sensors_init() == -ENODEV && load_calls == 0 && ec_calls == 0);
+    reset(); active_ret = -EIO;
+    assert(mechrevo_sensors_init() == -EIO && load_calls == 0 && ec_calls == 0);
 }
 static void temperature_case(void)
 {
@@ -210,6 +247,7 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "temperature")) temperature_case();
     else if (!strcmp(argv[1], "interface")) interface_case();
     else if (!strcmp(argv[1], "lifecycle")) lifecycle_case();
+    else if (!strcmp(argv[1], "loading")) loading_case();
     else assert(false);
     return 0;
 }

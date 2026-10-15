@@ -57,10 +57,14 @@ class MechrevoEcSensors(unittest.TestCase):
     def test_registration_failures_cleanup_and_successful_unload_order(self):
         self.check_case('lifecycle')
 
+    def test_transport_loads_only_when_missing_and_never_owns_wmi_removal(self):
+        self.check_case('loading')
+
     def test_production_has_no_write_or_background_polling_interface(self):
         self.assertNotRegex(self.source, r'\b(?:uniwill_write_ec_ram|schedule_work|schedule_delayed_work|timer_setup|kthread_run)\s*\(')
         self.assertNotRegex(self.source, r'\.write\s*=')
-        self.assertIn('MODULE_SOFTDEP("pre: uniwill_wmi")', self.source)
+        self.assertNotRegex(self.source, r'\bMODULE_SOFTDEP\s*\(')
+        self.assertNotRegex(self.source, r'\b(?:delete_module|symbol_put|module_put)\s*\(')
 
 
 if __name__ == '__main__':
