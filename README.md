@@ -1,5 +1,7 @@
 # mechrevo-drivers — 机械革命 Linux 平台驱动维护分支
 
+[![支持 mechrevo-drivers](https://donate.lmm.best/badge.svg?project=mechrevo-drivers&currency=CNY&lang=zh-CN&period=all&layout=compact&theme=dark&width=440&title=mechrevo-drivers)](https://donate.lmm.best/?project=mechrevo-drivers)
+
 基于 [TUXEDO `tuxedo-drivers`](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers) 的非官方维护分支，保留原始历史、模块名称及许可证。
 
 - **初始维护基线：上游 `v4.24.0`**，不是开发版 `v4.25.0_rc`。
