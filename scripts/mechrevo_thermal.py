@@ -65,8 +65,16 @@ class CheckpointFile:
                 stream.flush()
                 os.fsync(stream.fileno())
             self.check_destination()
-            os.replace(temporary, self.path)
-            self.identity = identity
+            # A handled signal between rename and the identity update would
+            # make our own new checkpoint look like an external replacement.
+            # Defer interruption only for this small publication operation.
+            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
+                                                  {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+            try:
+                os.replace(temporary, self.path)
+                self.identity = identity
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

@@ -17,6 +17,8 @@ sudo mechrevo-thermal --seconds 60 --interval 1 --output /absolute/path/new-capt
 
 使用 `--output` 时，会在预检前及每组采样后保存完整 JSON 进度；文件权限为 0600。
 保存先写同目录临时文件并同步，再替换本命令创建的文件。写入失败时保留上一份完整进度；
+替换与文件身份更新期间短暂阻塞 SIGINT／SIGTERM／SIGHUP，完成后恢复原信号掩码，
+避免在两个操作之间中断而把自己的新文件误判为外部替换。
 发现输出路径被其他程序替换则拒绝覆盖。采样尚未完成时始终是
 `complete=false`、`valid=false`，只有全部结束检查通过后才保存成功结果。
 SIGTERM／SIGHUP 会尝试保存中断原因；即便 SIGKILL 无法被处理，最后一次完整进度仍可读取。
