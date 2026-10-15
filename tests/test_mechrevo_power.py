@@ -7,7 +7,8 @@ configuration transactions run normally.
 
 import importlib.util
 import hashlib
-from contextlib import contextmanager
+import io
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import json
 import os
 from pathlib import Path
@@ -906,6 +907,136 @@ finally:
             self.controller.clear()
         self.assertEqual(self.host.read(POWER.XML), modified)
         self.assertTrue(self.host.path(POWER.STATE).exists())
+
+
+class PowerStateValidation(unittest.TestCase):
+    """Malformed persisted data must never authorize writes or a holding claim."""
+
+    def setUp(self):
+        self.host = FakeHost(self)
+        self.controller = self.host.controller
+        self.controller.set_limit(55)
+        self.valid = json.loads(self.host.read(POWER.STATE))
+        self.host.commands.clear()
+
+    def test_corrupt_nested_state_is_reported_and_preserved(self):
+        mutations = [
+            ((), []),
+            (("version",), True),
+            (("cap_uw",), True),
+            (("initial_ceiling_uw",), True),
+            (("initial_ceiling_uw",), 141_000_000),
+            (("preference",), []),
+            (("preference", "value"), False),
+            (("preference", "value"), "0"),
+            (("preference", "name"), "PERFORMANCE"),
+            (("initial_limits",), []),
+            (("initial_limits", POWER.ZONES[0]), {}),
+            (("initial_limits", POWER.ZONES[0], "pl1_uw"), "140000000"),
+            (("initial_limits", POWER.ZONES[0], "max_power_uw"), 54_000_000),
+            (("initial_limits", POWER.ZONES[0], "physical_path"), "/outside/sysfs"),
+            (("managed_hashes", POWER.XML), []),
+            (("stock_unit_sha256",), "not-a-hash"),
+            (("operation_id",), ""),
+            (("backup",), ""),
+            (("transaction",), None),
+            (("transaction",), []),
+            (("transaction",), {}),
+            (("transaction",), "pending"),
+            (("transaction",), {"id": "", "operation": "set", "owner": self.host.env.process_identity()}),
+            (("transaction",), {"id": "pending", "operation": "unknown", "owner": self.host.env.process_identity()}),
+            (("transaction",), {"id": "pending", "operation": "set", "owner": self.host.env.process_identity(),
+                                "prior_cap_uw": None, "prior_managed_hashes": {POWER.XML: "foreign", POWER.DROPIN: None}}),
+            (("last_apply",), []),
+            (("last_apply",), {}),
+            (("last_apply",), "success"),
+            (("last_apply", "success"), "false"),
+            (("last_apply", "success"), 1),
+            (("last_apply", "operation"), "clear"),
+            (("last_apply", "cap_uw"), 140_000_000),
+            (("last_apply", "observed"), {}),
+            (("last_apply", "observed", POWER.ZONES[0], "pl1_uw"), 140_000_000),
+            (("last_apply", "writes"), ["/sys/foreign"]),
+            (("last_apply", "transaction"), []),
+        ]
+        for keys, value in mutations:
+            with self.subTest(keys=keys, value=value):
+                state = json.loads(json.dumps(self.valid))
+                if keys:
+                    target = state
+                    for key in keys[:-1]:
+                        target = target[key]
+                    target[keys[-1]] = value
+                else:
+                    state = value
+                self.host.write(POWER.STATE, json.dumps(state))
+                before = {path: path.read_bytes() for path in self.host.root.rglob("*") if path.is_file()}
+                limits = self.host.limits()
+                with mock.patch.object(self.host.env, "write_control", wraps=self.host.env.write_control) as writes:
+                    status = self.controller.status()
+                    self.assertFalse(status["holding_now"])
+                    self.assertTrue(status["errors"])
+                    self.assertIn("Invalid managed state:", status["errors"][0])
+                    for operation in (lambda: self.controller.set_limit(55), self.controller.apply,
+                                      self.controller.clear, self.controller.recover):
+                        with self.assertRaises(POWER.PowerError):
+                            operation()
+                    writes.assert_not_called()
+                self.assertEqual(self.host.limits(), limits)
+                after = {path: path.read_bytes() for path in self.host.root.rglob("*") if path.is_file()}
+                self.assertEqual(before, after)
+                self.assertFalse(any(argv[:2] == ["systemctl", "restart"] for argv in self.host.commands))
+
+    def test_invalid_pending_owner_is_reported_without_a_traceback(self):
+        valid_owner = self.host.env.process_identity()
+        for owner in (None, [], {}, dict(valid_owner, pid=True),
+                      dict(valid_owner, start_ticks=-1), dict(valid_owner, boot_id="")):
+            with self.subTest(owner=owner):
+                state = dict(self.valid, transaction={"id": str(uuid.uuid4()), "operation": "set", "owner": owner})
+                self.host.write(POWER.STATE, json.dumps(state))
+                self.assertFalse(self.controller.status()["holding_now"])
+                self.assertIn("Invalid managed state:", self.controller.status()["errors"][0])
+                with self.assertRaises(POWER.PowerError):
+                    self.controller.recover()
+                self.assertEqual(json.loads(self.host.read(POWER.STATE)), state)
+
+    def test_cli_status_exit_distinguishes_errors_from_healthy_unmanaged_state(self):
+        for state, expected_exit in ((self.valid, 0), (dict(self.valid, last_apply={"success": "false"}), 1),
+                                     (dict(self.valid, last_apply=None), 1), (None, 0)):
+            with self.subTest(state=state):
+                if state is None:
+                    self.controller.clear()
+                else:
+                    self.host.write(POWER.STATE, json.dumps(state))
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with mock.patch.object(POWER, "PowerController", return_value=self.controller), \
+                        redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = POWER.main(["status"])
+                status = json.loads(stdout.getvalue())
+                self.assertEqual(result, expected_exit)
+                self.assertEqual(bool(status["errors"]), expected_exit == 1)
+                self.assertEqual(stderr.getvalue(), "")
+
+    def test_valid_persisted_state_still_holds_and_applies(self):
+        self.assertTrue(self.controller.status()["holding_now"])
+        with mock.patch.object(self.host.env, "write_control", wraps=self.host.env.write_control) as writes:
+            receipt = self.controller.apply()
+        writes.assert_not_called()
+        self.assertIs(receipt["success"], True)
+        self.assertTrue(self.controller.status()["holding_now"])
+        self.controller.clear()
+        self.assertFalse(self.controller.status()["managed"])
+
+    def test_failed_apply_receipt_and_staged_state_are_valid_but_not_holding(self):
+        for receipt in (None, {"version": 1, "operation": "apply", "success": False,
+                               "error": "injected failure", "writes": [], "transaction": None,
+                               "time": 0}):
+            with self.subTest(receipt=receipt):
+                self.host.write(POWER.STATE, json.dumps(dict(self.valid, last_apply=receipt)))
+                self.assertIsNotNone(self.controller.load_state())
+                status = self.controller.status()
+                self.assertFalse(status["holding_now"])
+                self.assertIn("Latest apply has not succeeded", status["errors"])
 
 
 if __name__ == "__main__":

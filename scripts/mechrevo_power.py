@@ -226,27 +226,94 @@ class PowerController:
             return None
         try:
             state = json.loads(raw)
-            if (state["version"] != 1 or type(state["cap_uw"]) is not int
-                    or state["cap_uw"] < MIN_LIMIT_UW
-                    or state["cap_uw"] > state["initial_ceiling_uw"]):
-                raise ValueError("Invalid state schema or cap")
-            if set(state["managed_hashes"]) != {XML, DROPIN}:
-                raise ValueError("Invalid managed paths")
-            required = ("host", "preference", "initial_limits", "stock_unit_sha256",
-                        "features_sha256", "thermald_sha256", "backup", "operation_id")
-            if any(key not in state for key in required):
-                raise ValueError("Missing managed state fields")
-            if (state["host"] != IDENTITY or state["preference"]["value"] not in (0, 1)
-                    or state["preference"]["name"] != ("ENERGY_CONSERVE", "PERFORMANCE")[state["preference"]["value"]]
-                    or set(state["initial_limits"]) != set(ZONES)
-                    or type(state["initial_ceiling_uw"]) is not int):
-                raise ValueError("Invalid identity, preference or initial limits")
-            if any(not isinstance(state[key], str) for key in ("stock_unit_sha256", "features_sha256",
-                                                                "thermald_sha256", "backup", "operation_id")):
-                raise ValueError("Invalid state metadata")
+            self.validate_state(state)
             return state
         except (ValueError, KeyError, TypeError) as exc:
             raise PowerError(f"Invalid managed state: {exc}") from exc
+
+    @staticmethod
+    def valid_hash(value):
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+    def validate_observed(self, observed):
+        if not isinstance(observed, dict) or set(observed) != set(ZONES):
+            raise ValueError("Invalid powercap snapshot")
+        for value in observed.values():
+            if (not isinstance(value, dict) or type(value["pl1_uw"]) is not int
+                    or not 0 < value["pl1_uw"] <= 2_147_483_647
+                    or type(value["max_power_uw"]) is not int
+                    or value["max_power_uw"] != MIN_LIMIT_UW):
+                raise ValueError("Invalid powercap snapshot values")
+            physical = value["physical_path"]
+            if (not isinstance(physical, str) or ".." in Path(physical).parts
+                    or not Path(physical).is_relative_to(self.env.path("/sys"))):
+                raise ValueError("Invalid powercap snapshot path")
+
+    def validate_state(self, state):
+        """Validate consumed nested data before any command can act on it.
+
+        In particular bool is not an integer here and a truthy string is not
+        an apply success. An apply receipt may be absent/null; a present
+        transaction must be an object, never an empty record or array.
+        """
+        if (not isinstance(state, dict) or type(state["version"]) is not int
+                or state["version"] != 1 or type(state["initial_ceiling_uw"]) is not int
+                or not MIN_LIMIT_UW <= state["initial_ceiling_uw"] <= 2_147_483_647
+                or type(state["cap_uw"]) is not int
+                or not MIN_LIMIT_UW <= state["cap_uw"] <= state["initial_ceiling_uw"]):
+            raise ValueError("Invalid state schema or cap")
+        preference = state["preference"]
+        if (state["host"] != IDENTITY or not isinstance(preference, dict)
+                or type(preference["value"]) is not int or preference["value"] not in (0, 1)
+                or preference["name"] != ("ENERGY_CONSERVE", "PERFORMANCE")[preference["value"]]):
+            raise ValueError("Invalid identity or preference")
+        self.validate_observed(state["initial_limits"])
+        if state["initial_ceiling_uw"] != min(v["pl1_uw"] for v in state["initial_limits"].values()):
+            raise ValueError("Initial ceiling does not match its snapshot")
+        hashes = state["managed_hashes"]
+        if (not isinstance(hashes, dict) or set(hashes) != {XML, DROPIN}
+                or not all(self.valid_hash(value) for value in hashes.values())):
+            raise ValueError("Invalid managed file hashes")
+        if not all(self.valid_hash(state[key]) for key in
+                   ("stock_unit_sha256", "features_sha256", "thermald_sha256")):
+            raise ValueError("Invalid qualification hashes")
+        if any(not isinstance(state[key], str) or not state[key] for key in ("backup", "operation_id")):
+            raise ValueError("Invalid state metadata")
+        pending = state.get("transaction")
+        if "transaction" in state:
+            if (not isinstance(pending, dict) or not isinstance(pending["id"], str) or not pending["id"]
+                    or pending["operation"] not in ("set", "clear", "rollback", "rollback_stock", "recover")):
+                raise ValueError("Invalid pending transaction")
+            owner = pending["owner"]
+            if (not isinstance(owner, dict) or set(owner) != {"pid", "start_ticks", "boot_id"}
+                    or type(owner["pid"]) is not int or owner["pid"] <= 0
+                    or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
+                    or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
+                raise ValueError("Invalid transaction owner")
+            if "prior_managed_hashes" in pending or "prior_cap_uw" in pending:
+                prior = pending["prior_managed_hashes"]
+                cap = pending["prior_cap_uw"]
+                if (not isinstance(prior, dict) or set(prior) != {XML, DROPIN}
+                        or (cap is not None and (type(cap) is not int
+                            or not MIN_LIMIT_UW <= cap <= state["initial_ceiling_uw"]))
+                        or any(value is not None if cap is None else not self.valid_hash(value)
+                               for value in prior.values())):
+                    raise ValueError("Invalid previous managed configuration")
+        applied = state.get("last_apply")
+        if applied is not None:
+            if (not isinstance(applied, dict) or type(applied["version"]) is not int or applied["version"] != 1
+                    or applied["operation"] != "apply" or type(applied["success"]) is not bool
+                    or not isinstance(applied["writes"], list)
+                    or any(zone not in ZONES for zone in applied["writes"])
+                    or (applied["transaction"] is not None and
+                        (not isinstance(applied["transaction"], str) or not applied["transaction"]))):
+                raise ValueError("Invalid apply receipt")
+            if applied["success"]:
+                if type(applied["cap_uw"]) is not int or applied["cap_uw"] != state["cap_uw"]:
+                    raise ValueError("Apply receipt does not match the requested cap")
+                self.validate_observed(applied["observed"])
+                if any(value["pl1_uw"] > state["cap_uw"] for value in applied["observed"].values()):
+                    raise ValueError("Successful apply receipt exceeds its cap")
 
     def service(self):
         output = self.env.command("systemctl", "show", "thermald.service",
@@ -836,7 +903,9 @@ def main(argv=None):
         result = (controller.set_limit(args.watts) if args.command == "set"
                   else getattr(controller, args.command)())
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0
+        # Keep JSON available to diagnostics while making failed checks visible
+        # to shell callers. A healthy, unconfigured host still exits successfully.
+        return 1 if args.command == "status" and result["errors"] else 0
     except (PowerError, OSError, ValueError, KeyboardInterrupt) as exc:
         print(f"mechrevo-power: {exc}", file=sys.stderr)
         return 1
