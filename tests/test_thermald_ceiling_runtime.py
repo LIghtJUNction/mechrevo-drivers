@@ -205,6 +205,9 @@ class ThermaldCeilingRuntime(unittest.TestCase):
     def test_paired_range_allows_40_w_and_releases_to_55_w_enabled(self):
         self.check_case('thermal_lower_release')
 
+    def test_35_and_45_w_caps_retain_thermal_reduction_release_and_escalation(self):
+        self.check_case('sub_tdp_ceiling')
+
     def test_actual_controller_clamps_both_paired_range_boundaries(self):
         self.check_case('range_boundaries')
 

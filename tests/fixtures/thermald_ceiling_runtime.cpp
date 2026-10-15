@@ -111,6 +111,29 @@ int main(int argc, char **argv) {
     if (name == "initially_disabled") r.hardware().numbers["enabled"] = 0;
     initialise(r);
     if (name == "native_range") return 0;
+    if (name == "sub_tdp_ceiling") {
+        for (int ceiling : {35000000, 45000000}) {
+            r.pair(ceiling, ceiling / 2);
+            r.set_curr_state(ceiling - 7000000, 1);
+            require(r.hardware().numbers["constraint_0_power_limit_uw"] == ceiling - 7000000,
+                    "lower cap blocked further thermal reduction");
+            r.set_curr_state(1, 1);
+            require(r.get_curr_state() == ceiling / 2 && r.in_max_state(),
+                    "lower cap did not reach its paired thermal floor");
+            next_cdev next;
+            cthd_trip_point trip(0, PASSIVE, 90000, 1000, 0, DEFAULT_SENSOR_ID, SEQUENTIAL);
+            trip.thd_trip_point_add_cdev(r, 10);
+            trip.thd_trip_point_add_cdev(next, 0);
+            bool reset = false;
+            require(trip.thd_trip_point_check(DEFAULT_SENSOR_ID, 95000,
+                    PREF_ENERGY_CONSERVE, &reset), "lower cap trip failed");
+            require(next.writes == 1, "lower cap blocked the next cooling device");
+            r.set_curr_state(ceiling, 0);
+            require(r.hardware().numbers["constraint_0_power_limit_uw"] == ceiling,
+                    "lower cap release exceeded its configured ceiling");
+        }
+        return 0;
+    }
     if (name == "original_policy") {
         r.set_curr_state(100000000, 1);
         r.set_curr_state(140000000, 0);

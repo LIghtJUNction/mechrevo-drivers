@@ -691,12 +691,45 @@ finally:
         self.assertEqual(status["observed"][POWER.ZONES[0]]["pl1_uw"], 133_000_000)
 
     def test_invalid_requested_limits_do_not_write_configuration_or_hardware(self):
-        for watts in (-1, 0, 54, 141, 55.5, "55", None):
+        for watts in (-1, 0, 34, 141, 55.5, "55", None):
             with self.subTest(watts=watts):
                 with self.assertRaises(POWER.PowerError):
                     self.controller.set_limit(watts)
                 self.assert_unconfigured()
                 self.assertEqual(self.host.limits(), [140_000_000, 140_000_000])
+
+    def test_lower_caps_keep_thermal_spec_identity_and_preserve_stricter_cooling(self):
+        for watts in (35, 45, 54, 55):
+            with self.subTest(watts=watts):
+                self.host.limit_path(0).write_text("30000000\n")
+                # The second interface is independently initialized above cap.
+                self.host.limit_path(1).write_text("55000000\n")
+                # Start with a managed baseline so initial ceiling is stable.
+                if self.controller.load_state() is None:
+                    self.host.limit_path(0).write_text("140000000\n")
+                    self.host.limit_path(1).write_text("140000000\n")
+                    self.controller.set_limit(55)
+                    self.host.limit_path(0).write_text("30000000\n")
+                status = self.controller.set_limit(watts)
+                self.assertTrue(status["holding_now"])
+                self.assertEqual(status["desired_limit_uw"], watts * 1_000_000)
+                self.assertEqual(self.host.limits(), [30_000_000, watts * 1_000_000])
+                self.assertTrue(all(v["max_power_uw"] == 55_000_000
+                                    for v in status["observed"].values()))
+                xml = ET.fromstring(self.host.read(POWER.XML))
+                for device in xml.findall("./Platform/CoolingDevices/CoolingDevice"):
+                    self.assertEqual(int(device.findtext("MinState")), watts * 1_000_000)
+                    self.assertEqual(int(device.findtext("MaxState")), watts * 500_000)
+                self.controller.apply()
+                self.assertEqual(self.host.limits()[0], 30_000_000)
+
+    def test_lower_cap_failed_restart_restores_previous_managed_cap(self):
+        self.controller.set_limit(55)
+        self.host.restart_failures = [True, False]
+        with self.assertRaises(POWER.PowerError):
+            self.controller.set_limit(35)
+        self.assertEqual(self.controller.load_state()["cap_uw"], 55_000_000)
+        self.assertTrue(self.controller.status()["holding_now"])
 
     def test_mutation_requires_root(self):
         self.host.env.uid = 1000

@@ -51,7 +51,10 @@ IDENTITY = {"sys_vendor": "MECHREVO", "product_name": "Kuangshi16Pro Series GM6P
             "bios_version": "N.1.09MRO07"}
 CPU_MODEL = "12th Gen Intel(R) Core(TM) i9-12900HX"
 QUALIFIED_THERMALD_SHA256 = "fbe6b27d2854fa8636c7bbdbcc953d1665a2c3b23534026dd42d68a2ffa8c767"
-MIN_LIMIT_UW = 55_000_000
+# RAPL's max_power field is the CPU thermal-spec reference, not a minimum
+# writable limit. Keep host qualification separate from the user cap range.
+THERMAL_SPEC_POWER_UW = 55_000_000
+MIN_LIMIT_UW = 35_000_000
 
 
 class PowerError(RuntimeError):
@@ -242,7 +245,7 @@ class PowerController:
             if (not isinstance(value, dict) or type(value["pl1_uw"]) is not int
                     or not 0 < value["pl1_uw"] <= 2_147_483_647
                     or type(value["max_power_uw"]) is not int
-                    or value["max_power_uw"] != MIN_LIMIT_UW):
+                    or value["max_power_uw"] != THERMAL_SPEC_POWER_UW):
                 raise ValueError("Invalid powercap snapshot values")
             physical = value["physical_path"]
             if (not isinstance(physical, str) or ".." in Path(physical).parts
@@ -358,7 +361,7 @@ class PowerController:
                 maximum = int(self.env.read_control(zone + "/constraint_0_max_power_uw"))
             except ValueError as exc:
                 raise PowerError(f"Invalid power value: {zone}") from exc
-            if power <= 0 or power > 2_147_483_647 or maximum != MIN_LIMIT_UW:
+            if power <= 0 or power > 2_147_483_647 or maximum != THERMAL_SPEC_POWER_UW:
                 raise PowerError(f"Unqualified PL1 or thermal-spec-power value: {zone}")
             observed[zone] = {"pl1_uw": power, "max_power_uw": maximum,
                               "physical_path": str(physical)}
@@ -600,7 +603,7 @@ class PowerController:
             ceiling = previous["initial_ceiling_uw"] if previous else min(v["pl1_uw"] for v in observed.values())
             cap = watts * 1_000_000
             if cap < MIN_LIMIT_UW or cap > ceiling:
-                raise PowerError(f"Limit must be between 55 and {ceiling // 1_000_000} whole watts")
+                raise PowerError(f"Limit must be between {MIN_LIMIT_UW // 1_000_000} and {ceiling // 1_000_000} whole watts")
             # Initial values bound the operation, not the notebook's safety rating.
             old_files = {path: self.env.regular(path, missing=True) for path in (XML, DROPIN, STATE, PREF)}
             backup = self.backup("set", old_files, {"host": host, "preference": preference,
