@@ -17,8 +17,15 @@ PAYLOAD = {
     "scripts/mechrevo_power.py": (
         "usr/lib/mechrevo-power-control/mechrevo_power.py", b"# frozen module\n", 0o644,
     ),
+    "scripts/mechrevo-thermal": ("usr/bin/mechrevo-thermal", b"#!/usr/bin/python3\n# frozen observer launcher\n", 0o755),
+    "scripts/mechrevo_thermal.py": (
+        "usr/lib/mechrevo-power-control/mechrevo_thermal.py", b"# frozen observer\n", 0o644,
+    ),
     "docs/POWER-CONTROL.md": (
         "usr/share/doc/mechrevo-power-control/POWER-CONTROL.md", b"Frozen documentation.\n", 0o644,
+    ),
+    "docs/THERMAL-OBSERVATION.md": (
+        "usr/share/doc/mechrevo-power-control/THERMAL-OBSERVATION.md", b"Frozen observer documentation.\n", 0o644,
     ),
     "LICENSE": (
         "usr/share/licenses/mechrevo-power-control/LICENSE", b"GPL-2.0-or-later fixture\n", 0o644,
@@ -105,7 +112,7 @@ class PowerPackaging(unittest.TestCase):
         self.assertEqual(metadata["pkgbase"], [PKGNAME])
         self.assertEqual(metadata["pkgname"], [PKGNAME])
         self.assertEqual(metadata["pkgver"], ["0.1.0"])
-        self.assertEqual(metadata["pkgrel"], ["4"])
+        self.assertEqual(metadata["pkgrel"], ["5"])
         self.assertEqual(metadata["arch"], ["x86_64"])
         self.assertEqual(metadata["depends"], ["python", "thermald=2:2.5.13", "systemd"])
         self.assertEqual(metadata["makedepends"], ["git"])
@@ -154,7 +161,7 @@ class PowerPackaging(unittest.TestCase):
         self.git("commit", "-m", "Later fixture change")
         result = self.makepkg("--nodeps", "--noconfirm", "--nocolor")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-4-x86_64.pkg.tar.*"))
+        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-5-x86_64.pkg.tar.*"))
         self.assertEqual(len(archives), 1, result.stdout + result.stderr)
         archive = archives[0]
         listing = subprocess.check_output(["bsdtar", "-tf", str(archive)], text=True).splitlines()

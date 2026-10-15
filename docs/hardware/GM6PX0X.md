@@ -2,6 +2,34 @@
 
 日期：2026-10-14；2026-10-15 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
+## 2026-10-16 故障保护采样工具（GPU 未恢复）
+
+机器仍是上一轮启动，NVIDIA GPU 仍无法由 nvidia-smi 识别；没有重启、复位显卡、
+调整功耗／风扇、重载驱动或增加压力负载。新增只读 `mechrevo-thermal`，用于防止
+继续把失联状态下的数据当作有效热控观测。
+
+23 项采样／适配器／命令回归和 6 项实际打包测试通过。覆盖 GPU 预检失败、采样中
+新增 Xid／不可纠正 PCIe 错误、日志不可读、启动身份改变、PL1 短暂超限、配置变化、
+读取失败、中断、异常参数，以及输出文件／链接拒绝覆盖。实际 sysfs 适配器测试
+检查了五个请求均为读取 ioctl，正常夹具数据无文件修改。
+
+本机真实执行源码及已安装命令均退出 1，输出 `valid=false`、`complete=false`、
+零样本及 nvidia-smi 失败原因。源码命令的独立 strace 还确认未打开 `/dev/tuxedo_io`；
+预检在 EC 采样之前拒绝，而非先采样后掩盖错误。
+
+独立工具包 `mechrevo-power-control 0.1.0-5` 已本地安装，交付源码固定于
+`d686fa0e29348ce66e02b21480101114a2d15f9d`。包内文件逐字节核对，`pacman -Qkk`
+通过；旧 r4 包已复制至统一备份目录并校验与升级前安装的原命令／模块一致。
+升级前后 TCC settings、托管 XML、drop-in、state 的 SHA-256 相同，
+tccd／thermald／nvidia-powerd 的 PID 及 active 状态保持。55 W 请求仍确认生效且无待完成事务。
+源码交付不是 GPU 恢复或散热改善；正常 GPU 下的完整采样仍待实机验收。
+
+用法与边界见[只读采样说明](../THERMAL-OBSERVATION.md)。本地证据在
+`.local-tests/thermal-guard-20261016/`，含测试、实际包、安装收据和失联拒绝结果；
+恢复包在 `~/Backups/projects/mechrevo-drivers/light/rapl-power-control/thermal-guard-20261016/`。
+系统安装的文件跟踪有一项文档路径删除事件未完全解析，最终安装文件另行独立核验。
+原始机器日志留本地，不作为公开报告或 AUR 发布。
+
 ## 2026-10-15 较低 RAPL 上限与 GPU 掉线
 
 修正了用户态功耗工具将 55 W 热设计参考值当作设置下限的问题。

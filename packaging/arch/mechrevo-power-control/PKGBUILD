@@ -10,7 +10,7 @@
 
 pkgname=mechrevo-power-control
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
 arch=('x86_64')
 url='https://github.com/LIghtJUNction/mechrevo-drivers'
@@ -21,7 +21,7 @@ depends=('python' 'thermald=2:2.5.13' 'systemd')
 makedepends=('git')
 options=('!strip' '!debug' '!lto')
 
-_source_commit=${MECHREVO_POWER_COMMIT-56e876e691e455ec392dd979f102fe9042964416}
+_source_commit=${MECHREVO_POWER_COMMIT-d686fa0e29348ce66e02b21480101114a2d15f9d}
 _source_url=${MECHREVO_POWER_SOURCE:-"${url}.git"}
 if [[ ! $_source_commit =~ ^[0-9a-f]{40}$ ]]; then
     printf '%s\n' 'Set MECHREVO_POWER_COMMIT to a reviewed full 40-character Git commit.' >&2
@@ -37,7 +37,9 @@ prepare() {
         return 1
     fi
     local file
-    for file in scripts/mechrevo-power scripts/mechrevo_power.py docs/POWER-CONTROL.md LICENSE; do
+    for file in scripts/mechrevo-power scripts/mechrevo_power.py \
+        scripts/mechrevo-thermal scripts/mechrevo_thermal.py \
+        docs/POWER-CONTROL.md docs/THERMAL-OBSERVATION.md LICENSE; do
         if [[ ! -f $file || -L $file ]]; then
             printf 'Required regular source file missing: %s\n' "$file" >&2
             return 1
@@ -51,7 +53,12 @@ package() {
     install -Dm755 scripts/mechrevo-power "${pkgdir}/usr/bin/mechrevo-power"
     install -Dm644 scripts/mechrevo_power.py \
         "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_power.py"
+    install -Dm755 scripts/mechrevo-thermal "${pkgdir}/usr/bin/mechrevo-thermal"
+    install -Dm644 scripts/mechrevo_thermal.py \
+        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_thermal.py"
     install -Dm644 docs/POWER-CONTROL.md \
         "${pkgdir}/usr/share/doc/${pkgname}/POWER-CONTROL.md"
+    install -Dm644 docs/THERMAL-OBSERVATION.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/THERMAL-OBSERVATION.md"
     install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
