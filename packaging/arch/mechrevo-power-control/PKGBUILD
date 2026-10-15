@@ -10,7 +10,7 @@
 
 pkgname=mechrevo-power-control
 pkgver=0.1.0
-pkgrel=8
+pkgrel=9
 pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
 arch=('x86_64')
 url='https://github.com/LIghtJUNction/mechrevo-drivers'
@@ -39,7 +39,8 @@ prepare() {
     local file
     for file in scripts/mechrevo-power scripts/mechrevo_power.py \
         scripts/mechrevo-thermal scripts/mechrevo_thermal.py \
-        docs/POWER-CONTROL.md docs/THERMAL-OBSERVATION.md LICENSE; do
+        scripts/mechrevo-peak-trial scripts/peak_limit_trial.py \
+        docs/POWER-CONTROL.md docs/THERMAL-OBSERVATION.md docs/PEAK-LIMIT-TRIAL.md LICENSE; do
         if [[ ! -f $file || -L $file ]]; then
             printf 'Required regular source file missing: %s\n' "$file" >&2
             return 1
@@ -56,9 +57,14 @@ package() {
     install -Dm755 scripts/mechrevo-thermal "${pkgdir}/usr/bin/mechrevo-thermal"
     install -Dm644 scripts/mechrevo_thermal.py \
         "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_thermal.py"
+    install -Dm755 scripts/mechrevo-peak-trial "${pkgdir}/usr/bin/mechrevo-peak-trial"
+    install -Dm644 scripts/peak_limit_trial.py \
+        "${pkgdir}/usr/lib/mechrevo-power-control/peak_limit_trial.py"
     install -Dm644 docs/POWER-CONTROL.md \
         "${pkgdir}/usr/share/doc/${pkgname}/POWER-CONTROL.md"
     install -Dm644 docs/THERMAL-OBSERVATION.md \
         "${pkgdir}/usr/share/doc/${pkgname}/THERMAL-OBSERVATION.md"
+    install -Dm644 docs/PEAK-LIMIT-TRIAL.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/PEAK-LIMIT-TRIAL.md"
     install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

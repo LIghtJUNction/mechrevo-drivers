@@ -24,6 +24,14 @@ def capture(temperatures=(80, 96, 100), times=(0, 1, 3)):
 
 
 class Analysis(unittest.TestCase):
+    def test_report_explains_counter_cache_burst_and_log_limitations_for_old_json(self):
+        report = ANALYZER.summarize(capture())
+        limits = " ".join(report["limitations"])
+        for required in ("interrupt-handler observations", "not independent episodes", "external PROCHOT",
+                         "one second", "cached value", "millisecond PL2", "not an exact", "predate"):
+            self.assertIn(required, limits)
+        self.assertTrue(report["capture_checks_passed"])
+
     def test_weighted_power_and_sample_fraction_are_distinct_from_duration(self):
         data = capture()
         data["samples"][1]["energy_uj"] = 20_000_000

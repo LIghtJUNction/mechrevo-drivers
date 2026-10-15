@@ -21,6 +21,15 @@ import time
 IDENTITY = {"sys_vendor": "MECHREVO", "product_name": "Kuangshi16Pro Series GM6PX0X",
             "bios_version": "N.1.09MRO07"}
 ZONES = ("intel-rapl:0", "intel-rapl-mmio:0")
+# Architectural thermal status bits: Intel SDM Vol. 3B, thermal management.
+# TEMPERATURE_TARGET stays raw: do not infer model-specific TCC offsets.
+THERMAL_MSRS = {"core_status": 0x19c, "package_status": 0x1b1,
+                "temperature_target": 0x1a2}
+THERMAL_STATUS_BITS = {"internal_thermal_active": 0, "internal_thermal_log": 1,
+                       "external_prochot_active": 2, "external_prochot_log": 3,
+                       "power_limit_active": 10, "power_limit_log": 11}
+EXTRA_THROTTLE_FIELDS = ("core_throttle_count", "package_throttle_total_time_ms",
+                         "package_throttle_max_time_ms")
 # All five requests are _IOR. Pointer size is part of this driver's ABI.
 READ_REQUESTS = {"available": 0x80000000 | (array.array("L").itemsize << 16) | (0xec << 8) | 6}
 READ_REQUESTS.update({name: 0x80000000 | (array.array("L").itemsize << 16) | (0xef << 8) | number
@@ -89,10 +98,63 @@ def fault_message(message):
 
 
 class System:
-    def __init__(self, root=Path("/"), runner=subprocess.run, ioctl=fcntl.ioctl):
+    def __init__(self, root=Path("/"), runner=subprocess.run, ioctl=fcntl.ioctl,
+                 read_thermal_msr=False):
         self.root, self.runner, self.ioctl = Path(root), runner, ioctl
         self.fd = None
         self.hwmon = None
+        self.read_thermal_msr = read_thermal_msr
+        self.msr_fd = None
+
+    def qualify_thermal_msr(self):
+        # Linux exposes these CPUID capabilities as /proc/cpuinfo flags:
+        # dtherm=CPUID.06H:EAX[0], pln=[4], pts=[6]. Fail closed on ambiguity.
+        records = []
+        for block in self.text("/proc/cpuinfo").split("\n\n"):
+            record = {}
+            for line in block.splitlines():
+                key, separator, value = line.partition(":")
+                if separator:
+                    if key.strip() in record:
+                        raise ObservationError("Ambiguous CPU capability record")
+                    record[key.strip()] = value.strip()
+            if record.get("processor") == "0":
+                records.append(record)
+        if len(records) != 1:
+            raise ObservationError("Cannot identify CPU0 thermal MSR capabilities")
+        record = records[0]
+        if (record.get("vendor_id") != "GenuineIntel" or record.get("cpu family") != "6"
+                or record.get("model") != "151"
+                or int(record.get("cpuid level", "0")) < 6
+                or not {"msr", "dtherm", "pts", "pln"} <= set(record.get("flags", "").split())):
+            raise ObservationError("CPU0 is not qualified for thermal MSR readings")
+
+    def thermal_msr(self):
+        result = {}
+        for name, offset in THERMAL_MSRS.items():
+            raw = os.pread(self.msr_fd, 8, offset)
+            if len(raw) != 8:
+                raise ObservationError(f"Short thermal MSR read at {offset:#x}: {len(raw)} bytes")
+            value = int.from_bytes(raw, "little")
+            entry = {"offset": offset, "raw": value}
+            if name != "temperature_target":
+                entry["status"] = {key: bool(value & (1 << bit))
+                                   for key, bit in THERMAL_STATUS_BITS.items()}
+            result[name] = entry
+        return result
+
+    def throttle_details(self):
+        result = {}
+        for name in EXTRA_THROTTLE_FIELDS:
+            try:
+                value = int(self.text("/sys/devices/system/cpu/cpu0/thermal_throttle/" + name))
+            except FileNotFoundError:
+                result[name] = None
+                continue
+            if value < 0:
+                raise ObservationError("Negative thermal throttle counter: " + name)
+            result[name] = value
+        return result
 
     def path(self, name):
         return self.root / name.lstrip("/")
@@ -143,6 +205,9 @@ class System:
     def open_sensors(self):
         if {k: self.text("/sys/class/dmi/id/" + k) for k in IDENTITY} != IDENTITY:
             raise ObservationError("This host/BIOS is not qualified for these EC readings")
+        if self.read_thermal_msr:
+            self.qualify_thermal_msr()
+            self.msr_fd = os.open(self.path("/dev/cpu/0/msr"), os.O_RDONLY | os.O_CLOEXEC)
         candidates = [p for p in self.path("/sys/class/hwmon").glob("hwmon*")
                       if (p / "name").read_text().strip() == "coretemp"
                       and (p / "temp1_label").read_text().strip() == "Package id 0"]
@@ -174,6 +239,9 @@ class System:
                                                "constraint_0_time_window_us", "constraint_1_time_window_us")}
                            for zone in ZONES}}
         result["package_after_mc"] = int((self.hwmon / "temp1_input").read_text())
+        result["cpu0_throttle_details"] = self.throttle_details()
+        if self.read_thermal_msr:
+            result["thermal_msr"] = self.thermal_msr()
         result["read_duration_s"] = time.monotonic() - start
         if not all(0 <= result[k] <= 125000 for k in ("package_mc", "core_max_mc", "package_after_mc")):
             raise ObservationError("CPU temperature is outside the diagnostic range")
@@ -183,6 +251,9 @@ class System:
         return result
 
     def close(self):
+        if self.msr_fd is not None:
+            os.close(self.msr_fd)
+            self.msr_fd = None
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
@@ -281,6 +352,8 @@ def main(argv=None):
     parser.add_argument("--seconds", type=float, default=60)
     parser.add_argument("--interval", type=float, default=1)
     parser.add_argument("--output", type=Path, help="Create a new JSON file; never overwrite an existing file")
+    parser.add_argument("--read-thermal-msr", action="store_true",
+                        help="Also read qualified CPU0 thermal MSRs; requires an existing readable MSR device")
     args = parser.parse_args(argv)
     try:
         output = CheckpointFile(args.output) if args.output else None
@@ -295,7 +368,9 @@ def main(argv=None):
     try:
         for signum in (signal.SIGTERM, signal.SIGHUP):
             previous_handlers[signum] = signal.signal(signum, interrupted)
-        result = observe(args.seconds, args.interval, checkpoint=output.save if output else None)
+        options = {"system": System(read_thermal_msr=True)} if args.read_thermal_msr else {}
+        result = observe(args.seconds, args.interval,
+                         checkpoint=output.save if output else None, **options)
         if output:
             output.save(result)
         else:

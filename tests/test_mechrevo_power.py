@@ -50,8 +50,8 @@ Alias=dbus-org.freedesktop.thermald.service
 class FakeHost:
     def __init__(self, testcase, root=None):
         if root is None:
-            directory = ROOT / ".local-tests"
-            directory.mkdir(exist_ok=True)
+            directory = Path(os.environ.get("MECHREVO_TEST_TMPDIR", ROOT / ".local-tests"))
+            directory.mkdir(parents=True, exist_ok=True)
             self.temp = tempfile.TemporaryDirectory(prefix="power-cli-", dir=directory)
             testcase.addCleanup(self.temp.cleanup)
             self.root = Path(self.temp.name)
@@ -672,6 +672,96 @@ finally:
         self.host.active = False
         self.assertFalse(self.controller.status()["holding_now"])
 
+    def test_status_distinguishes_held_pl1_from_unmanaged_high_pl2(self):
+        self.controller.set_limit(55)
+        original_observed = self.controller.observe()
+        status = self.controller.status()
+        self.assertTrue(status["holding_now"])
+        self.assertEqual(status["holding_scope"], "cpu_package_pl1")
+        self.assertFalse(status["pl2_managed"])
+        self.assertEqual(status["observed"], original_observed)
+        self.assertEqual(status["diagnostic_errors"], [])
+        for zone in POWER.ZONES:
+            self.assertEqual(status["rapl_constraints"][zone], {
+                "pl1": {"available": True, "name": "long_term", "name_valid": True,
+                        "power_limit_uw": 55_000_000, "time_window_us": 55_967_744},
+                "pl2": {"available": True, "name": "short_term", "name_valid": True,
+                        "power_limit_uw": 140_000_000, "time_window_us": 2440}})
+
+    def test_optional_pl2_diagnostics_fail_without_invalidating_pl1_holding(self):
+        self.controller.set_limit(55)
+        for zone in POWER.ZONES:
+            for field, value in (("name", "peak_power"), ("power_limit_uw", "bad"),
+                                 ("power_limit_uw", "-1"), ("time_window_us", "bad"),
+                                 ("time_window_us", "-1"), ("name", None),
+                                 ("power_limit_uw", None), ("time_window_us", None)):
+                with self.subTest(zone=zone, field=field, value=value):
+                    path = self.host.path(f"{zone}/constraint_1_{field}")
+                    original = path.read_bytes()
+                    try:
+                        if value is None:
+                            path.unlink()
+                        else:
+                            path.write_text(value + "\n")
+                        status = self.controller.status()
+                        self.assertTrue(status["holding_now"])
+                        self.assertEqual(status["errors"], [])
+                        entry = status["rapl_constraints"][zone]["pl2"]
+                        self.assertFalse(entry["available"])
+                        self.assertIsNone(entry["power_limit_uw"])
+                        self.assertIsNone(entry["time_window_us"])
+                        self.assertEqual(len(status["diagnostic_errors"]), 1)
+                        self.assertIn(zone + " pl2", status["diagnostic_errors"][0])
+                        other = next(candidate for candidate in POWER.ZONES if candidate != zone)
+                        self.assertTrue(status["rapl_constraints"][other]["pl2"]["available"])
+                    finally:
+                        path.write_bytes(original)
+
+    def test_status_diagnostics_do_not_write_controls_files_or_restart_services(self):
+        self.controller.set_limit(55)
+        before = {str(path.relative_to(self.host.root)): path.read_bytes()
+                  for path in self.host.root.rglob("*") if path.is_file()}
+        self.host.commands.clear()
+        with mock.patch.object(self.host.env, "write_control", side_effect=AssertionError("write")), \
+                mock.patch.object(self.host.env, "atomic", side_effect=AssertionError("atomic")), \
+                mock.patch.object(self.host.env, "directory", side_effect=AssertionError("directory")):
+            self.assertTrue(self.controller.status()["holding_now"])
+        self.assertEqual(before, {str(path.relative_to(self.host.root)): path.read_bytes()
+                                  for path in self.host.root.rglob("*") if path.is_file()})
+        self.assertTrue(self.host.commands)
+        self.assertTrue(all(command == ["/usr/bin/thermald", "--version"]
+                            or command[:3] == ["systemctl", "show", "thermald.service"]
+                            for command in self.host.commands))
+
+    def test_missing_pl1_window_diagnostic_does_not_change_pl1_qualification(self):
+        self.controller.set_limit(55)
+        self.host.path(POWER.ZONES[0] + "/constraint_0_time_window_us").unlink()
+        status = self.controller.status()
+        self.assertTrue(status["holding_now"])
+        self.assertEqual(status["errors"], [])
+        self.assertFalse(status["rapl_constraints"][POWER.ZONES[0]]["pl1"]["available"])
+        self.assertEqual(status["observed"][POWER.ZONES[0]]["pl1_uw"], 55_000_000)
+        self.assertEqual(len(status["diagnostic_errors"]), 1)
+
+    def test_status_preserves_actual_zero_pl2_readings_without_managing_them(self):
+        self.controller.set_limit(55)
+        for zone in POWER.ZONES:
+            self.host.write(zone + "/constraint_1_power_limit_uw", "0\n")
+            self.host.write(zone + "/constraint_1_time_window_us", "0\n")
+        stdout = io.StringIO()
+        with mock.patch.object(POWER, "PowerController", return_value=self.controller), \
+                redirect_stdout(stdout):
+            self.assertEqual(POWER.main(["status"]), 0)
+        status = json.loads(stdout.getvalue())
+        self.assertTrue(status["holding_now"])
+        self.assertFalse(status["pl2_managed"])
+        self.assertEqual(status["diagnostic_errors"], [])
+        for zone in POWER.ZONES:
+            entry = status["rapl_constraints"][zone]["pl2"]
+            self.assertTrue(entry["available"])
+            self.assertEqual(entry["power_limit_uw"], 0)
+            self.assertEqual(entry["time_window_us"], 0)
+
     def test_status_uses_the_latest_qualification_readback(self):
         self.controller.set_limit(55)
         observe = self.controller.observe
@@ -1211,6 +1301,214 @@ class PowerStateValidation(unittest.TestCase):
                 status = self.controller.status()
                 self.assertFalse(status["holding_now"])
                 self.assertIn("Latest apply has not succeeded", status["errors"])
+
+
+class PassiveTemperatureTarget(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="passive-target-")
+        self.addCleanup(self.temporary.cleanup)
+        self.host = FakeHost(self, self.temporary.name)
+        self.controller = self.host.controller
+        self.host.write("/sys/class/thermal/thermal_zone0/type", "x86_pkg_temp\n")
+        self.host.write("/sys/class/thermal/thermal_zone0/temp", "65000\n")
+
+    def state(self):
+        return json.loads(self.host.read(POWER.STATE))
+
+    def test_90_target_at_35_and_55_w_keeps_paired_range_and_native_fallback_bindings(self):
+        for watts in (55, 35):
+            with self.subTest(watts=watts):
+                status = self.controller.set_limit(watts, target_celsius=90)
+                self.assertTrue(status["holding_now"])
+                self.assertEqual(status["desired_temperature_celsius"], 90)
+                platform = ET.fromstring(self.host.read(POWER.XML)).find("Platform")
+                trips = platform.findall("ThermalZones/ThermalZone/TripPoints/TripPoint")
+                self.assertEqual(len(trips), 1)
+                self.assertEqual(platform.findtext("ThermalZones/ThermalZone/Type"), "cpu")
+                trip = trips[0]
+                self.assertEqual({k: trip.findtext(k) for k in
+                                  ("SensorType", "Temperature", "Hyst", "type", "ControlType")},
+                                 {"SensorType": "x86_pkg_temp", "Temperature": "90000", "Hyst": "0",
+                                  "type": "passive", "ControlType": "SEQUENTIAL"})
+                devices = trip.findall("CoolingDevice")
+                self.assertEqual([d.findtext("type") for d in devices],
+                                 ["rapl_controller", "intel_pstate", "intel_powerclamp", "cpufreq", "Processor"])
+                for device in devices:
+                    self.assertEqual({e.tag: e.text for e in device},
+                                     {"type": device.findtext("type"), "influence": "0", "SamplingPeriod": "0"})
+                for device in platform.findall("CoolingDevices/CoolingDevice"):
+                    self.assertEqual(device.findtext("MinState"), str(watts * 1_000_000))
+                    self.assertEqual(device.findtext("MaxState"), str(watts * 500_000))
+                self.assertEqual(self.state()["target_celsius"], 90)
+                self.assertIn("--loglevel=info", self.host.read(POWER.DROPIN))
+                self.assertIn("--loglevel=info", status["thermald"]["ExecStart"])
+
+    def test_set_without_target_restores_original_xml_bytes_and_clear_removes_policy(self):
+        self.controller.set_limit(55, target_celsius=90)
+        status = self.controller.set_limit(55)
+        self.assertIsNone(status["desired_temperature_celsius"])
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), self.controller.xml(55_000_000, "ENERGY_CONSERVE"))
+        self.assertEqual(self.host.path(POWER.DROPIN).read_bytes(), self.controller.dropin())
+        self.assertNotIn("--loglevel", self.host.read(POWER.DROPIN))
+        self.controller.set_limit(55, target_celsius=90)
+        self.controller.clear()
+        self.assertFalse(self.controller.status()["managed"])
+        self.assertIsNone(self.controller.status()["desired_temperature_celsius"])
+        self.assertFalse(self.host.path(POWER.XML).exists())
+
+    def test_failed_restart_restores_previous_90_target_and_xml(self):
+        self.controller.set_limit(55, target_celsius=90)
+        previous = self.host.path(POWER.XML).read_bytes()
+        self.host.restart_failures = [True, False]
+        with self.assertRaises(POWER.PowerError):
+            self.controller.set_limit(35)
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), previous)
+        self.assertEqual(self.state()["target_celsius"], 90)
+        self.assertEqual(self.controller.status()["desired_temperature_celsius"], 90)
+        self.assertTrue(self.controller.status()["holding_now"])
+
+    def test_failed_90_activation_restores_old_version1_without_target(self):
+        self.controller.set_limit(55)
+        state = self.state()
+        state.pop("target_celsius")
+        self.host.write(POWER.STATE, json.dumps(state))
+        self.assertTrue(self.controller.status()["holding_now"])
+        self.host.restart_failures = [True, False]
+        with self.assertRaises(POWER.PowerError):
+            self.controller.set_limit(35, target_celsius=90)
+        self.assertNotIn("target_celsius", self.state())
+        self.assertTrue(self.controller.status()["holding_now"])
+        self.assertEqual(self.host.path(POWER.XML).read_bytes(), self.controller.xml(55_000_000, "ENERGY_CONSERVE"))
+
+    def test_interrupted_set_accepts_prior_90_xml_hash_for_recovery(self):
+        self.controller.set_limit(55, target_celsius=90)
+        previous_xml = self.host.path(POWER.XML).read_bytes()
+        previous_dropin = self.host.path(POWER.DROPIN).read_bytes()
+        context = {}
+        self.controller._stage_set(35, str(uuid.uuid4()), context)
+        state = self.state()
+        self.assertEqual(state["transaction"]["prior_target_celsius"], 90)
+        self.host.path(POWER.XML).write_bytes(previous_xml)
+        self.host.path(POWER.DROPIN).write_bytes(previous_dropin)
+        identity = self.host.env.process_identity
+        with mock.patch.object(self.host.env, "process_identity", side_effect=lambda pid=None: identity() if pid is None else None):
+            receipt = self.controller.recover()
+        self.assertTrue(receipt["success"])
+        self.assertFalse(self.controller.status()["managed"])
+
+    def test_corrupt_target_or_prior_target_blocks_every_mutation(self):
+        self.controller.set_limit(55, target_celsius=90)
+        original = self.state()
+        for target in (True, False, 89, 91, 90.0, "90", {}, []):
+            for prior in (False, True):
+                with self.subTest(target=target, prior=prior):
+                    value = json.loads(json.dumps(original))
+                    if prior:
+                        value["transaction"] = {"id": "pending", "operation": "set", "owner": self.host.env.process_identity(),
+                                                "prior_cap_uw": 55_000_000, "prior_managed_hashes": value["managed_hashes"],
+                                                "prior_target_celsius": target}
+                    else:
+                        value["target_celsius"] = target
+                    self.host.write(POWER.STATE, json.dumps(value))
+                    before = {p: self.host.path(p).read_bytes() for p in (POWER.STATE, POWER.XML, POWER.DROPIN)}
+                    for operation in (lambda: self.controller.set_limit(55), self.controller.apply,
+                                      self.controller.clear, self.controller.recover):
+                        with self.assertRaises(POWER.PowerError):
+                            operation()
+                    self.assertEqual(before, {p: self.host.path(p).read_bytes() for p in before})
+
+    def test_foreign_user_overrides_and_dangling_symlinks_are_preserved(self):
+        for override in POWER.CPU_TARGET_OVERRIDES:
+            for symlink in (False, True):
+                with self.subTest(path=override, symlink=symlink):
+                    path = self.host.path(override)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if symlink:
+                        path.symlink_to("missing-foreign-target")
+                    else:
+                        path.write_text("97000\n")
+                    with self.assertRaisesRegex(POWER.PowerError, "Foreign CPU temperature"):
+                        self.controller.set_limit(55, target_celsius=90)
+                    self.assertTrue(os.path.lexists(path))
+                    self.assertFalse(self.host.path(POWER.STATE).exists())
+                    path.unlink()
+
+    def test_invalid_target_rejected_before_state_or_service_change(self):
+        for value in (True, "90", 89, 91, 0, 125, 90.0):
+            with self.subTest(value=value):
+                before = list(self.host.commands)
+                with self.assertRaises(ValueError):
+                    self.controller.set_limit(55, target_celsius=value)
+                self.assertEqual(before, self.host.commands)
+                self.assertFalse(self.host.path(POWER.STATE).exists())
+
+    def test_native_sensor_must_exist_be_unique_readable_and_in_range(self):
+        sensor = self.host.path("/sys/class/thermal/thermal_zone0")
+        for value in ("-1", "125001", "unknown"):
+            (sensor / "temp").write_text(value)
+            with self.assertRaises(POWER.PowerError):
+                self.controller.set_limit(55, target_celsius=90)
+        (sensor / "temp").write_text("65000")
+        (sensor / "type").write_text("other")
+        with self.assertRaisesRegex(POWER.PowerError, "Exactly one"):
+            self.controller.set_limit(55, target_celsius=90)
+        (sensor / "type").write_text("x86_pkg_temp")
+        self.host.write("/sys/class/thermal/thermal_zone1/type", "x86_pkg_temp")
+        self.host.write("/sys/class/thermal/thermal_zone1/temp", "65000")
+        with self.assertRaisesRegex(POWER.PowerError, "Exactly one"):
+            self.controller.set_limit(55, target_celsius=90)
+        self.assertFalse(self.host.path(POWER.STATE).exists())
+
+    def test_additional_native_cpu_sensor_is_rejected_before_xml_changes(self):
+        for name in ("pkg-temp-0", "soc_dts0"):
+            self.host.write("/sys/class/thermal/thermal_zone1/type", name)
+            self.host.write("/sys/class/thermal/thermal_zone1/temp", "65000")
+            with self.assertRaisesRegex(POWER.PowerError, "Additional native CPU sensor"):
+                self.controller.set_limit(55, target_celsius=90)
+        self.assertFalse(self.host.path(POWER.STATE).exists())
+
+    def test_shipped_stock_order_with_comments_and_formatting_is_accepted_unchanged(self):
+        stock = "<!-- Default native CPU cooling order -->\n<CoolingDeviceOrder>\n\t<!-- Order -->\n" + "".join(
+            "\t<CoolingDevice>" + name + "</CoolingDevice>\n" for name in POWER.CPU_COOLING_DEVICES) + "</CoolingDeviceOrder>\n"
+        self.host.write(POWER.CPU_COOLING_ORDER, stock)
+        self.assertTrue(self.controller.set_limit(55, target_celsius=90)["holding_now"])
+        self.assertEqual(self.host.read(POWER.CPU_COOLING_ORDER), stock)
+        self.controller.clear()
+        self.assertEqual(self.host.read(POWER.CPU_COOLING_ORDER), stock)
+
+    def test_custom_or_unsafe_cooling_order_is_refused_without_overwriting(self):
+        stock = "<CoolingDeviceOrder>" + "".join("<CoolingDevice>" + name + "</CoolingDevice>"
+                for name in POWER.CPU_COOLING_DEVICES) + "</CoolingDeviceOrder>"
+        bad = [stock.replace("rapl_controller", "other"),
+               stock.replace("rapl_controller", "intel_pstate", 1),
+               stock.replace("rapl_controller</", "rapl_controller </"),
+               stock.replace("<CoolingDevice>cpufreq</CoolingDevice>", ""),
+               stock.replace("</CoolingDeviceOrder>", "<CoolingDevice>extra</CoolingDevice></CoolingDeviceOrder>"),
+               stock.replace("<CoolingDeviceOrder>", '<CoolingDeviceOrder mode="custom">'),
+               stock.replace("<CoolingDevice>", '<CoolingDevice attr="x">', 1),
+               stock.replace("rapl_controller", "<unknown>rapl_controller</unknown>"),
+               stock.replace("CoolingDeviceOrder", "OtherRoot"),
+               "<!DOCTYPE CoolingDeviceOrder>" + stock,
+               '<!DOCTYPE CoolingDeviceOrder [<!ENTITY device "rapl_controller">]>' + stock,
+               stock.replace("<CoolingDeviceOrder>", "<CoolingDeviceOrder>unrecognized-text")]
+        for value in bad:
+            with self.subTest(value=value):
+                self.host.write(POWER.CPU_COOLING_ORDER, value)
+                with self.assertRaises(POWER.PowerError):
+                    self.controller.set_limit(55, target_celsius=90)
+                self.assertEqual(self.host.read(POWER.CPU_COOLING_ORDER), value)
+                self.assertFalse(self.host.path(POWER.STATE).exists())
+        self.host.path(POWER.CPU_COOLING_ORDER).unlink()
+        self.host.path(POWER.CPU_COOLING_ORDER).symlink_to("missing-native-order")
+        with self.assertRaises(POWER.PowerError):
+            self.controller.set_limit(55, target_celsius=90)
+        self.assertTrue(self.host.path(POWER.CPU_COOLING_ORDER).is_symlink())
+
+    def test_cli_target_option_reaches_the_transaction_and_defaults_to_none(self):
+        for args, expected in ((["set", "55", "--target-celsius", "90"], 90), (["set", "55"], None)):
+            with mock.patch.object(POWER, "PowerController", return_value=self.controller), mock.patch("sys.stdout"):
+                self.assertEqual(POWER.main(args), 0)
+            self.assertEqual(self.controller.status()["desired_temperature_celsius"], expected)
 
 
 if __name__ == "__main__":

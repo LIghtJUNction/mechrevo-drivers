@@ -259,7 +259,7 @@ class ThermalObservation(unittest.TestCase):
 
 class ThermalSystemAdapter(unittest.TestCase):
     def setUp(self):
-        parent = ROOT / ".local-tests"
+        parent = Path(os.environ.get("TMPDIR", ROOT / ".local-tests"))
         parent.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="thermal-observer-", dir=parent)
         self.addCleanup(self.temp.cleanup)
@@ -311,6 +311,102 @@ class ThermalSystemAdapter(unittest.TestCase):
             self.system.open_sensors()
         self.assertIsNone(self.system.fd)
         self.assertEqual(self.requests,[])
+
+    def qualify_msr_fixture(self):
+        self.system.read_thermal_msr = True
+        self.write("/proc/cpuinfo", "processor : 0\nvendor_id : GenuineIntel\n"
+                   "cpu family : 6\nmodel : 151\ncpuid level : 32\nflags : msr dtherm pts pln\n")
+        self.write("/dev/cpu/0/msr", "")
+        path = self.system.path("/dev/cpu/0/msr")
+        # This is a regular isolated fixture, never the host MSR device.
+        with path.open("r+b") as stream:
+            for offset, value in ((0x19c, 1 | 2 | 1024), (0x1b1, 4 | 8 | 2048), (0x1a2, 0x12345678)):
+                stream.seek(offset)
+                stream.write(value.to_bytes(8, "little"))
+
+    def test_opt_in_actual_adapter_reads_fixed_msrs_read_only_and_separates_status(self):
+        self.qualify_msr_fixture()
+        before = self.system.path("/dev/cpu/0/msr").read_bytes()
+        with mock.patch.object(THERMAL.os, "open", wraps=os.open) as opened, \
+                mock.patch.object(THERMAL.os, "pread", wraps=os.pread) as read:
+            self.system.open_sensors()
+            result = self.system.sample()["thermal_msr"]
+        self.assertEqual(opened.call_args_list[0].args,
+                         (self.system.path("/dev/cpu/0/msr"), os.O_RDONLY | os.O_CLOEXEC))
+        self.assertEqual([call.args[1:] for call in read.call_args_list], [(8, 0x19c), (8, 0x1b1), (8, 0x1a2)])
+        core, package = result["core_status"]["status"], result["package_status"]["status"]
+        self.assertTrue(core["internal_thermal_active"])
+        self.assertTrue(core["power_limit_active"])
+        self.assertFalse(core["external_prochot_active"])
+        self.assertTrue(package["external_prochot_active"])
+        self.assertTrue(package["external_prochot_log"])
+        self.assertFalse(package["internal_thermal_active"])
+        self.assertEqual(result["temperature_target"], {"offset":0x1a2, "raw":0x12345678})
+        self.assertEqual(self.system.path("/dev/cpu/0/msr").read_bytes(), before)
+        fd = self.system.msr_fd
+        self.system.close()
+        with self.assertRaises(OSError): os.fstat(fd)
+
+    def test_default_adapter_never_opens_msr_and_reports_missing_optional_counters_as_null(self):
+        self.system.open_sensors()
+        with mock.patch.object(THERMAL.os, "pread", side_effect=AssertionError("unexpected MSR read")):
+            sample = self.system.sample()
+        self.assertNotIn("thermal_msr", sample)
+        self.assertIsNone(self.system.msr_fd)
+        self.assertEqual(sample["cpu0_throttle_details"], {name:None for name in THERMAL.EXTRA_THROTTLE_FIELDS})
+
+    def test_cli_msr_option_is_explicit_and_failure_retains_invalid_json(self):
+        for options in ([], ["--read-thermal-msr"]):
+            with self.subTest(options=options), \
+                    mock.patch.object(THERMAL, "observe", return_value={"valid":False, "errors":["denied"]}) as observe, \
+                    redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(THERMAL.main(options), 1)
+                self.assertEqual(json.loads(output.getvalue())["errors"], ["denied"])
+                kwargs = observe.call_args.kwargs
+                if options:
+                    self.assertTrue(kwargs["system"].read_thermal_msr)
+                else:
+                    self.assertNotIn("system", kwargs)
+
+    def test_optional_throttle_counters_preserve_values_zero_and_missing(self):
+        self.write("/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count", "0")
+        self.write("/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_total_time_ms", "25")
+        self.system.open_sensors()
+        result = self.system.sample()["cpu0_throttle_details"]
+        self.assertEqual(result, {"core_throttle_count":0, "package_throttle_total_time_ms":25,
+                                 "package_throttle_max_time_ms":None})
+        for value in ("-1", "garbage"):
+            self.write("/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count", value)
+            with self.assertRaises((ValueError, THERMAL.ObservationError)): self.system.sample()
+
+    def test_unsupported_or_ambiguous_cpu_capabilities_fail_before_msr_open(self):
+        self.qualify_msr_fixture()
+        qualified = self.system.text("/proc/cpuinfo")
+        cases = (qualified.replace("GenuineIntel", "OtherVendor"), qualified.replace("model : 151", "model : 183"),
+                 qualified.replace("cpuid level : 32", "cpuid level : 5"), qualified.replace("pts", ""),
+                 qualified.replace("pln", ""), qualified.replace("dtherm", ""), qualified.replace("msr", ""),
+                 qualified + "\n\n" + qualified, "processor : 1\n", qualified + "\nmodel : 151")
+        for contents in cases:
+            with self.subTest(contents=contents):
+                self.write("/proc/cpuinfo", contents)
+                with self.assertRaises(THERMAL.ObservationError): self.system.open_sensors()
+                self.assertIsNone(self.system.msr_fd)
+                self.assertEqual(self.requests, [])
+
+    def test_opt_in_missing_device_permission_denied_short_reads_and_read_errors_are_not_zero(self):
+        self.qualify_msr_fixture()
+        self.system.path("/dev/cpu/0/msr").unlink()
+        with self.assertRaises(FileNotFoundError): self.system.open_sensors()
+        with mock.patch.object(THERMAL.os, "open", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError): self.system.open_sensors()
+        self.write("/dev/cpu/0/msr", "")
+        self.system.open_sensors()
+        for raw in (b"", b"\0"*7):
+            with mock.patch.object(THERMAL.os, "pread", return_value=raw):
+                with self.assertRaisesRegex(THERMAL.ObservationError, "Short thermal MSR"):
+                    self.system.sample()
+        with mock.patch.object(THERMAL.os, "pread", side_effect=OSError("MSR unavailable")):
+            with self.assertRaises(OSError): self.system.sample()
 
     def test_bad_temperature_is_not_reported_as_valid(self):
         self.system.open_sensors()

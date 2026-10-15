@@ -1,7 +1,8 @@
 # CPU 长期功耗上限
 
 `mechrevo-power-control` 是独立、可选的用户态工具。它配置本机的 Intel RAPL
-长期功耗约束（PL1），由原生 `thermald` 继续温控。它不开放 MECHREVO EC TDP
+长期功耗约束（PL1），由原生 `thermald` 继续温控，也可显式提前 CPU 软件降温阈值。
+它不开放 MECHREVO EC TDP
 接口，也不提供 GPU、风扇或整机总功耗调节。
 
 目前只允许以下组合：MECHREVO 旷世 16 Pro `GM6PX0X`、BIOS `N.1.09MRO07`、
@@ -20,11 +21,15 @@ RAPL 和服务配置条件。其他型号、BIOS、PPCC 或自适应温控平台
 ```sh
 sudo mechrevo-power status
 sudo mechrevo-power set 55
+sudo mechrevo-power set 55 --target-celsius 90
 sudo mechrevo-power status
 sudo mechrevo-power clear
 ```
 
 `status` 同时报告请求值和两套实际长期限值。只存在配置文件不代表设置已生效。
+`holding_scope=cpu_package_pl1` 明确 `holding_now` 只验证 PL1；`pl2_managed=false`，
+`rapl_constraints` 独立显示两套 PL1/PL2 和平均窗口。诊断缺失显示 `null` / `available=false`，
+记入 `diagnostic_errors`，不能把缺失解释成零或宣称 PL2 已受管。
 状态检查发现错误（包括损坏的状态、未完成事务或上限未保持）时，仍输出 JSON，
 但退出码为 1；正常的未配置状态退出码为 0，`holding_now` 为 false。
 缺少状态文件但托管 XML 或服务 drop-in 仍存在时（包括断开的符号链接），也报告错误并返回 1，
@@ -33,8 +38,8 @@ sudo mechrevo-power clear
 状态及其嵌套的事务、初始快照和应用收据必须通过类型及一致性检查，不能将字符串
 `"false"` 当作应用成功。损坏状态会阻止 set/apply/clear/recover 写入，保留原文件及运行中的温控；
 应保留并核对恢复材料后修复，不能把手工删除 state 当作正常撤销或恢复流程。
-`set` 设置 CPU package 的长期功耗上限，温控可以使用更低的值。它保留原生温控区、
-温度阈值及其他降温设备，短暂重启 `thermald` 以读取配置。
+`set` 设置 CPU package 的长期功耗上限，温控可以使用更低的值。未带温度参数时，
+保留原生温控区、温度阈值及其他降温设备；短暂重启 `thermald` 以读取配置。
 `clear` 撤销本工具配置并重启原来的温控策略；恢复后功耗限值继续由该策略决定，
 不是固定写回某个旧的高限值。
 
@@ -46,6 +51,33 @@ sudo mechrevo-power clear
 若命令被强制终止或断电，`status` 显示未完成事务，可运行 `sudo mechrevo-power recover`。
 恢复命令确认原事务进程已退出、受管文件仍属于本工具后，撤销配置并恢复原温控策略；
 原命令仍在运行时会拒绝恢复。不要通过手工删除 state 文件绕过这项检查。
+
+## 提前软件降温
+
+本机实测温度目标寄存器对应 TjMAX 100°C、TCC offset 5°C，硬件热保护从 95°C 开始。
+已冻结 thermald 2.5.13 的默认 CPU PASSIVE 阈值也计算为 95°C，缺少提前控制的余量。
+`--target-celsius 90` 是显式的 Linux 用户策略，给该硬件保护点留出 5°C 余量；
+不是原厂档位、额定温度或保证永不超过 90°C 的硬上限。
+
+当前只支持本机验证范围内的 90°C。此选项用有效的 `x86_pkg_temp` 传感器替换 CPU PASSIVE
+控制点，并按冻结源码保留完整默认降温手段及顺序：`rapl_controller`、`intel_pstate`、
+`intel_powerclamp`、`cpufreq`、`Processor`；实际不存在的设备与原生路径一样跳过。
+不使用缺失传感器的错误分支来更新阈值，不改硬件 TCC、风扇表或 D-Bus 控制权限。
+存在其他原生 CPU 传感器、自定义降温顺序或外来用户温度覆盖时拒绝启用，避免悄悄改变其语义。
+
+温度目标与 XML、服务配置一起进入原有事务，包含备份、失败回滚、恢复和损坏状态检查。
+`status` 的 `desired_temperature_celsius` 只是受管目标；实际温度与控制效果仍须观测。
+启用目标时服务额外使用 `--loglevel=info`，便于从真实启动日志核对 CPU trip 和降温绑定；
+不修改日志轮转或开放 D-Bus。更早降低功耗/频率可能影响性能。
+
+恢复原生温度阈值而保留 55 W 长期上限：
+
+```sh
+sudo mechrevo-power set 55
+```
+
+`set` 不带温度参数会明确恢复原生温度策略，不会默默继承上一次的 90°C。
+`clear` 则撤销整套工具配置。轮询、执行延迟和毫秒级突发仍可能造成温度尖峰。
 
 ## 本地打包
 
@@ -90,6 +122,9 @@ XML 本身只修改控制器缓存，不保证冷机时立即写入硬件。服�
 这里只限制长期平均 CPU package 功耗。PL2 仍保留原策略，短时功耗可以高于 PL1；
 平均窗口和能量采样也不能当成瞬时整机功耗。55 W 来自本机热设计参考值，
 不是已验证的整机最大安全功耗。
+
+需要临时验证 PL2 影响时，使用有独立恢复回执的
+[`mechrevo-peak-trial`](PEAK-LIMIT-TRIAL.md)，不能把 `clear` 当作 PL2 恢复命令。
 
 源码和测试依据为 Intel 官方 `thermal_daemon` 的
 [`v2.5.13`](https://github.com/intel/thermal_daemon/tree/v2.5.13)，

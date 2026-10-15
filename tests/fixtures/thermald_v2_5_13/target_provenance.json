@@ -1,0 +1,31 @@
+{
+  "upstream": "https://github.com/intel/thermal_daemon",
+  "tag": "v2.5.13",
+  "commit": "5fdc5bbca7f8c3f5bb2ad6540e8211a159a88a3a",
+  "license": "GPL-2.0-or-later",
+  "files": {
+    "target_thd_zone.cpp": {
+      "upstream_path": "src/thd_zone.cpp",
+      "upstream_sha256": "23e77622aae80c3f8913df4a37457673c34a61c109de754e0ae59ebb3a325836",
+      "snapshot_sha256": "2547defc86c24af9f02096cae7c0f53dfe91c49ffea5ec2bf72c6db8583952c6",
+      "functions": {
+        "cthd_zone::add_trip": "aea32b5807ca5aec9a2c5bc2fa23d925725bd0fe5dd0621eafc87f00b6eefab3",
+        "cthd_zone::update_trip_temp": "7bfec0074964b0d9c4c81525abc978399a115375ba22446078a0b8158674e0e2"
+      }
+    },
+    "target_xml_existing_zone.cpp": {
+      "upstream_path": "src/thd_engine_default.cpp",
+      "upstream_sha256": "9cba10eaf93df476873c306c83a4a20412c4369f580536ddc25082610d0a08da",
+      "snapshot_sha256": "93b291076769dc6727f89a55a5f2d5ddf0c59f0ce489eaad7f2cbab728926292",
+      "block_sha256": "2dcb7bc51a97f1d1b9905fe2cabe63b45b3d3d199baa630cb2e78a62ac10d3a3",
+      "selection": "Exact existing-zone XML sensor guard and positive-temperature valid-sensor branch, ending before zero-temperature else; see test extractor."
+    },
+    "target_native_order.cpp": {
+      "upstream_path": "src/thd_zone_cpu.cpp",
+      "upstream_sha256": "feb19789364f24a7e91a714e63685a42aa53ea1073fb18ea96b748b18f0132b2",
+      "snapshot_sha256": "5c85bab8b720b81d82878785e8c8036e6b0f6c07850b99d777063954ebe56bd2",
+      "native_order_sha256": "ef8342e041316d38f015d31ce47489e545539e5ccfd18316e5a30e20bc565e60",
+      "selection": "Exact native def_cooling_devices null-terminated array"
+    }
+  }
+}

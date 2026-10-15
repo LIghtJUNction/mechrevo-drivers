@@ -66,7 +66,12 @@ def summarize(data):
               "sample_count": len(rows), "capture_errors": data["errors"] if modern else None,
               "limitations": ["Describes one capture; does not prove cooling improvement or root cause.",
                               "Temperature fractions count samples, not time.",
-                              "Fan raw values are not RPM or a calibrated percentage."]}
+                              "Fan raw values are not RPM or a calibrated percentage.",
+                              "Thermal throttle counts are interrupt-handler observations of active internal thermal status, not independent episodes or duration; they do not measure external PROCHOT events.",
+                              "coretemp caches temperatures for approximately one second; closely spaced before/after reads may reuse the same cached value.",
+                              "Sample-interval average power cannot exclude millisecond PL2 bursts or establish their cause.",
+                              "Kernel throttle time counters have filtering and timer-resolution limits; they are not an exact throttling duty cycle.",
+                              "Thermal MSR log bits may predate the capture or be cleared by the kernel; absence does not exclude events between samples."]}
     if not rows:
         return result
     cpu = [r["cpu"] for r in rows]

@@ -5,8 +5,10 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,11 +23,20 @@ PAYLOAD = {
     "scripts/mechrevo_thermal.py": (
         "usr/lib/mechrevo-power-control/mechrevo_thermal.py", b"# frozen observer\n", 0o644,
     ),
+    "scripts/mechrevo-peak-trial": (
+        "usr/bin/mechrevo-peak-trial", b"#!/usr/bin/python3\n# frozen peak trial launcher\n", 0o755,
+    ),
+    "scripts/peak_limit_trial.py": (
+        "usr/lib/mechrevo-power-control/peak_limit_trial.py", b"# frozen peak trial\n", 0o644,
+    ),
     "docs/POWER-CONTROL.md": (
         "usr/share/doc/mechrevo-power-control/POWER-CONTROL.md", b"Frozen documentation.\n", 0o644,
     ),
     "docs/THERMAL-OBSERVATION.md": (
         "usr/share/doc/mechrevo-power-control/THERMAL-OBSERVATION.md", b"Frozen observer documentation.\n", 0o644,
+    ),
+    "docs/PEAK-LIMIT-TRIAL.md": (
+        "usr/share/doc/mechrevo-power-control/PEAK-LIMIT-TRIAL.md", b"Frozen peak trial documentation.\n", 0o644,
     ),
     "LICENSE": (
         "usr/share/licenses/mechrevo-power-control/LICENSE", b"GPL-2.0-or-later fixture\n", 0o644,
@@ -37,8 +48,8 @@ PAYLOAD = {
                      "Arch packaging tools are required")
 class PowerPackaging(unittest.TestCase):
     def setUp(self):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("MECHREVO_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="power-packaging-", dir=parent)
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
@@ -99,8 +110,10 @@ class PowerPackaging(unittest.TestCase):
 
     def prepare(self):
         srcdir = self.path / "prepare"
-        srcdir.mkdir()
-        (srcdir / "mechrevo-drivers").symlink_to(self.source, target_is_directory=True)
+        srcdir.mkdir(exist_ok=True)
+        checkout = srcdir / "mechrevo-drivers"
+        if not checkout.exists():
+            checkout.symlink_to(self.source, target_is_directory=True)
         return subprocess.run(
             ["bash", "-e", "-c", 'source "$1"; srcdir="$2"; prepare',
              "power-packaging-test", str(self.build / "PKGBUILD"), str(srcdir)],
@@ -112,7 +125,7 @@ class PowerPackaging(unittest.TestCase):
         self.assertEqual(metadata["pkgbase"], [PKGNAME])
         self.assertEqual(metadata["pkgname"], [PKGNAME])
         self.assertEqual(metadata["pkgver"], ["0.1.0"])
-        self.assertEqual(metadata["pkgrel"], ["8"])
+        self.assertEqual(metadata["pkgrel"], ["9"])
         self.assertEqual(metadata["arch"], ["x86_64"])
         self.assertEqual(metadata["depends"], ["python", "thermald=2:2.5.13", "systemd"])
         self.assertEqual(metadata["makedepends"], ["git"])
@@ -139,29 +152,79 @@ class PowerPackaging(unittest.TestCase):
         self.assertIn("does not match", result.stderr)
 
     def test_prepare_rejects_missing_required_source(self):
-        (self.source / "docs/POWER-CONTROL.md").unlink()
-        result = self.prepare()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Required regular source file missing: docs/POWER-CONTROL.md", result.stderr)
+        for relative, (_, content, _) in PAYLOAD.items():
+            with self.subTest(relative=relative):
+                source = self.source / relative
+                source.unlink()
+                try:
+                    result = self.prepare()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Required regular source file missing: " + relative, result.stderr)
+                finally:
+                    source.write_bytes(content)
 
     def test_prepare_rejects_source_file_symlink(self):
-        module = self.source / "scripts/mechrevo_power.py"
-        module.unlink()
-        module.symlink_to("../LICENSE")
-        result = self.prepare()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Required regular source file missing: scripts/mechrevo_power.py", result.stderr)
+        for relative, (_, content, _) in PAYLOAD.items():
+            with self.subTest(relative=relative):
+                source = self.source / relative
+                source.unlink()
+                source.symlink_to(self.config)
+                try:
+                    result = self.prepare()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Required regular source file missing: " + relative, result.stderr)
+                finally:
+                    source.unlink()
+                    source.write_bytes(content)
+
+    def test_peak_trial_launcher_selects_checkout_or_installed_module_without_running_trial(self):
+        launcher = ROOT / "scripts/mechrevo-peak-trial"
+        code = compile(launcher.read_bytes(), str(launcher), "exec")
+        for location, expected in (
+                (self.source / "scripts/mechrevo-peak-trial",
+                 self.source / "scripts/peak_limit_trial.py"),
+                (self.path / "bin/mechrevo-peak-trial",
+                 Path("/usr/lib/mechrevo-power-control/peak_limit_trial.py"))):
+            with self.subTest(location=location), mock.patch("runpy.run_path") as run, \
+                    mock.patch.object(sys, "path", list(sys.path)):
+                exec(code, {"__file__": str(location)})
+                run.assert_called_once_with(str(expected), run_name="__main__")
+
+    def test_peak_trial_launches_real_modules_in_checkout_and_installed_layouts(self):
+        launcher_text = (ROOT / "scripts/mechrevo-peak-trial").read_text()
+        for layout in ("checkout", "installed"):
+            with self.subTest(layout=layout):
+                base = self.path / layout
+                bin_dir = base / ("scripts" if layout == "checkout" else "usr/bin")
+                module_dir = bin_dir if layout == "checkout" else base / "usr/lib/mechrevo-power-control"
+                bin_dir.mkdir(parents=True)
+                module_dir.mkdir(parents=True, exist_ok=True)
+                launcher = bin_dir / "mechrevo-peak-trial"
+                # Relocate only the absolute installed directory into the fake root.
+                # The real runpy and sibling imports must execute in a fresh process.
+                launcher.write_text(launcher_text.replace(
+                    '"/usr/lib/mechrevo-power-control/peak_limit_trial.py"',
+                    repr(str(module_dir / "peak_limit_trial.py"))))
+                for filename in ("peak_limit_trial.py", "mechrevo_power.py", "mechrevo_thermal.py"):
+                    shutil.copy2(ROOT / "scripts" / filename, module_dir / filename)
+                result = subprocess.run([sys.executable, "-I", "-B", str(launcher), "--help"],
+                                        cwd=self.path, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("--peak-watts", result.stdout)
+                self.assertIn("--recover", result.stdout)
+                self.assertEqual(result.stderr, "")
 
     @unittest.skipIf(os.geteuid() == 0, "makepkg intentionally refuses root")
     def test_real_archive_is_frozen_and_contains_no_automatic_activation(self):
         # A branch change after the requested commit must not enter the package.
-        (self.source / "scripts/mechrevo_power.py").write_bytes(b"# later unqualified change\n")
+        for relative in PAYLOAD:
+            (self.source / relative).write_bytes(b"# later unqualified change\n")
         (self.source / "foreign-file").write_text("not part of package\n")
         self.git("add", ".")
         self.git("commit", "-m", "Later fixture change")
         result = self.makepkg("--nodeps", "--noconfirm", "--nocolor")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-8-x86_64.pkg.tar.*"))
+        archives = list(self.build.glob(f"{PKGNAME}-0.1.0-9-x86_64.pkg.tar.*"))
         self.assertEqual(len(archives), 1, result.stdout + result.stderr)
         archive = archives[0]
         listing = subprocess.check_output(["bsdtar", "-tf", str(archive)], text=True).splitlines()

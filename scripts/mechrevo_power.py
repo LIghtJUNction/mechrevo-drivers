@@ -55,6 +55,10 @@ QUALIFIED_THERMALD_SHA256 = "fbe6b27d2854fa8636c7bbdbcc953d1665a2c3b23534026dd42
 # writable limit. Keep host qualification separate from the user cap range.
 THERMAL_SPEC_POWER_UW = 55_000_000
 MIN_LIMIT_UW = 35_000_000
+CPU_COOLING_DEVICES = ("rapl_controller", "intel_pstate", "intel_powerclamp", "cpufreq", "Processor")
+CPU_TARGET_OVERRIDES = ("/run/thermald/thd_user_psv_temp.cpu.conf",
+                        "/run/thermald/thd_user_set_max.cpu.conf")
+CPU_COOLING_ORDER = "/etc/thermald/thermal-cpu-cdev-order.xml"
 
 
 class PowerError(RuntimeError):
@@ -67,6 +71,16 @@ def digest(data):
 
 def json_bytes(value):
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+
+
+def temperature_target(target):
+    if target is not None and (type(target) is not int or target != 90):
+        raise ValueError("Only the qualified optional 90 Celsius passive target is supported")
+
+
+def managed_exec_start(target_celsius=None):
+    temperature_target(target_celsius)
+    return MANAGED_EXEC_START + (" --loglevel=info" if target_celsius is not None else "")
 
 
 class Environment:
@@ -265,6 +279,7 @@ class PowerController:
                 or type(state["cap_uw"]) is not int
                 or not MIN_LIMIT_UW <= state["cap_uw"] <= state["initial_ceiling_uw"]):
             raise ValueError("Invalid state schema or cap")
+        self.validate_target(state.get("target_celsius"))
         preference = state["preference"]
         if (state["host"] != IDENTITY or not isinstance(preference, dict)
                 or type(preference["value"]) is not int or preference["value"] not in (0, 1)
@@ -293,9 +308,12 @@ class PowerController:
                     or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
                     or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
                 raise ValueError("Invalid transaction owner")
-            if "prior_managed_hashes" in pending or "prior_cap_uw" in pending:
+            if any(key in pending for key in ("prior_managed_hashes", "prior_cap_uw", "prior_target_celsius")):
                 prior = pending["prior_managed_hashes"]
                 cap = pending["prior_cap_uw"]
+                self.validate_target(pending.get("prior_target_celsius"))
+                if cap is None and pending.get("prior_target_celsius") is not None:
+                    raise ValueError("Unconfigured prior state cannot have a temperature target")
                 if (not isinstance(prior, dict) or set(prior) != {XML, DROPIN}
                         or (cap is not None and (type(cap) is not int
                             or not MIN_LIMIT_UW <= cap <= state["initial_ceiling_uw"]))
@@ -317,6 +335,55 @@ class PowerController:
                 self.validate_observed(applied["observed"])
                 if any(value["pl1_uw"] > state["cap_uw"] for value in applied["observed"].values()):
                     raise ValueError("Successful apply receipt exceeds its cap")
+
+    @staticmethod
+    def validate_target(target):
+        temperature_target(target)
+
+    def qualify_target(self, target):
+        if target is None:
+            return
+        self.validate_target(target)
+        for path in CPU_TARGET_OVERRIDES:
+            if self.env.exists(path):
+                raise PowerError("Foreign CPU temperature override refused: " + path)
+        order = self.env.regular(CPU_COOLING_ORDER, missing=True)
+        if order is not None:
+            # Arch ships this optional file with precisely the native order.
+            # Accept its semantics, not arbitrary native-parser customization.
+            if len(order) > 65_536 or re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", order, re.I):
+                raise PowerError("Unqualified CPU cooling order XML")
+            try:
+                root = ET.fromstring(order)
+            except ET.ParseError as exc:
+                raise PowerError("Invalid CPU cooling order XML") from exc
+            if (root.tag != "CoolingDeviceOrder" or root.attrib
+                    or (root.text or "").strip() or len(root) != len(CPU_COOLING_DEVICES)):
+                raise PowerError("CPU cooling order must preserve all native defaults")
+            for child, expected in zip(root, CPU_COOLING_DEVICES):
+                if (child.tag != "CoolingDevice" or child.attrib or len(child)
+                        or child.text != expected or (child.tail or "").strip()):
+                    raise PowerError("CPU cooling order must preserve exact native names and order")
+        # The XML must enter thermald's valid-sensor path. A missing sensor
+        # otherwise takes a different temperature-only compatibility branch.
+        sensors = []
+        for candidate in self.env.path("/sys/class/thermal").glob("thermal_zone*"):
+            try:
+                sensor_type = (candidate / "type").read_text().strip()
+                if sensor_type in ("pkg-temp-0", "soc_dts0"):
+                    raise PowerError("Additional native CPU sensor would change trip matching")
+                if sensor_type == "x86_pkg_temp":
+                    sensors.append(candidate)
+            except OSError as exc:
+                raise PowerError("Cannot qualify native CPU thermal sensor") from exc
+        if len(sensors) != 1 or not sensors[0].resolve().is_relative_to(self.env.path("/sys")):
+            raise PowerError("Exactly one native x86_pkg_temp sensor is required")
+        try:
+            value = int((sensors[0] / "temp").read_text())
+        except (OSError, ValueError) as exc:
+            raise PowerError("Native CPU thermal sensor cannot be read") from exc
+        if not 0 <= value <= 125_000:
+            raise PowerError("Native CPU thermal sensor is outside its diagnostic range")
 
     def service(self):
         output = self.env.command("systemctl", "show", "thermald.service",
@@ -367,6 +434,36 @@ class PowerController:
                               "physical_path": str(physical)}
         return observed
 
+    def rapl_constraints(self):
+        """Read optional diagnostics without changing PL1 qualification/state."""
+        constraints, errors = {}, []
+        for zone in ZONES:
+            constraints[zone] = {}
+            for index, label, expected in ((0, "pl1", "long_term"),
+                                            (1, "pl2", "short_term")):
+                entry = {"available": False, "name": None,
+                         "name_valid": False, "power_limit_uw": None,
+                         "time_window_us": None}
+                constraints[zone][label] = entry
+                prefix = f"{zone}/constraint_{index}"
+                try:
+                    physical = self.env.path(zone).resolve()
+                    if not physical.is_relative_to(self.env.path("/sys")):
+                        raise PowerError(f"Powercap link leaves sysfs: {zone}")
+                    entry["name"] = self.env.read_control(prefix + "_name")
+                    if entry["name"] != expected:
+                        raise PowerError(f"Unsupported {prefix}_name: {entry['name']!r}")
+                    entry["name_valid"] = True
+                    power = int(self.env.read_control(prefix + "_power_limit_uw"))
+                    window = int(self.env.read_control(prefix + "_time_window_us"))
+                    if not 0 <= power <= 2_147_483_647 or window < 0:
+                        raise PowerError(f"Invalid power or time window: {prefix}")
+                    entry.update(available=True, power_limit_uw=power,
+                                 time_window_us=window)
+                except (PowerError, OSError, ValueError) as exc:
+                    errors.append(f"{zone} {label} diagnostics unavailable: {exc}")
+        return constraints, errors
+
     def validate_managed(self, state, *, allow_missing=False, allow_prior=False):
         prior = {}
         pending = state.get("transaction") or {}
@@ -376,8 +473,9 @@ class PowerController:
             if prior_cap is None:
                 expected_prior = {XML: None, DROPIN: None}
             elif type(prior_cap) is int and MIN_LIMIT_UW <= prior_cap <= state["initial_ceiling_uw"]:
-                expected_prior = {XML: digest(self.xml(prior_cap, state["preference"]["name"])),
-                                  DROPIN: digest(self.dropin())}
+                expected_prior = {XML: digest(self.xml(prior_cap, state["preference"]["name"],
+                                                      pending.get("prior_target_celsius"))),
+                                  DROPIN: digest(self.dropin(pending.get("prior_target_celsius")))}
             else:
                 raise PowerError("Invalid previous managed cap in interrupted transaction")
             if prior != expected_prior:
@@ -388,9 +486,9 @@ class PowerController:
                 continue
             if digest(raw) not in (expected, prior.get(path)):
                 raise PowerError(f"Managed file changed; refusing overwrite: {path}")
-        expected_xml = self.xml(state["cap_uw"], state["preference"]["name"])
+        expected_xml = self.xml(state["cap_uw"], state["preference"]["name"], state.get("target_celsius"))
         if (state["managed_hashes"][XML] != digest(expected_xml)
-                or state["managed_hashes"][DROPIN] != digest(self.dropin())):
+                or state["managed_hashes"][DROPIN] != digest(self.dropin(state.get("target_celsius")))):
             raise PowerError("Managed configuration does not match state")
 
     def configuration(self, state, *, require_running=True, disk_only=False,
@@ -442,7 +540,7 @@ class PowerController:
         expected_paths = [DROPIN] if state else []
         if service["DropInPaths"].split() != expected_paths:
             raise PowerError("Loaded thermald drop-ins do not match managed files")
-        expected_command = MANAGED_EXEC_START if state else STOCK_EXEC_START
+        expected_command = self.managed_exec_start(state.get("target_celsius")) if state else STOCK_EXEC_START
         if self.exec_start(service) != expected_command:
             raise PowerError("Loaded thermald command does not match configuration")
         if require_running and service["ActiveState"] != "active":
@@ -452,6 +550,7 @@ class PowerController:
         return service
 
     def qualify(self, state, *, require_running=True):
+        self.qualify_target(state.get("target_celsius") if state else None)
         host = {key: self.env.read_control("/sys/class/dmi/id/" + key) for key in IDENTITY}
         if host != IDENTITY:
             raise PowerError("This machine or BIOS has not been qualified")
@@ -492,7 +591,8 @@ class PowerController:
         return host, preference, observed, service, tcc
 
     @staticmethod
-    def xml(cap_uw, preference):
+    def xml(cap_uw, preference, target_celsius=None):
+        temperature_target(target_celsius)
         root = ET.Element("ThermalConfiguration")
         platform = ET.SubElement(root, "Platform")
         ET.SubElement(platform, "Name").text = "MECHREVO GM6PX0X user PL1 ceiling"
@@ -504,13 +604,35 @@ class PowerController:
             ET.SubElement(device, "Type").text = name
             ET.SubElement(device, "MinState").text = str(cap_uw)
             ET.SubElement(device, "MaxState").text = str(cap_uw // 2)
+        if target_celsius is not None:
+            zones = ET.SubElement(platform, "ThermalZones")
+            zone = ET.SubElement(zones, "ThermalZone")
+            ET.SubElement(zone, "Type").text = "cpu"
+            trips = ET.SubElement(zone, "TripPoints")
+            trip = ET.SubElement(trips, "TripPoint")
+            ET.SubElement(trip, "SensorType").text = "x86_pkg_temp"
+            ET.SubElement(trip, "Temperature").text = str(target_celsius * 1000)
+            ET.SubElement(trip, "Hyst").text = "0"
+            ET.SubElement(trip, "type").text = "passive"
+            ET.SubElement(trip, "ControlType").text = "SEQUENTIAL"
+            # Valid-sensor XML replaces the native PASSIVE trip. Reconstruct
+            # all native fallback bindings, retaining order and default params.
+            for name in CPU_COOLING_DEVICES:
+                device = ET.SubElement(trip, "CoolingDevice")
+                ET.SubElement(device, "type").text = name
+                ET.SubElement(device, "influence").text = "0"
+                ET.SubElement(device, "SamplingPeriod").text = "0"
         ET.indent(root)
         return b'<?xml version="1.0"?>\n' + ET.tostring(root, encoding="utf-8") + b"\n"
 
     @staticmethod
-    def dropin():
+    def managed_exec_start(target_celsius=None):
+        return managed_exec_start(target_celsius)
+
+    @staticmethod
+    def dropin(target_celsius=None):
         return ("# Managed by mechrevo-power; use mechrevo-power clear to remove.\n"
-                "[Service]\nExecStart=\nExecStart=" + MANAGED_EXEC_START + "\n"
+                "[Service]\nExecStart=\nExecStart=" + managed_exec_start(target_celsius) + "\n"
                 "ExecStartPost=-/usr/bin/mechrevo-power apply\n").encode()
 
     def receipt(self, operation, success, **details):
@@ -567,6 +689,7 @@ class PowerController:
                                         "operation": "rollback" if target is not None else "rollback_stock",
                                         "owner": self.env.process_identity(),
                                         "prior_cap_uw": current["cap_uw"],
+                                        "prior_target_celsius": current.get("target_celsius"),
                                         "prior_managed_hashes": expected_hashes})
             self.env.atomic(STATE, json_bytes(barrier))
             for path in (XML, DROPIN):
@@ -594,12 +717,13 @@ class PowerController:
                                                         cap_uw=current["cap_uw"], transaction=transaction)
                 self.env.atomic(STATE, json_bytes(current))
 
-    def _stage_set(self, watts, transaction, context):
+    def _stage_set(self, watts, transaction, context, target_celsius=None):
         with self.lock():
             previous = self.load_state()
             if previous and previous.get("transaction"):
                 raise PowerError("Another transaction is pending; inspect recovery receipts")
             host, preference, observed, _, tcc = self.qualify(previous)
+            self.qualify_target(target_celsius)
             ceiling = previous["initial_ceiling_uw"] if previous else min(v["pl1_uw"] for v in observed.values())
             cap = watts * 1_000_000
             if cap < MIN_LIMIT_UW or cap > ceiling:
@@ -608,9 +732,10 @@ class PowerController:
             old_files = {path: self.env.regular(path, missing=True) for path in (XML, DROPIN, STATE, PREF)}
             backup = self.backup("set", old_files, {"host": host, "preference": preference,
                                                      "observed": observed, "tcc": tcc})
-            xml, dropin = self.xml(cap, preference["name"]), self.dropin()
+            xml, dropin = self.xml(cap, preference["name"], target_celsius), self.dropin(target_celsius)
             hashes = {XML: digest(xml), DROPIN: digest(dropin)}
             state = {"version": 1, "cap_uw": cap, "initial_ceiling_uw": ceiling,
+                     "target_celsius": target_celsius,
                      "initial_limits": previous["initial_limits"] if previous else observed,
                      "host": host, "preference": preference, "tcc": tcc,
                      "managed_hashes": hashes, "stock_unit_sha256": digest(self.env.regular(STOCK_UNIT)),
@@ -620,6 +745,7 @@ class PowerController:
                      "transaction": {"id": transaction, "operation": "set",
                                      "owner": self.env.process_identity(),
                                      "prior_cap_uw": previous["cap_uw"] if previous else None,
+                                     "prior_target_celsius": previous.get("target_celsius") if previous else None,
                                      "prior_managed_hashes": previous["managed_hashes"] if previous else {XML: None, DROPIN: None}},
                      "last_apply": None}
             context.update(old_files=old_files, hashes=hashes, backup=backup, cap=cap, phase="staging")
@@ -644,8 +770,9 @@ class PowerController:
                 raise PowerError(f"Configuration staging failed: {exc}") from exc
             context["phase"] = "staged"
 
-    def set_limit(self, watts):
+    def set_limit(self, watts, target_celsius=None):
         self.require_root()
+        self.validate_target(target_celsius)
         if type(watts) is not int:
             raise PowerError("Limit must be an integer number of watts")
         transaction = str(uuid.uuid4())
@@ -653,7 +780,7 @@ class PowerController:
         try:
             # Includes lock.__exit__: signals during the staging/restart handoff
             # receive the same rollback as signals in the service command.
-            self._stage_set(watts, transaction, context)
+            self._stage_set(watts, transaction, context, target_celsius)
             cap, backup = context["cap"], context["backup"]
             self.restart()
             with self.lock():
@@ -740,6 +867,7 @@ class PowerController:
                            transaction={"id": transaction, "operation": "clear",
                                         "owner": self.env.process_identity(),
                                         "prior_cap_uw": state["cap_uw"],
+                                        "prior_target_celsius": state.get("target_celsius"),
                                         "prior_managed_hashes": state["managed_hashes"]})
             context.update(old_files=old_files, state=state, backup=backup, phase="staging")
             try:
@@ -824,6 +952,7 @@ class PowerController:
                                transaction={"id": transaction, "operation": "recover",
                                             "owner": self.env.process_identity(),
                                             **({"prior_cap_uw": pending.get("prior_cap_uw"),
+                                                "prior_target_celsius": pending.get("prior_target_celsius"),
                                                 "prior_managed_hashes": pending["prior_managed_hashes"]}
                                                if "prior_managed_hashes" in pending else {})})
                 self.env.atomic(STATE, json_bytes(barrier))
@@ -852,7 +981,9 @@ class PowerController:
 
     def status(self):
         result = {"managed": False, "desired_limit_uw": None, "observed": {},
-                  "thermald": {}, "holding_now": False, "errors": []}
+                  "desired_temperature_celsius": None,
+                  "thermald": {}, "holding_now": False, "errors": [],
+                  "holding_scope": "cpu_package_pl1", "pl2_managed": False}
         try:
             state = self.load_state()
             if state is None:
@@ -863,6 +994,7 @@ class PowerController:
             result["managed"] = state is not None
             if state:
                 result["desired_limit_uw"] = state["cap_uw"]
+                result["desired_temperature_celsius"] = state.get("target_celsius")
                 result["pending_transaction"] = state.get("transaction")
                 result["last_apply"] = state.get("last_apply")
         except (PowerError, OSError) as exc:
@@ -890,6 +1022,7 @@ class PowerController:
                 result["holding_now"] = bool(result["observed"]) and not result["errors"]
             except (PowerError, OSError) as exc:
                 result["errors"].append(str(exc))
+        result["rapl_constraints"], result["diagnostic_errors"] = self.rapl_constraints()
         return result
 
 
@@ -899,6 +1032,7 @@ def main(argv=None):
     commands.add_parser("status", help="Read desired limit, actual PL1 and thermald state")
     setter = commands.add_parser("set", help="Configure a PL1 ceiling (qualified host only)")
     setter.add_argument("watts", type=int)
+    setter.add_argument("--target-celsius", type=int, choices=(90,), help="Optional CPU passive cooling target; not a hard temperature limit")
     commands.add_parser("clear", help="Restore the stock thermald configuration")
     commands.add_parser("apply", help="Apply managed PL1 once; used by thermald ExecStartPost")
     commands.add_parser("recover", help="Restore stock policy after an interrupted transaction owner exits")
@@ -908,7 +1042,7 @@ def main(argv=None):
         raise PowerError("Interrupted by " + signal.Signals(signum).name)
     previous_handler = signal.signal(signal.SIGTERM, interrupted)
     try:
-        result = (controller.set_limit(args.watts) if args.command == "set"
+        result = (controller.set_limit(args.watts, target_celsius=args.target_celsius) if args.command == "set"
                   else getattr(controller, args.command)())
         print(json.dumps(result, indent=2, sort_keys=True))
         # Keep JSON available to diagnostics while making failed checks visible

@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Launcher for the installed peak-limit trial and a source checkout."""
+from pathlib import Path
+import runpy
+import sys
+
+source = Path(__file__).resolve().with_name("peak_limit_trial.py")
+module = source if source.is_file() else Path("/usr/lib/mechrevo-power-control/peak_limit_trial.py")
+sys.path.insert(0, str(module.parent))
+runpy.run_path(str(module), run_name="__main__")
