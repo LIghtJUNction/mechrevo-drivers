@@ -2181,7 +2181,7 @@ EXPORT_SYMBOL(set_full_fan_mode);
 
 static int uw_init_fan_locked(void) {
 	struct uniwill_device_features_t *uw_feats = &uniwill_device_features;
-	int i, temp_offset, status;
+	int i, temp_offset, status, recovery_status;
 
 	u16 addr_use_custom_fan_table_0 = 0x07c5; // use different tables for both fans (0x0f00-0x0f2f and 0x0f30-0x0f5f respectivly)
 	u16 addr_use_custom_fan_table_1 = 0x07c6; // enable 0x0fxx fantables
@@ -2197,6 +2197,18 @@ static int uw_init_fan_locked(void) {
 	u16 addr_gpu_custom_fan_table_fan_speed = 0x0f50;
 
 	if (!fans_initialized && uw_feats->uniwill_has_universal_ec_fan_control) {
+		/* OEM RAMFan1p5 commits disable -> table -> enable. Never edit a
+		 * live table, including after a stale initialization cache. */
+		status = uniwill_read_ec_ram(addr_use_custom_fan_table_1, &value_use_custom_fan_table_1);
+		if (status)
+			return status;
+		if (value_use_custom_fan_table_1 & (1 << offset_use_custom_fan_table_1)) {
+			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1,
+				value_use_custom_fan_table_1 & ~(1 << offset_use_custom_fan_table_1), 3);
+			if (status)
+				return status;
+		}
+
 		status = set_full_fan_mode_locked(false);
 		if (status)
 			return status;
@@ -2259,8 +2271,19 @@ static int uw_init_fan_locked(void) {
 			return status;
 		if (!((value_use_custom_fan_table_1 >> offset_use_custom_fan_table_1) & 1)) {
 			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 + (1 << offset_use_custom_fan_table_1), 3);
-			if (status)
+			if (status) {
+				/* A write may have reached firmware even when verification
+				 * failed. Preserve the original errno and report recovery
+				 * independently; failed transport cannot prove AUTO. */
+				recovery_status = uniwill_read_ec_ram(addr_use_custom_fan_table_1,
+					&value_use_custom_fan_table_1);
+				if (!recovery_status)
+					recovery_status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1,
+						value_use_custom_fan_table_1 & ~(1 << offset_use_custom_fan_table_1), 3);
+				if (recovery_status)
+					pr_err("Could not disable fan table after failed commit: %d\n", recovery_status);
 				return status;
+			}
 		}
 	}
 

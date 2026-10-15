@@ -99,6 +99,18 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_init_each_ec_operation_failure_stops_and_keeps_cache_invalid(self):
         self.check_case("init_failures")
 
+    def test_live_table_disabled_before_any_bytes_and_enabled_after_all_bytes(self):
+        self.check_case("init_live_transaction")
+
+    def test_live_table_failures_keep_uncommitted_and_report_failed_recovery(self):
+        self.check_case("init_live_failures")
+
+    def test_commit_recovery_write_failure_logs_its_errno_and_preserves_commit_errno(self):
+        self.check_case("init_commit_recovery_write_failure")
+
+    def test_commit_recovery_readback_mismatch_is_reported_without_claiming_auto(self):
+        self.check_case("init_commit_recovery_mismatch")
+
     def test_init_preserves_already_enabled_bits_and_unsupported_noop(self):
         self.check_case("init_boundaries")
 

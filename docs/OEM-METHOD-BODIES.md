@@ -1,6 +1,10 @@
 # Windows OEM 方法体恢复进度
 
-2026-10-16 的静态核验已经确认：关键方法在磁盘里的 IL 真的是同一个异常桩，不是 C# 反编译器丢失逻辑后补出的文本。目前已恢复原厂保护层的两个 native payload，并按 loader 字段重建为静态分析用 PE；尚未恢复布局判定、RPM 换算和风扇表消费方法的真实指令，不能据此认定完整移植或推导 EC 写入。
+2026-10-16 已从原始 5.17.51.34 服务静态恢复方法表中的全部 **5,183 个 CIL 方法体**。
+CIL 是 .NET 的中间指令；这次取得的是可逐条解码的真实指令，不再只是共享异常桩。
+布局判定、CPU/GPU 转速公式及 RamFan1p5 曲线写入顺序已经追到实际分支。
+恢复代码仍有继续调用 VM 的包装方法，因此这不等于全部保护逻辑已还原，更不等于 Linux 完整移植。
+全程只分析文件数据，没有加载或执行 OEM 程序、native 模块或恢复后的方法。
 
 ## 锁定分析对象
 
@@ -25,7 +29,7 @@
 | `MyControlCenter.FanInfo.GetEcGpuFanRpm` | `0x06000d4c` | `0x007a5aa8` |
 | `<Module>..cctor` | `0x06000002` | `0x007a5818` |
 
-RVA `0x7a5aa8` 映射文件偏移 `0x7a3ca8`，12 字节（含 tiny header）为 `2e72b7a80270736305000a7a`。其 IL 长度 11：加载 `Runtime exception` 字符串、构造 `System.Exception`、`throw`。所有上述关键方法共享它，原始 IL 中没有可据以计算 RPM、选择布局或消费 SMRW 的分支。
+RVA `0x7a5aa8` 映射文件偏移 `0x7a3ca8`，12 字节（含 tiny header）为 `2e72b7a80270736305000a7a`。其 IL 长度 11：加载 `Runtime exception` 字符串、构造 `System.Exception`、`throw`。所有上述关键方法共享它，原始磁盘桩本身没有可据以计算 RPM、选择布局或消费 SMRW 的分支；真实方法位于另一个受保护记录表中。
 
 `NoInlining`、原始模块初始化逻辑、内存保护/分配函数和 VM 解释器共同说明它需要保护层在运行时接管；不应把 `throw` 理解为厂商功能本来不可用。既有静态 de4dot 检测为 .NET Reactor，NETReactorSlayer 日志却明确报告 `Couldn't find any encrypted method`。工具保存文件成功不等于这些方法恢复成功。VM 的存在也不证明以上每个目标方法都采用同一种保护方式。
 
@@ -45,34 +49,66 @@ RVA `0x7a5aa8` 映射文件偏移 `0x7a3ca8`，12 字节（含 tiny header）为
 
 保留代码包含 native 入口 `vb_onload`，以及 `netvm` 下的 `vb_dn_vm_idx`、`vb_dn_vm_dec`、`vb_dn_vm_next`。对应 VM 注册入口原始 MethodDef 为 `0x06001ca2`，RVA `0x7a8430`；主要 loader 初始化入口 `0x0600196c`，RVA `0x7a1b38`。这些是进一步解析 token 到 VM bytecode 映射的入口，尚不是映射本身。
 
-## 复现与继续恢复
+## 按 token 恢复的真实方法表
 
-本机证据目录：`.local-tests/postboot-20261016/thermal-iterate/oem-body-audit/`。
+第一个 native 描述项是 `jithook`，第二个才是 `netvm`。真实方法恢复不需要先完成 VM 解释器解析：
+`jithook` 的恢复函数从共享桩的 IL 末尾取得 `FOAP` 标记及有符号相对位移，
+定位原 PE 的 `RVA 0x76cc60`、`FWSN` 方法表。表包含 5,183 个唯一且有效的 MethodDef token，
+每条记录 24 字节，给出对应加密方法体的位置和长度。不是扫描偶然出现的 token 字节，
+也不是把共享 RVA 当成唯一方法记录。
 
-- `Program.cs` / `audit.csproj`：用 .NET `PEReader` 与 `MetadataReader` 读取 MethodDef、FieldRVA、CLR header；没有使用 `Assembly.Load`、反射调用或执行原厂入口。
-- `metadata51.txt`：原始 51 版元数据；控制字符名称保持原样，按 token/RVA 查找，不依赖渲染后的名称。
-- `service51-il.txt`：用 `ilspycmd -il ORIGINAL_EXE` 生成的原始 51 版 IL。
-- `service51-static-il.txt`：既有静态 de4dot 产物的 IL，仅用来阅读简化控制流；偏移和结构必须回原 PE 交叉核对。
-- `extract_native.py`：先验证原 PE hash，再以只读 PE 数据和自行实现的 RC4 提取两个紧凑 image。
-- `native-receipts.json`：尺寸、格式和 hash；`native-*.compact.bin` 是本地证据，未提交。
+恢复工具从 native 指令中的参数现场导出解密参数；仓库和本文不保存密钥。
+所有记录均通过独立的 OEM `VBPD` 尾标记检查；错误参数和损坏密文的负例会被拒绝。
+结果包括 1,742 个 tiny、3,441 个 fat 方法头。2,123 个非零本地变量签名 token
+均能解析到原元数据的 StandAloneSig 本地变量签名。
+逐条解码共 328,357 条指令；20,342 个显式分支或 switch 目标全部落在有效指令起点，
+没有越界或错误目标。以上是静态格式和边界核验，**不是 CLR 栈/类型验证或 Windows 运行测试**。
+记录的附加签名字段还没有完整语义说明，不能把它直接当作方法内偏移。
 
-本地复现：
+| 已恢复目标 | 原始 token | 已确认的实际行为 |
+| --- | --- | --- |
+| RamFan1p5 支持判定 | `0x060005da` | 读取 EC `0x078e`，检查 bit 6 |
+| CPU 转速方法 | `0x06000d4b` | 高字节 `0x0464`、低字节 `0x0465`，拼成 16 位值 |
+| GPU 转速方法 | `0x06000d4c` | 高字节 `0x046c`、低字节 `0x046b`，拼成 16 位值 |
+| RamFan1p5 表写入 | `0x060017a4` | 每只风扇 16 项 duty；双表共 94 次字节写入 |
 
-```sh
-dotnet build .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/audit.csproj --no-restore
-dotnet .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/bin/Debug/net10.0/audit.dll ORIGINAL_EXE
-python -B .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/extract_native.py
-```
+拼接公式为 `(hi << 8) | lo`，其中 `|` 是按位或；没有额外缩放、型号分支或裁剪。
+间接 delegate 已解析到 `Object.GetType`、`MemberInfo.Name` 和字节转换；
+`AcpiCtrl.Read` 忽略传入的名称，不能根据该字符串猜另一个 EC 地址空间。
+GPU 低字节明确为 `0x046b`，没有把未经本机验证的 `0x046d` 套进来。
+但源码中的 RPM 名称和换算仍不能替代独立机械转速校准。
+`0x060019f6`、`0x06001c9b` 等恢复结果仍会分派到 VM；恢复外层 CIL 不代表其内部逻辑已经解释。
 
-下一步应从已重建的 native PE 继续只读解析 `vb_onload` 如何安装方法处理器、`vb_dn_vm_idx/dec/next` 如何取得映射。分别对 `0x060005da`、`0x06000d4b`、`0x06000d4c` 找到唯一记录、边界和可解码指令，保留映射及解码前后 hash；不能根据明文里偶然出现的 token 字节宣称已定位。若目标走 native 编译或另一个解密路径，应记录实际路径而不是强套 VM 模型。
+本机新十组只读样本均为 `0x078e = 0xec`、`0x0740 = 0x10`。
+结合恢复后的工厂选择分支，正常读取成功时会选择 `MyFanManager_RamFan1p5`
+及 `FanTable_Manager1p5`。同组 OEM 公式字值为 CPU 3,816–3,878、GPU 4,939；
+不是独立转速仪结果，也没有在本机运行 Windows 选择函数。
+表写入、失败处理及 Linux 实施边界见 [原厂策略迁移](OEM-MIGRATION-NEXT.md)。
 
-只有真实分支、输入来源、边界、单位和失败路径都可追踪，才可称某个 OEM 方法已恢复。之后仍需与本机 ACPI/EC 实测交叉核对；二进制恢复本身不授权写未知寄存器，也不能代替硬件验收。
+## 复现与证据
+
+维护工具及用法见 [Windows 静态工具](WINDOWS-STATIC-TOOLS.md)。工具固定原始来源哈希、
+拒绝覆盖已有输出目录，恢复方法需显式选择 `--recover-methods`；输出只留在本地。
+不能把恢复结果作为可执行 OEM 程序安装，不能将 OEM 指令、完整方法体、密钥或原厂二进制上传到仓库。
+
+私有证据位于 `.local-tests/postboot-20261016/oem-binding/`：
+
+- `mapping/FINDINGS.md`、`descriptor-receipt.json`：恢复入口、描述项、方法表定位及边界。
+- `mapping/all-record-receipt.json`：全部记录的位置、token、密文/明文 hash 和独立尾标记结果。
+- `mapping/il-boundary-receipt.json`、`locals-check.txt`、`negative-recovery-checks.json`：指令边界、本地签名及损坏负例。
+- `fan-layout-body/layout-semantics.json`、`control-semantics.md`：布局分支、16 项曲线、启用及生命周期调用。
+- `rpm-bodies/RPM-ANALYSIS.md`、`rpm-static-receipt.json`：delegate、地址、公式及失败路径。
+- `hardware/hardware-receipt.json`：十组实机只读样本、探针移除、原服务/模块/配置保持及 GPU 健康核验。
+
+早期 PE 元数据、native 解密与重建证据继续保留于
+`.local-tests/postboot-20261016/thermal-iterate/oem-body-audit/`。
+以下 native 首段追踪是此前恢复阶段的记录；其当时停止位置不再表示方法恢复的当前阻断。
 
 ## Native header 和节映射已重建
 
 原厂 compact loader 的两层处理已分别复现：外层 RC4 取得 compact image；再根据 `94 + 36 * 节数` 的节描述表，对每个节独立 RC4 解密。每项记录的五个整数依次是 RVA、虚拟长度、原始长度、compact 内偏移、节属性，随后是 16 字节节参数。脚本校验完整长度、原始范围、映像范围、节重叠和 64 位 PE 类型后才输出。
 
-`rebuild_native.py` 生成标准 PE 容器，使 `pefile` 和 `objdump -x/-d` 可以解析。保留了真实节内容、RVA、entry、image base、节属性和前六项 data directory；DOS/PE 头摆放、节名、文件对齐和 raw offset 是供分析使用的合成值。没有执行入口、加载依赖、绑定 imports 或应用运行时 relocation，不能声称得到可运行的原厂 DLL。原厂 loader 运行时还会把多个真实节压成一个合成节记录；本工具为了静态工具可见性保留了七个节，这也是有意的分析差异。
+`rebuild_native.py` 生成标准 PE 容器，使 `pefile` 和 `objdump -x/-d` 可以解析。保留了真实节内容、RVA、entry、image base、节属性和前六项 data directory；后续目录中的零值为合成值，不能据此推断原厂 CFG/load-config 缺失。DOS/PE 头摆放、节名、文件对齐和 raw offset 是供分析使用的合成值。没有执行入口、加载依赖、绑定 imports 或应用运行时 relocation，不能声称得到可运行的原厂 DLL。原厂 loader 运行时还会把多个真实节压成一个合成节记录；本工具为了静态工具可见性保留了七个节，这也是有意的分析差异。
 
 | 来源 | 分析 PE SHA-256 | 确认的 exports（RVA） |
 | --- | --- | --- |
@@ -91,9 +127,9 @@ python -B .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/extract_
 python -B .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/rebuild_native.py
 ```
 
-还独立按 `vb_onload` 的反汇编实现了范围表解码和 XOR/ROR 校验（`verify_native_integrity.py`），在原 PE 的映射数据上三项均精确通过：`RVA 0x6edb48 / 7,175,864 bytes -> 0x19b3fbc6`、`RVA 0x2000 / 6,994,144 bytes -> 0x8d0b5d9b`、`RVA 0x6adcf8 / 261,688 bytes -> 0xf1b611d6`。预期值来自原厂范围记录，结果不是根据脚本自身输出再设定。回执为 `native-integrity-receipt.json`。这确认 loader 数据和 native 校验算法解析正确，仍不证明目标方法体已恢复。
+还独立按 `vb_onload` 的反汇编实现了范围表解码和 XOR/ROR 校验（`verify_native_integrity.py`），在原 PE 的映射数据上三项均精确通过：`RVA 0x6edb48 / 7,175,864 bytes -> 0x19b3fbc6`、`RVA 0x2000 / 6,994,144 bytes -> 0x8d0b5d9b`、`RVA 0x6adcf8 / 261,688 bytes -> 0xf1b611d6`。预期值来自原厂范围记录，结果不是根据脚本自身输出再设定。回执为 `native-integrity-receipt.json`。这确认 loader 数据和 native 校验算法解析正确，仅验证 native 完整性算法；目标方法体的当前结果见上文。
 
-## vb_dn_vm_idx 首段可达控制流
+## 早期 vb_dn_vm_idx 首段可达控制流（历史记录）
 
 本轮进一步对单个 `vb_dn_vm_idx` 入口做了静态栈和常量传播，读取机器码作为数据分析，没有加载 OEM 模块、调用函数或借助 CPU 仿真器执行原厂指令。分析脚本 `trace_idx_static.py` 对来源 hash 固定，最多 500 条指令；遇到未知操作或非恒定分支就停止，不能跨边界猜测。磁盘里的函数指针值不会当成完成运行时绑定后的真实地址。
 
@@ -112,9 +148,9 @@ python -B .local-tests/postboot-20261016/thermal-iterate/oem-body-audit/rebuild_
 0x177f JMP QWORD PTR [RIP + 0xeac3]  ; 读取 RVA 0x10248，停止
 ```
 
-首段的真实效果已经缩小：入口 `RCX` 保存到 `RDI`，入口 `RDX` 保存到 `RBX`；`RCX` 改为 native `RVA 0x10310` 的地址，随后通过 `RVA 0x10248` 的运行时函数指针转出。此时栈指针相对函数入口为 `-48`，包含为外部调用保留的返回地址。两个输入参数的业务含义、间接函数的身份和返回行为尚未确定，不能把 `0x10310` 命名为索引表或把这一步说成已完成 token 查询。
+首段的真实效果已经缩小：入口 `RCX` 保存到 `RDI`，入口 `RDX` 保存到 `RBX`；`RCX` 改为 native `RVA 0x10310` 的地址，随后通过 `RVA 0x10248` 的运行时函数指针转出。此时栈指针相对函数入口为 `-48`，包含为外部调用保留的返回地址。该首段追踪当时尚未确定两个输入参数的业务含义、间接函数的身份和返回行为，不能把 `0x10310` 命名为索引表或把这一步说成已完成 token 查询。
 
-精确阻断是 `RVA 0x177f` 的机器码 `ff25c3ea0000`。继续恢复需要先追踪 `RVA 0x10248` 的写入/绑定来源，证明该调用的参数和返回约定，再继续它返回后的可达路径；不能把原文件中未绑定的指针当零地址继续运行。
+该阶段的停止位置是 `RVA 0x177f` 的机器码 `ff25c3ea0000`。后续已确认 `RVA 0x10248` 不属于 imports，磁盘初值指向模块内的返回桩，并继续解析了 idx/next/dec 的条件路径；未证明的运行时改写仍须保留限制。方法体实际来自第一个 jithook 模块的恢复表，不能强套第二个模块的 VM 索引模型。
 
 `idx-static-trace.json` 保留每条指令的来源 RVA、机器码、栈偏移、常量分支和引用；`idx-static-summary.json` 是有界摘要。脚本另外逐条与 `pefile.get_data` 比较机器码，并断言保留输入、地址形成和最终停止位置，防止反汇编行截断或错误栈传播悄悄通过。复现：
 

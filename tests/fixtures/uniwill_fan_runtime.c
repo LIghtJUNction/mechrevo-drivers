@@ -48,6 +48,8 @@ static unsigned int sleep_values[128], schedule_values[8];
 static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
+static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
+static bool commit_verification_exhausted, recovery_clear_written;
 static u8 ec[UINT16_MAX + 1u];
 
 static bool fault(bool write)
@@ -70,7 +72,15 @@ static int uniwill_read_ec_ram(u16 address, u8 *value)
     ++reads;
     if (fault(false))
         return fault_status; /* Deliberately leave the output untouched on failure. */
+    if (address == 0x07c6 && (ec[address] & 4) && ec[0x0f00] == 115 && failed_commit_readbacks) {
+        if (!--failed_commit_readbacks) commit_verification_exhausted = true;
+        return fault_status;
+    }
     *value = ec[address];
+    if (address == 0x07c6 && recovery_clear_written && recovery_mismatches) {
+        --recovery_mismatches;
+        *value ^= 4;
+    }
     if (mismatch_reads && address == mismatch_address) {
         --mismatch_reads;
         *value ^= 1;
@@ -84,6 +94,13 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     ++writes;
     if (fault(true))
         return fault_status;
+    if (address == 0x07c6 && !(value & 4) && commit_verification_exhausted) {
+        if (recovery_write_failures) {
+            --recovery_write_failures;
+            return -ENOSPC;
+        }
+        recovery_clear_written = true;
+    }
     ec[address] = value;
     return 0;
 }
@@ -129,6 +146,8 @@ static void reset(bool universal)
     memset(ec, 0, sizeof(ec));
     memset(events, 0, sizeof(events));
     event_count = reads = writes = sleeps = schedules = cancellations = errors = 0;
+    failed_commit_readbacks = recovery_write_failures = recovery_mismatches = 0;
+    commit_verification_exhausted = recovery_clear_written = false;
     fail_after = -1;
     exact_fail_event = -1;
     fault_status = -ETIMEDOUT;
@@ -289,7 +308,7 @@ int main(int argc, char **argv)
         u16 addresses[99]; u8 values[99]; init_expected(addresses, values);
         assert(uw_init_fan() == 0 && fans_initialized);
         check_writes(addresses, values, 99);
-        assert(reads == 101 && writes == 99 && sleeps == 0);
+        assert(reads == 102 && writes == 99 && sleeps == 0);
         int count = event_count;
         assert(uw_init_fan() == 0 && event_count == count);
         assert_cached(83, 97);
@@ -300,15 +319,90 @@ int main(int argc, char **argv)
         for (int failure = 0; failure < count; ++failure) {
             reset(true); fail_after = failure;
             assert(uw_init_fan() == -ETIMEDOUT && !fans_initialized);
-            assert(event_count > failure && event_count <= failure + 4);
+            assert(event_count > failure && event_count <= failure + 5);
             for (int i = failure; i < event_count; ++i)
                 assert(events[i].address == reference[failure].address);
             assert_cached(83, 97);
         }
+    } else if (strcmp(test, "init_live_transaction") == 0) {
+        ec[0x0751] = 0x11; ec[0x07c5] = 0x23; ec[0x07c6] = 0xa7;
+        assert(uw_init_fan() == 0 && fans_initialized);
+        assert(events[0].kind == 'r' && events[0].address == 0x07c6);
+        assert(events[1].kind == 'w' && events[1].address == 0x07c6 && events[1].value == 0xa3);
+        bool disabled = false; int table_writes = 0;
+        for (int i = 0; i < event_count; ++i) {
+            if (events[i].kind != 'w') continue;
+            if (events[i].address == 0x07c6) {
+                if (!(events[i].value & 4)) disabled = true;
+                else { assert(disabled && table_writes == 96); disabled = false; }
+            }
+            if (events[i].address >= 0x0f00 && events[i].address <= 0x0f5f) {
+                assert(disabled); ++table_writes;
+            }
+        }
+        assert(table_writes == 96 && ec[0x07c6] == 0xa7 && ec[0x07c5] == 0xa3);
+    } else if (strcmp(test, "init_live_failures") == 0) {
+        ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+        assert(uw_init_fan() == 0);
+        struct event reference[1024]; memcpy(reference, events, sizeof(reference));
+        int count = event_count;
+        for (int failure = 0; failure < count; ++failure) {
+            reset(true); ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+            fail_after = failure;
+            assert(uw_init_fan() == -ETIMEDOUT && !fans_initialized);
+            for (int i = 0; i < event_count; ++i)
+                if (events[i].kind == 'w' && events[i].address >= 0x0f00 && events[i].address <= 0x0f5f)
+                    assert(failure >= 3); /* disabled write and its readback succeeded */
+            if (failure >= 3 && !(reference[failure].address == 0x07c6 && reference[failure].kind == 'r' && failure == count-1))
+                assert(!(ec[0x07c6] & 4));
+            if (failure == count-1) assert(errors == 1); /* commit landed, recovery unavailable */
+        }
+        /* One transient commit write failure still permits verified success. */
+        reset(true); ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+        exact_fail_event = count-2; /* first commit WRITE fails once, retry succeeds */
+        assert(uw_init_fan() == 0 && fans_initialized);
+        /* Commit writes all land but every verification read fails. Recovery
+         * must clear the live table and retain the original transport errno. */
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int i = 0; i < sizeof(statuses)/sizeof(statuses[0]); ++i) {
+            reset(true); ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+            fault_status = statuses[i]; failed_commit_readbacks = 3;
+            assert(uw_init_fan() == statuses[i] && !fans_initialized);
+            assert(ec[0x07c6] == 0xa3 && errors == 0 && failed_commit_readbacks == 0);
+            assert(events[event_count-2].kind == 'w' && events[event_count-2].address == 0x07c6 && events[event_count-2].value == 0xa3);
+            assert(events[event_count-1].kind == 'r' && events[event_count-1].address == 0x07c6);
+            assert(uw_init_fan() == 0 && fans_initialized && ec[0x07c6] == 0xa7);
+        }
+    } else if (strcmp(test, "init_commit_recovery_write_failure") == 0) {
+        ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+        fault_status = -ENODEV; failed_commit_readbacks = recovery_write_failures = 3;
+        assert(uw_init_fan() == -ENODEV && !fans_initialized);
+        assert(commit_verification_exhausted && !recovery_clear_written);
+        assert(recovery_write_failures == 0 && ec[0x07c6] == 0xa7);
+        assert(errors == 1 && last_error == -ENOSPC);
+        for (int i = event_count-3; i < event_count; ++i)
+            assert(events[i].kind == 'w' && events[i].address == 0x07c6 && events[i].value == 0xa3);
+        /* Fault is exhausted: the ordinary explicit retry disables and commits. */
+        assert(uw_init_fan() == 0 && fans_initialized && ec[0x07c6] == 0xa7);
+        assert(errors == 1);
+    } else if (strcmp(test, "init_commit_recovery_mismatch") == 0) {
+        ec[0x0751] = 0x11; ec[0x07c6] = 0xa7;
+        fault_status = -ETIMEDOUT; failed_commit_readbacks = recovery_mismatches = 3;
+        assert(uw_init_fan() == -ETIMEDOUT && !fans_initialized);
+        assert(commit_verification_exhausted && recovery_clear_written && recovery_mismatches == 0);
+        /* Mock storage is disabled, but each readback disagreed. Production
+         * must report unverified recovery rather than claiming success. */
+        assert(ec[0x07c6] == 0xa3 && errors == 1 && last_error == -EIO);
+        for (int i = event_count-6; i < event_count; i += 2) {
+            assert(events[i].kind == 'w' && events[i].address == 0x07c6 && events[i].value == 0xa3);
+            assert(events[i+1].kind == 'r' && events[i+1].address == 0x07c6);
+        }
+        assert(uw_init_fan() == 0 && fans_initialized && ec[0x07c6] == 0xa7);
+        assert(errors == 1);
     } else if (strcmp(test, "init_boundaries") == 0) {
         ec[0x0751] = 0x11; ec[0x07c5] = 0xa3; ec[0x07c6] = 0x96;
         assert(uw_init_fan() == 0 && fans_initialized);
-        assert(writes == 96 && ec[0x07c5] == 0xa3 && ec[0x07c6] == 0x96);
+        assert(writes == 98 && ec[0x07c5] == 0xa3 && ec[0x07c6] == 0x96);
         reset(false);
         assert(uw_init_fan() == 0 && fans_initialized && event_count == 0);
     } else if (strcmp(test, "universal_speeds") == 0) {

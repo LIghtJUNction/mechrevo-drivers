@@ -51,7 +51,7 @@ class MechrevoEcSensors(unittest.TestCase):
     def test_all_bytes_both_channels_preserve_output_on_invalid_temperatures(self):
         self.check_case('temperature')
 
-    def test_only_two_read_only_temperature_channels_and_honest_labels(self):
+    def test_two_read_only_temperature_and_fan_channels_and_honest_labels(self):
         self.check_case('interface')
 
     def test_registration_failures_cleanup_and_successful_unload_order(self):

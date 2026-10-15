@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0+
-/* Read-only EC temperatures verified on this exact machine/firmware only. */
+/* Read-only EC sensors verified on this exact machine/firmware only. */
+#include <linux/acpi.h>
 #include <linux/dmi.h>
 #include <linux/err.h>
 #include <linux/hwmon.h>
 #include <linux/kmod.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
 
@@ -13,6 +15,15 @@
 #define MECHREVO_CPU_EC_TEMP 0x043e
 #define MECHREVO_GPU_EC_TEMP 0x044f
 
+/* OEM v5.17.51.34 RPM methods use INOU.ECRR, not the WMI transport. */
+#define MECHREVO_CPU_RPM_HIGH 0x0464
+#define MECHREVO_CPU_RPM_LOW  0x0465
+#define MECHREVO_GPU_RPM_HIGH 0x046c
+#define MECHREVO_GPU_RPM_LOW  0x046b
+#define MECHREVO_RPM_ATTEMPTS 3
+
+static acpi_handle mechrevo_sensors_inou;
+static DEFINE_MUTEX(mechrevo_sensors_rpm_lock);
 static struct platform_device *mechrevo_sensors_device;
 static struct device *mechrevo_sensors_hwmon;
 
@@ -59,22 +70,107 @@ static int mechrevo_sensors_temperature(int channel, long *value)
 	return 0;
 }
 
+static int mechrevo_sensors_ecrr(u16 address, u8 *value)
+{
+	union acpi_object argument = { .type = ACPI_TYPE_INTEGER };
+	struct acpi_object_list arguments = { .count = 1, .pointer = &argument };
+	unsigned long long raw;
+	acpi_status status;
+
+	argument.integer.value = address;
+	status = acpi_evaluate_integer(mechrevo_sensors_inou, "ECRR",
+				       &arguments, &raw);
+	if (ACPI_FAILURE(status))
+		return -EIO;
+	if (raw > 255)
+		return -ERANGE;
+	*value = raw;
+	return 0;
+}
+
+static int mechrevo_sensors_rpm(int channel, long *value)
+{
+	u16 high_address, low_address;
+	u8 high, low, check;
+	int attempt, ret;
+
+	if (channel == 0) {
+		high_address = MECHREVO_CPU_RPM_HIGH;
+		low_address = MECHREVO_CPU_RPM_LOW;
+	} else if (channel == 1) {
+		high_address = MECHREVO_GPU_RPM_HIGH;
+		low_address = MECHREVO_GPU_RPM_LOW;
+	} else {
+		return -EOPNOTSUPP;
+	}
+
+	/* Serialize our readers and reject a high-byte rollover mid-sample.
+	 * Firmware can still update independently; this is not an atomic EC read.
+	 */
+	mutex_lock(&mechrevo_sensors_rpm_lock);
+	for (attempt = 0; attempt < MECHREVO_RPM_ATTEMPTS; attempt++) {
+		ret = mechrevo_sensors_ecrr(high_address, &high);
+		if (ret)
+			goto out;
+		ret = mechrevo_sensors_ecrr(low_address, &low);
+		if (ret)
+			goto out;
+		ret = mechrevo_sensors_ecrr(high_address, &check);
+		if (ret)
+			goto out;
+		if (high == check) {
+			*value = ((long)high << 8) | low;
+			ret = 0;
+			goto out;
+		}
+	}
+	ret = -EAGAIN;
+out:
+	mutex_unlock(&mechrevo_sensors_rpm_lock);
+	return ret;
+}
+
+static int mechrevo_sensors_rpm_qualify(void)
+{
+	u8 project, capability;
+	int ret;
+
+	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB.INOU",
+				       &mechrevo_sensors_inou)) ||
+	    !acpi_has_method(mechrevo_sensors_inou, "ECRR"))
+		return -ENODEV;
+	ret = mechrevo_sensors_ecrr(0x0740, &project);
+	if (ret)
+		return ret;
+	ret = mechrevo_sensors_ecrr(0x078e, &capability);
+	if (ret)
+		return ret;
+	/* Only the observed project 0x10 and OEM RAM-fan-1p5 branch. */
+	return project == 0x10 && (capability & 0x40) ? 0 : -ENODEV;
+}
+
 static umode_t mechrevo_sensors_is_visible(const void *data,
 					 enum hwmon_sensor_types type,
 					 u32 attr, int channel)
 {
-	if (type != hwmon_temp || channel < 0 || channel > 1)
+	if (channel < 0 || channel > 1)
 		return 0;
-	return attr == hwmon_temp_input || attr == hwmon_temp_label ? 0444 : 0;
+	if (type == hwmon_temp)
+		return attr == hwmon_temp_input || attr == hwmon_temp_label ? 0444 : 0;
+	if (type == hwmon_fan)
+		return attr == hwmon_fan_input || attr == hwmon_fan_label ? 0444 : 0;
+	return 0;
 }
 
 static int mechrevo_sensors_read(struct device *dev,
 				enum hwmon_sensor_types type,
 				u32 attr, int channel, long *value)
 {
-	if (type != hwmon_temp || attr != hwmon_temp_input)
-		return -EOPNOTSUPP;
-	return mechrevo_sensors_temperature(channel, value);
+	if (type == hwmon_temp && attr == hwmon_temp_input)
+		return mechrevo_sensors_temperature(channel, value);
+	if (type == hwmon_fan && attr == hwmon_fan_input)
+		return mechrevo_sensors_rpm(channel, value);
+	return -EOPNOTSUPP;
 }
 
 static int mechrevo_sensors_read_string(struct device *dev,
@@ -82,10 +178,14 @@ static int mechrevo_sensors_read_string(struct device *dev,
 				       u32 attr, int channel,
 				       const char **value)
 {
-	if (type != hwmon_temp || attr != hwmon_temp_label ||
-	    channel < 0 || channel > 1)
+	if (channel < 0 || channel > 1)
 		return -EOPNOTSUPP;
-	*value = channel == 0 ? "CPU EC" : "GPU EC";
+	if (type == hwmon_temp && attr == hwmon_temp_label)
+		*value = channel == 0 ? "CPU EC" : "GPU EC";
+	else if (type == hwmon_fan && attr == hwmon_fan_label)
+		*value = channel == 0 ? "CPU fan" : "GPU fan";
+	else
+		return -EOPNOTSUPP;
 	return 0;
 }
 
@@ -99,6 +199,9 @@ static const struct hwmon_channel_info * const mechrevo_sensors_info[] = {
 	HWMON_CHANNEL_INFO(temp,
 		HWMON_T_INPUT | HWMON_T_LABEL,
 		HWMON_T_INPUT | HWMON_T_LABEL),
+	HWMON_CHANNEL_INFO(fan,
+		HWMON_F_INPUT | HWMON_F_LABEL,
+		HWMON_F_INPUT | HWMON_F_LABEL),
 	NULL,
 };
 
@@ -136,6 +239,16 @@ static int __init mechrevo_sensors_init(void)
 	if (ret)
 		return ret;
 
+	ret = mechrevo_sensors_rpm_qualify();
+	if (ret)
+		return ret;
+	ret = mechrevo_sensors_rpm(0, &value);
+	if (ret)
+		return ret;
+	ret = mechrevo_sensors_rpm(1, &value);
+	if (ret)
+		return ret;
+
 	mechrevo_sensors_device = platform_device_register_simple(
 		"mechrevo_ec_sensors", PLATFORM_DEVID_NONE, NULL, 0);
 	if (IS_ERR(mechrevo_sensors_device)) {
@@ -164,5 +277,5 @@ static void __exit mechrevo_sensors_exit(void)
 
 module_init(mechrevo_sensors_init);
 module_exit(mechrevo_sensors_exit);
-MODULE_DESCRIPTION("Read-only MECHREVO GM6PX0X EC temperatures (N.1.09MRO07)");
+MODULE_DESCRIPTION("Read-only MECHREVO GM6PX0X EC temperatures and OEM RPM (N.1.09MRO07)");
 MODULE_LICENSE("GPL");
