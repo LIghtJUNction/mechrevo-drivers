@@ -66,3 +66,26 @@ cases; the transaction implementation preserves complete-operation traces.
 for a red regression run. These are simulated provider races, not proof that
 this machine has experienced a physical lost-update incident. Firmware remains
 outside this provider mutex, and the tests do not use real EC writes.
+
+## AC auto-boot caller integration
+
+`test_uniwill_ac_auto_boot.py` extracts the actual AC auto-boot setter/getter,
+sysfs functions, cache declaration and all five provider functions. It uses the
+existing address `0x0726` and bit 3; the setter retains its internal u8 low-bit
+input semantics and only updates the existing bool cache after transport success.
+Sysfs continues to accept only 0/1 and translate transport failures to `-EIO`.
+The parsing double does not replace testing kernel `kstrtou8`.
+
+Twelve cases cover all 256 initial register bytes with all 256 u8 inputs,
+getter/output behavior, unchanged cache after failures, missing interfaces,
+read/write errors, a failed write with a hardware side effect, sysfs behavior,
+and both operation orders with another-bit update or full-byte write. The
+actual-source pthread schedules expose the old split read/write setter losing
+an unrelated update or overwriting an already completed write.
+`UNIWILL_AC_AUTO_BOOT_HEADER` selects historical source for red regression runs.
+The cache currently has no readers; these tests do not claim that its write
+outside the provider transaction lock is synchronized with concurrent setters.
+
+This change does not expand the AC auto-boot capability whitelist. GM6PX0X does
+not match that whitelist, so these simulated provider tests and module builds
+are not physical AC auto-boot validation on this machine.

@@ -1175,18 +1175,12 @@ static struct attribute_group uw_ac_auto_boot_attr_group = {
 
 static int uw_set_ac_auto_boot(u8 ac_auto_boot)
 {
-	u8 previous_data, next_data;
 	int result;
 
 	ac_auto_boot = (ac_auto_boot & 0x01) << 3;
 
-	result = uniwill_read_ec_ram(UW_EC_REG_AC_AUTO_BOOT_STATUS,
-				     &previous_data);
-	if (result != 0)
-		return result;
-
-	next_data = (previous_data & ~(1 << 3)) | ac_auto_boot;
-	result = uniwill_write_ec_ram(UW_EC_REG_AC_AUTO_BOOT_STATUS, next_data);
+	result = uniwill_update_ec_ram(UW_EC_REG_AC_AUTO_BOOT_STATUS,
+				       1 << 3, ac_auto_boot);
 	if (result == 0)
 		uw_ac_auto_boot_last_written_value = ac_auto_boot;
 
