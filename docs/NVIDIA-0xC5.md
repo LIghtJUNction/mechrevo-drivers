@@ -61,12 +61,19 @@ NPCF 的动态参数返回值包含这些路径更新的预算变量。
   提交协议问题，询问事件含义、是否需要独立处理及可核验的状态；尚待回复，没有提交猜测性修复。
   公开内容未附原始机器日志，也明确说明尚未对比同版本闭源模块。
 
-2026-10-15 后续核对官方主分支提交
-[`ca2d03e6`](https://github.com/NVIDIA/open-gpu-kernel-modules/commit/ca2d03e6fafd4d4b56b383497d931c25b283bfcf)：
-`nv-acpi.c` 和 `osapi.c` 与本机 `615.78.08` 对应文件逐字节一致，仍没有 `0xC5` 处理。
-另检查 [PR #1299](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1299) 和
-[PR #1181](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181)，它们针对 NVPCF 通知造成的
-待机唤醒，不定义或处理这里的 GPU `0xC5`，不能作为本问题的修复依据。
+2026-10-15 本轮 GitHub 研究再次核对：官方 main 仍为
+[`ca2d03e6`](https://github.com/NVIDIA/open-gpu-kernel-modules/commit/ca2d03e6fafd4d4b56b383497d931c25b283bfcf)
+（615.78.08），`nv-acpi.c` 和 `osapi.c` 与该发行版对应文件逐字节一致，GPU 回调仍没有
+`0xC5` 处理。[官方 Q&A #1447](https://github.com/NVIDIA/open-gpu-kernel-modules/discussions/1447)
+仍无回复或答案。这是在线源码与讨论状态核对，没有新增本机 trace 或功能验收。
+
+[PR #1181](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181) 与
+[PR #1299](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1299) 均未合并，针对空闲 GPU
+被 NVPCF/GPS 通知唤醒的问题，没有新增 GPU `0xC5` 分支；#1299 仅处理 NVPCF 延迟重放，
+明确不处理 GPS。#1181 的[另一台 ASUS 实测评论](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181#issuecomment-5308056264)
+还记录了丢弃通知留下旧功耗限额的后果。不能把这些他机结果写成本机修复，也不能据此吞通知、
+改映射或删断言。综合证据和下一步缺口见
+[适配调查](<../reports/GM6PX0X 功耗 固件 适配调查.md>)。
 
 ## 采集与恢复
 
