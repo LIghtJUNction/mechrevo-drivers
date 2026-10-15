@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-10-16",
+  "timezone": "Asia/Taipei",
+  "host": {
+    "vendor": "MECHREVO",
+    "product": "Kuangshi16Pro Series GM6PX0X",
+    "bios": "N.1.09MRO07",
+    "kernel": "7.2.9-arch1-1"
+  },
+  "firmware_sha256": "de42c0d802ed746c1d032bf53ebb3b80f92172b8fb55e115b0e433566f542cda",
+  "observation": {
+    "phase": 4,
+    "gfid": 17,
+    "mode": 0,
+    "selected_buffer": "AX44",
+    "bytes_hex": "8282c8050019577dffffffff",
+    "bytes_decimal": [
+      130,
+      130,
+      200,
+      5,
+      0,
+      25,
+      87,
+      125,
+      255,
+      255,
+      255,
+      255
+    ],
+    "smrw_dword_offsets": [
+      0,
+      4,
+      8
+    ],
+    "smrw_dwords_hex": [
+      "05c88282",
+      "7d571900",
+      "ffffffff"
+    ],
+    "smrw_matches_named_buffer": true
+  },
+  "read_protocol": {
+    "method": "\\_SB.INOU.SMRW",
+    "argument_length": 13,
+    "command": 187,
+    "command_hex": "bb",
+    "offsets": [
+      0,
+      4,
+      8
+    ],
+    "controls_written": false
+  },
+  "oem_metadata": {
+    "service_sha256": "a2b7d81ecf5c1dbdfc19738f17ba5e01e884d1b3688beb668858727307e2a318",
+    "windows_kernel_driver_sha256": "6e360ee4a0c42b2a4eaf46208c1592c87f8cd71aca2a6c52831a2ad356e61235",
+    "struct_name": "Utility.SMAPCTABLE_STRUCT",
+    "field_order": [
+      "PL1",
+      "PL2",
+      "PL4",
+      "TccOffset",
+      "ConfigurableTGP",
+      "DynamicBoost",
+      "TargetTemperature",
+      "DefaultTGP",
+      "DynamicBoostCpuTdp"
+    ],
+    "layout_binding_to_observed_buffer_proven": false,
+    "units_and_encoding_proven": false,
+    "gpu_enum": "Define.GN21_GPU_SKU",
+    "gpu_enum_value": 17,
+    "gpu_enum_name": "X4"
+  },
+  "verification": {
+    "source_sha256": "dd5bbc70a6406bb347608790830378e7c4c2d45d9c77e7bc8b4a0d9019e65403",
+    "root_only": true,
+    "module_unloaded": true,
+    "actual_c_mock_tests": 6,
+    "hardware_reads_passed": true
+  },
+  "qualification": {
+    "selected_factory_buffer": true,
+    "read_only_smrw_protocol": true,
+    "ec_power_writes": false,
+    "fan_curve": false,
+    "performance_improvement": false,
+    "gpu_recovery": false
+  },
+  "limits": [
+    "The selected factory buffer is not the current RAPL setting.",
+    "Values are raw bytes; no watt or temperature-offset conversion is qualified.",
+    "MRO07 phase 3/4 GFID 0x09 also select AP02 in the actual firmware.",
+    "Windows struct metadata suggests field names but its consumer method remains protected.",
+    "No factory policy write, power-mode switch, GPU reset, or reboot was performed."
+  ],
+  "runtime_evidence": {
+    "installed_driver_package": "4.24.0.r37.gbd8f514-1",
+    "installed_power_package": "0.1.0-8",
+    "pl1_readings_uw": {
+      "intel-rapl:0": 55000000,
+      "intel-rapl-mmio:0": 55000000
+    },
+    "services_active": [
+      "tccd",
+      "thermald",
+      "nvidia-powerd"
+    ],
+    "gpu_accessible": false,
+    "five_running_build_ids_match_disk": true,
+    "module_build_ids": {
+      "tuxedo_io": "363f5e850f912c6960d1194ca5120345a410dfad",
+      "tuxedo_keyboard": "f8b1062f699e7d962b96310fafa9a0faa70b8a03",
+      "uniwill_wmi": "953d721897dc4be48f53e80bdadbf91ee0e31dcf",
+      "tuxedo_compatibility_check": "088c848a6dac22ed8134ea73c1a7d645c7d96713",
+      "tuxedo_nb02_nvidia_power_ctrl": "713f08cfebdd90771012bf9faecbe3eb75eeba07"
+    },
+    "note": "Read-only checks in this session; thermal control may subsequently lower PL1."
+  }
+}
