@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-15T20:09:33.010784+00:00",
+  "host": {
+    "vendor": "MECHREVO",
+    "product": "Kuangshi16Pro Series GM6PX0X",
+    "bios": "N.1.09MRO07",
+    "kernel": "7.2.9-arch1-1"
+  },
+  "firmware": {
+    "dsdt_sha256": "de42c0d802ed746c1d032bf53ebb3b80f92172b8fb55e115b0e433566f542cda",
+    "ssdt15_sha256": "33575761681e9e96579cd876ee3720530772aef64702fa381a7cd6cd4250cbf9",
+    "ssdt15_bytes": 18135,
+    "ssdt15_oem_table_id": "Opt2Tabl"
+  },
+  "nvidia_source": {
+    "version": "615.78.08",
+    "commit": "1a82fbfda8f321b056eb3568850f9316c5e465c5",
+    "path": "src/nvidia/inc/kernel/platform/nvpcf.h",
+    "local_and_github_git_blob": "7d6771f3a6f83e57596dcad1cf5c228d449e241f",
+    "dynamic_power_unit_mw": 125,
+    "ctgp_ac_field_semantics": "offset, not absolute GPU limit"
+  },
+  "live_raw": {
+    "npcf_acbt_raw": 0,
+    "npcf_ctgp_raw": 1,
+    "npcf_dbac_raw": 0,
+    "npcf_atpp_raw": 640,
+    "npcf_amat_raw": 0,
+    "npcf_amit_raw": 0,
+    "npcf_moid_raw": 1
+  },
+  "interpretation": {
+    "ac_ctgp_offset_mw": 0,
+    "atpp_protocol_scaled_mw": 80000,
+    "atpp_is_measured_or_enforced_cpu_power": false,
+    "moid_has_static_table_branch": true,
+    "atpp_wire_field": "controller entry param1 SIGNED0, signed16; current value is positive"
+  },
+  "static_contract": {
+    "dsdt_callers": [
+      "\\_SB.PC00.LPCB.EC0._Q80",
+      "\\_SB.PC00.LPCB.EC0._Q81"
+    ],
+    "caller_revision": 256,
+    "callee": "\\_SB.NPCF.NPCF",
+    "callee_required_revision": 512,
+    "revision_mismatch": true,
+    "mismatch_return": 2147483649,
+    "callee_is_in_ssdt15": true,
+    "execution_during_xid79_proven": false,
+    "xid79_causal_link_proven": false,
+    "driver_2x_revision": 512
+  },
+  "verification": {
+    "source_sha256": "08614a32d32378e1cd0c1ef7eb15f2bb2b4d186afb06ff6f1cf068986f7224f9",
+    "root_only": true,
+    "module_unloaded": true,
+    "actual_c_mock_tests": 8,
+    "hardware_snapshot_passed": true
+  },
+  "actions": {
+    "nvpcf_or_dsm_invoked": false,
+    "t1wr_or_notifications_invoked": false,
+    "ec_settings_changed": false,
+    "power_services_changed": false,
+    "gpu_reset": false,
+    "reboot": false
+  },
+  "limits": [
+    "Named scalar reads are sequential, not an atomic GPU/EC snapshot.",
+    "NVPCF RAM values do not prove GPU consumption or enforcement.",
+    "Factory SMRW byte layout, units and safe write limits remain unqualified.",
+    "No GPU recovery, thermal improvement or full hardware compatibility is claimed.",
+    "A firmware caller-version mismatch is confirmed statically; no BIOS override is installed."
+  ],
+  "gps_static_contract": {
+    "function": 42,
+    "supported_fields_return": 257,
+    "current_limits_return": 258,
+    "tgpu_supported_bit": 8,
+    "ppmd_supported_bit": 16,
+    "tgpu_declared_supported": true,
+    "ppmd_declared_supported": false,
+    "tgpu_source": "EC0.CGCT; fallback 87 only if object is absent",
+    "tgpu_read_failure_explained": false,
+    "actual_gps_response_observed": false,
+    "causal_link_to_xid79_proven": false
+  }
+}

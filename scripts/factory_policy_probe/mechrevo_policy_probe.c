@@ -9,6 +9,14 @@
 #include <linux/sysfs.h>
 static acpi_handle inou;
 static DEFINE_MUTEX(probe_lock);
+/* Integer data objects only. Do not invoke NPCF/_DSM: its SET branch writes EC. */
+static const char * const npcf_names[] = {
+ "\\_SB.NPCF.ACBT", "\\_SB.NPCF.CTGP", "\\_SB.NPCF.DBAC",
+ "\\_SB.NPCF.ATPP", "\\_SB.NPCF.AMAT", "\\_SB.NPCF.AMIT", "\\MOID"
+};
+static const char * const npcf_labels[] = {
+ "acbt", "ctgp", "dbac", "atpp", "amat", "amit", "moid"
+};
 static int byte_at(u16 addr, u64 *value)
 {
  union acpi_object arg = { .type = ACPI_TYPE_INTEGER };
@@ -59,6 +67,13 @@ static ssize_t snapshot_show(struct kobject *k, struct kobj_attribute *a, char *
   arg.buffer.length = sizeof(request);
   if (ACPI_FAILURE(acpi_evaluate_integer(inou, "SMRW", &args, &word)) || word > U32_MAX || word != expected) { ret = -EIO; goto free; }
   used += sysfs_emit_at(buf, used, "smrw_%d=%08llx\n", i * 4, word);
+ }
+ /* These are protocol values, not measured GPU power or validated limits. */
+ for (i = 0; i < 7; ++i) {
+  u64 value;
+  if (ACPI_FAILURE(acpi_evaluate_integer(NULL, (char *)npcf_names[i], NULL, &value))) { ret = -EIO; goto free; }
+  if (value > ((i == 1 || i == 2) ? 1 : i == 6 ? 0xff : 0xffff)) { ret = -ERANGE; goto free; }
+  used += sysfs_emit_at(buf, used, "npcf_%s_raw=%llu\n", npcf_labels[i], value);
  }
  ret = used;
 free:

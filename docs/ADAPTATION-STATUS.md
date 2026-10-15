@@ -34,10 +34,22 @@
 这仍不等于 Windows 风扇 profile 目录映射完成。Windows 结构体的字段名是线索，
 单位、编码、有效范围与完整写入/恢复顺序尚未确认，因此维持当前 55 W RAPL 控制。
 
+进一步补齐 SSDT15 的 NVIDIA 协议定义，确认 NVPCF 动态功耗字段以 125 mW 为单位，
+CTGP 是偏移量。只读实机取得 ACBT=0、ATPP=640、MOID=1；不能把这些状态当作已执行的限值。
+同时确认 DSDT 两个事件的直接调用传入 0x0100，而接收方法要求 0x0200。
+该固件不一致尚未与 Xid 79 建立因果关系，没有安装 ACPI 覆盖或扩大功能验收分数。
+
 - [原厂分析与运行证据](<../reports/GM6PX0X 原厂控制台静态分析 20261016.md>)
 - [原厂表原始数据](../reports/data/gm6px0x-factory-policy-20261016.json)
 - [温度与固定地址交叉样本](../reports/data/gm6px0x-ec-paths-20261016.json)
 - [只读原厂表探针](../scripts/factory_policy_probe/README.md)
+- [NVIDIA 固件协议核对](<../reports/GM6PX0X NVIDIA 固件协议核对 20261016.md>)
+- [NVPCF 实机只读数据](../reports/data/gm6px0x-nvpcf-20261016.json)
+- [温度来源与 ACPI 事件语义](<../reports/GM6PX0X 温度来源核对 20261016.md>)
+
+并行复核还确认，NVIDIA 目标温度/电源模式日志走 GPS 0x2a；本机静态实现未宣告
+PPMD 电源模式支持，而目标温度 TGPU 有实现，后者的读取失败仍需恢复后追查。
+ACPI ECTZ 热区和扩展 EC CPTM 是不同路径，不能直接混用温度或据此套风扇曲线。
 
 后续先追表的消费代码、原厂初始化条件及恢复协议，再安排已恢复 GPU 状态下的热控验收。
 没有足够依据时不开放 EC 功耗写入，也不把诊断模块编译/加载成功当作散热适配完成。

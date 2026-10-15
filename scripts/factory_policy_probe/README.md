@@ -38,6 +38,19 @@ The final source was built and read on kernel 7.2.9-arch1-1, root-only access wa
 checked, and the module was unloaded. Other hardware and BIOS versions are
 unverified. No persistent module loading, DKMS registration, or service is added.
 
+The snapshot also reads six fixed NPCF integer data objects (`ACBT`, `CTGP`,
+`DBAC`, `ATPP`, `AMAT`, `AMIT`) and the root `MOID` field. It does **not** invoke
+`NPCF`, `_DSM`, `T1WR`, or notifications. Invalid flags or values outside their
+firmware field widths fail the snapshot. The values remain raw in the output.
+NVIDIA's NVPCF 2.x protocol uses 125 mW units; its common CTGP field is a power
+**offset**, not an absolute GPU limit. This separate protocol does not establish
+the units or layout of the SMRW factory buffer. Named reads are sequential and
+do not prove that the GPU consumed or enforced these values.
+
+The extended source was built, read with root-only access, and unloaded on the
+same host. See [the NVPCF investigation](../../reports/GM6PX0X%20NVIDIA%20固件协议核对%20261016.md)
+and [captured values](../../reports/data/gm6px0x-nvpcf-20261016.json).
+
 Regression tests execute the actual C source with ACPI/sysfs test doubles:
 
 ```sh
@@ -48,3 +61,6 @@ They cover all nine selection branches, unsupported identities, fixed read
 packets, object/length/range errors, read failures, mismatched DWORDs, lock
 release, DMI/method gates, and attribute-creation failure. Mock errors do not
 constitute real firmware fault injection.
+Eight tests now cover the fixed NPCF objects, raw output and encoded signed-word
+boundaries; failures include unreadable early/late objects, oversized values,
+invalid flags and MOID.

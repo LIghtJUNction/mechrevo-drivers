@@ -62,6 +62,22 @@ static const u8 factory[12]={130,130,200,5,0,25,87,125,255,255,255,255};
 static int acpi_evaluate_integer(acpi_handle h, const char *name, struct acpi_object_list *a, u64 *v) {
  (void)h;
  if (!strcmp(name,"\\PPFG")) { if(failure==1)return 1; *v=current_phase; return 0; }
+ const char *names[]={"\\_SB.NPCF.ACBT", "\\_SB.NPCF.CTGP", "\\_SB.NPCF.DBAC", "\\_SB.NPCF.ATPP", "\\_SB.NPCF.AMAT", "\\_SB.NPCF.AMIT", "\\MOID"};
+ const u64 values[]={160,1,0,640,200,80,10};
+ for(int i=0;i<7;i++)if(!strcmp(name,names[i])) {
+  if(h || a) {++invalid_requests;return 1;}
+  if(failure==11)return 1;
+  *v=values[i];
+  if(failure==12)*v=65536;
+  if(failure==13 && i==1)*v=2;
+  if(failure==14 && i==6)*v=256;
+  if(failure==15 && i==2)*v=2;
+  if(failure==16 && i==5)return 1;
+  if(failure==17 && i==6)return 1;
+  if(failure==18 && i==0)*v=65535;
+  if(failure==18 && i==3)*v=32768;
+  return 0;
+ }
  if (!strcmp(name,"ECRR")) {
   if(!a || a->count!=1 || a->pointer->type!=ACPI_TYPE_INTEGER)return 1;
   if(a->pointer->integer.value==0x7d2) { if(failure==2)return 1; *v=current_gpu; return 0; }
@@ -174,10 +190,24 @@ class FactoryProbeTests(unittest.TestCase):
                 self.assertEqual(self.lib.read_count(), 0)
 
     def test_acpi_failures_invalid_objects_and_mismatches_fail_snapshot(self):
-        for failure in range(1, 11):
+        for failure in range(1, 18):
             with self.subTest(failure=failure):
                 value, _ = self.run_snapshot(fail=failure)
                 self.assertLess(value, 0)
+
+    def test_npcf_fixed_data_objects_preserve_raw_units(self):
+        value, text = self.run_snapshot()
+        self.assertGreater(value, 0)
+        for name, raw in (("acbt",160),("ctgp",1),("dbac",0),
+                          ("atpp",640),("amat",200),("amit",80),("moid",10)):
+            self.assertIn(f"npcf_{name}_raw={raw}\n", text)
+        self.assertNotIn("watts=", text)
+
+    def test_encoded_signed_words_remain_raw_at_width_boundary(self):
+        value, text = self.run_snapshot(fail=18)
+        self.assertGreater(value, 0)
+        self.assertIn("npcf_acbt_raw=65535\n", text)
+        self.assertIn("npcf_atpp_raw=32768\n", text)
 
     def test_non_byte_identity_rejected(self):
         value, _ = self.run_snapshot(gpu=256)
