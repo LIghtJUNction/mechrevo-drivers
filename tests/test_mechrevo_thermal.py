@@ -4,9 +4,12 @@ import importlib.util
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 from contextlib import redirect_stdout, redirect_stderr
@@ -319,6 +322,96 @@ class ThermalSystemAdapter(unittest.TestCase):
         with mock.patch.object(THERMAL,"observe",return_value=invalid), redirect_stdout(stream):
             self.assertEqual(THERMAL.main([]),1)
         self.assertEqual(json.loads(stream.getvalue()),invalid)
+
+    def test_output_is_valid_incomplete_json_before_observation_starts(self):
+        output = self.root / "in-progress.json"
+        def inspect_progress(*args, **kwargs):
+            progress = json.loads(output.read_text())
+            self.assertFalse(progress["complete"])
+            self.assertFalse(progress["valid"])
+            return {"valid":False,"complete":False,"errors":["interrupted"],"samples":[]}
+        with mock.patch.object(THERMAL,"observe",side_effect=inspect_progress):
+            self.assertEqual(THERMAL.main(["--output",str(output)]),1)
+
+    def test_checkpoint_write_failure_preserves_previous_complete_json(self):
+        path = self.root / "checkpoint.json"
+        output = THERMAL.CheckpointFile(path)
+        before = path.read_bytes()
+        with mock.patch.object(THERMAL.os,"fsync",side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                output.save({"valid":True,"complete":True,"samples":[1]})
+        self.assertEqual(path.read_bytes(),before)
+        self.assertFalse(json.loads(path.read_text())["valid"])
+        self.assertEqual(list(self.root.glob(".mechrevo-thermal-*")),[])
+
+    def test_checkpoint_does_not_overwrite_an_external_replacement(self):
+        path = self.root / "checkpoint.json"
+        output = THERMAL.CheckpointFile(path)
+        replacement = self.root / "replacement.json"
+        replacement.write_text("external content")
+        os.replace(replacement,path)
+        with self.assertRaises(THERMAL.ObservationError):
+            output.save({"valid":True})
+        self.assertEqual(path.read_text(),"external content")
+
+    def test_each_sample_is_checkpointed_as_incomplete_before_final_success(self):
+        system = FakeSystem()
+        progress = []
+        result = THERMAL.observe(2,1,system,system.clock,system.sleep,
+                                 checkpoint=lambda state: progress.append(copy.deepcopy(state)))
+        self.assertTrue(result["valid"])
+        self.assertEqual([len(p["samples"]) for p in progress],[0,1,2,3])
+        self.assertTrue(all(p["valid"] is False and p["complete"] is False for p in progress))
+
+    def test_real_process_interruption_retains_parseable_incomplete_samples(self):
+        # Real signals exercise the CLI handler, file replacement and sampler
+        # together. Only FakeSystem is used; no hardware or service is touched.
+        child = r'''
+import importlib.util,sys,time
+spec=importlib.util.spec_from_file_location('fixture',sys.argv[1])
+fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
+module=fixture.THERMAL
+real_observe=module.observe
+system=fixture.FakeSystem()
+def sleep(seconds):
+ time.sleep(0.25);system.sleep(seconds)
+def observe(seconds,interval,checkpoint=None):
+ return real_observe(seconds,interval,system,system.clock,sleep,checkpoint)
+module.observe=observe
+raise SystemExit(module.main(['--seconds','60','--output',sys.argv[2]]))
+'''
+        for signum in (signal.SIGTERM,signal.SIGHUP,signal.SIGKILL):
+            with self.subTest(signal=signum):
+                output = self.root / (str(signum)+".json")
+                process = subprocess.Popen([sys.executable,"-B","-c",child,__file__,str(output)],
+                                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                try:
+                    deadline = time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        try:
+                            if json.loads(output.read_text()).get("samples"):
+                                break
+                        except (FileNotFoundError,json.JSONDecodeError):
+                            pass
+                        if process.poll() is not None:
+                            self.fail("Fixture process ended before its first checkpoint")
+                        time.sleep(0.01)
+                    else:
+                        self.fail("No sample checkpoint before interruption")
+                    process.send_signal(signum)
+                    stdout,stderr=process.communicate(timeout=5)
+                    self.assertEqual(process.returncode,-signal.SIGKILL if signum==signal.SIGKILL else 1,stderr)
+                    result=json.loads(output.read_text())
+                    self.assertFalse(result["valid"])
+                    self.assertFalse(result["complete"])
+                    self.assertGreaterEqual(len(result["samples"]),1)
+                    self.assertEqual(output.stat().st_mode & 0o777,0o600)
+                    if signum!=signal.SIGKILL:
+                        self.assertIn("signal",result["errors"][0])
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate(timeout=5)
 
 
 if __name__ == "__main__":

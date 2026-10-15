@@ -10,8 +10,11 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -27,6 +30,46 @@ READ_REQUESTS.update({name: 0x80000000 | (array.array("L").itemsize << 16) | (0x
 
 class ObservationError(RuntimeError):
     pass
+
+
+class CheckpointFile:
+    """Reserve a new output, then replace only our own file with complete JSON."""
+
+    def __init__(self, path):
+        self.path = Path(path).absolute()
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+        try:
+            self.identity = self.file_identity(os.fstat(fd))
+        finally:
+            os.close(fd)
+        self.save({"schema_version": 1, "kind": "read_only_observation",
+                   "complete": False, "valid": False, "errors": [], "faults": [], "samples": []})
+
+    @staticmethod
+    def file_identity(info):
+        return info.st_dev, info.st_ino
+
+    def check_destination(self):
+        info = self.path.lstat()
+        if not stat.S_ISREG(info.st_mode) or self.file_identity(info) != self.identity:
+            raise ObservationError("Output file was replaced externally; refusing overwrite")
+
+    def save(self, result):
+        self.check_destination()
+        fd, temporary = tempfile.mkstemp(prefix=".mechrevo-thermal-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                identity = self.file_identity(os.fstat(stream.fileno()))
+                json.dump(result, stream, indent=2, ensure_ascii=False, allow_nan=False)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            self.check_destination()
+            os.replace(temporary, self.path)
+            self.identity = identity
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
 
 def fault_message(message):
@@ -137,8 +180,9 @@ class System:
             self.fd = None
 
 
-def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.sleep):
+def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.sleep, checkpoint=None):
     system = system or System()
+    checkpoint = checkpoint or (lambda result: None)
     def parameter(value):
         return value if type(value) in (int, float) and math.isfinite(value) else repr(value)
     result = {"schema_version": 1, "complete": False, "valid": False,
@@ -146,6 +190,7 @@ def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.s
               "errors": [], "faults": [], "samples": []}
     start = clock()
     try:
+        checkpoint(result)
         if (not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
                     for v in (seconds, interval)) or not 1 <= seconds <= 3600
                 or not 0.2 <= interval <= 10 or seconds / interval > 3600):
@@ -190,6 +235,7 @@ def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.s
                                        for z in sample["rapl"].values()):
                 raise ObservationError("PL1 exceeded the managed ceiling during observation")
             check_kernel()  # Catch a fault during the EC/thermal read sequence.
+            checkpoint(result)
             elapsed = clock() - start
             if elapsed >= seconds:
                 break
@@ -220,20 +266,31 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, help="Create a new JSON file; never overwrite an existing file")
     args = parser.parse_args(argv)
     try:
-        # Reserve the destination before any hardware probing. Exclusive create
-        # refuses existing paths, including symlinks; no automatic directories.
-        stream = args.output.open("x", encoding="utf-8") if args.output else None
-    except OSError as exc:
+        output = CheckpointFile(args.output) if args.output else None
+    except (OSError, ObservationError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    previous_handlers = {}
+
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt("Interrupted by signal " + str(signum))
+
     try:
-        result = observe(args.seconds, args.interval)
-        json.dump(result, stream or sys.stdout, indent=2, ensure_ascii=False)
-        (stream or sys.stdout).write("\n")
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            previous_handlers[signum] = signal.signal(signum, interrupted)
+        result = observe(args.seconds, args.interval, checkpoint=output.save if output else None)
+        if output:
+            output.save(result)
+        else:
+            json.dump(result, sys.stdout, indent=2, ensure_ascii=False, allow_nan=False)
+            sys.stdout.write("\n")
         return 0 if result["valid"] else 1
+    except (OSError, ObservationError, ValueError) as exc:
+        print("Cannot save observation: " + str(exc), file=sys.stderr)
+        return 2
     finally:
-        if stream:
-            stream.close()
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":
