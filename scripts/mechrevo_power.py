@@ -852,6 +852,11 @@ class PowerController:
                   "thermald": {}, "holding_now": False, "errors": []}
         try:
             state = self.load_state()
+            if state is None:
+                orphaned = [path for path in (XML, DROPIN) if self.env.exists(path)]
+                if orphaned:
+                    raise PowerError("Orphan or foreign mechrevo-power configuration without managed state: "
+                                     + ", ".join(orphaned))
             result["managed"] = state is not None
             if state:
                 result["desired_limit_uw"] = state["cap_uw"]

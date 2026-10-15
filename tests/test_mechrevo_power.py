@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 import uuid
@@ -907,6 +908,146 @@ finally:
             self.controller.clear()
         self.assertEqual(self.host.read(POWER.XML), modified)
         self.assertTrue(self.host.path(POWER.STATE).exists())
+
+
+class PowerOrphanStatus(unittest.TestCase):
+    """A missing state file must not make leftover configuration look healthy."""
+
+    def setUp(self):
+        self.host = FakeHost(self)
+        self.controller = self.host.controller
+
+    def snapshot(self):
+        result = {}
+        for path in self.host.root.rglob("*"):
+            info = path.lstat()
+            content = os.readlink(path) if path.is_symlink() else path.read_bytes() if path.is_file() else None
+            result[str(path.relative_to(self.host.root))] = (info.st_mode, info.st_uid, info.st_gid, content)
+        return result
+
+    def read_cli_status(self):
+        before = self.snapshot()
+        self.host.commands.clear()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.host.env, "atomic", wraps=self.host.env.atomic) as atomic, \
+                mock.patch.object(self.host.env, "remove", wraps=self.host.env.remove) as remove, \
+                mock.patch.object(self.host.env, "directory", wraps=self.host.env.directory) as directory, \
+                mock.patch.object(self.host.env, "write_control", wraps=self.host.env.write_control) as writes, \
+                mock.patch.object(POWER, "PowerController", return_value=self.controller), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = POWER.main(["status"])
+        atomic.assert_not_called()
+        remove.assert_not_called()
+        directory.assert_not_called()
+        writes.assert_not_called()
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertTrue(all(argv[:3] == ["systemctl", "show", "thermald.service"]
+                            for argv in self.host.commands))
+        return exit_code, json.loads(stdout.getvalue())
+
+    def test_status_reports_each_orphaned_configuration_combination(self):
+        for paths in ((POWER.XML,), (POWER.DROPIN,), (POWER.XML, POWER.DROPIN)):
+            with self.subTest(paths=paths):
+                for path in (POWER.XML, POWER.DROPIN):
+                    if self.host.path(path).exists():
+                        self.host.path(path).unlink()
+                for path in paths:
+                    data = self.controller.xml(55_000_000, "ENERGY_CONSERVE") if path == POWER.XML else self.controller.dropin()
+                    self.host.write(path, data.decode())
+                exit_code, status = self.read_cli_status()
+                self.assertEqual(exit_code, 1)
+                self.assertFalse(status["managed"])
+                self.assertFalse(status["holding_now"])
+                self.assertIsNone(status["desired_limit_uw"])
+                self.assertTrue(status["observed"])
+                self.assertIn("Orphan or foreign mechrevo-power configuration", "; ".join(status["errors"]))
+                for path in paths:
+                    self.assertIn(path, "; ".join(status["errors"]))
+
+    def test_status_reports_broken_orphan_links_without_following_them(self):
+        for path in (POWER.XML, POWER.DROPIN):
+            with self.subTest(path=path):
+                for candidate in (POWER.XML, POWER.DROPIN):
+                    if os.path.lexists(self.host.path(candidate)):
+                        self.host.path(candidate).unlink()
+                link = self.host.path(path)
+                link.parent.mkdir(parents=True, exist_ok=True)
+                target = self.host.path("/missing-configuration-target")
+                link.symlink_to(target)
+                self.assertFalse(link.exists())
+                exit_code, status = self.read_cli_status()
+                self.assertEqual(exit_code, 1)
+                self.assertIn(path, "; ".join(status["errors"]))
+                self.assertFalse(status["holding_now"])
+                self.assertTrue(link.is_symlink())
+                self.assertFalse(target.exists())
+                link.unlink()
+
+    def test_status_without_state_or_configuration_remains_healthy_and_unqualified(self):
+        self.host.write("/sys/class/dmi/id/product_name", "unqualified product\n")
+        with mock.patch.object(self.controller, "qualify", side_effect=AssertionError("Unconfigured status must not qualify hardware")):
+            exit_code, status = self.read_cli_status()
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(status["errors"], [])
+        self.assertFalse(status["managed"])
+        self.assertFalse(status["holding_now"])
+
+    def test_corrupt_state_error_is_not_replaced_by_an_orphan_diagnosis(self):
+        self.host.write(POWER.STATE, '{"broken":')
+        self.host.write(POWER.XML, self.controller.xml(55_000_000, "ENERGY_CONSERVE").decode())
+        self.host.write(POWER.DROPIN, self.controller.dropin().decode())
+        exit_code, status = self.read_cli_status()
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(len(status["errors"]), 1)
+        self.assertIn("Invalid managed state:", status["errors"][0])
+        self.assertNotIn("Orphan", status["errors"][0])
+        self.assertFalse(status["holding_now"])
+
+    def test_status_during_set_staging_reports_pending_state_without_orphaning_it(self):
+        state_written, reader_done = threading.Event(), threading.Event()
+        results, failures = [], []
+        atomic = self.host.env.atomic
+        staged = False
+
+        def read_pending():
+            try:
+                if not state_written.wait(5):
+                    raise AssertionError("set did not reach the state/XML boundary")
+                results.append(self.controller.status())
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                reader_done.set()
+
+        def pause_after_pending_state(path, data, mode=0o600):
+            nonlocal staged
+            atomic(path, data, mode)
+            if path == POWER.STATE and not staged:
+                staged = True
+                state_written.set()
+                self.assertTrue(reader_done.wait(5), "status blocked behind set's transaction lock")
+
+        reader = threading.Thread(target=read_pending)
+        reader.start()
+        try:
+            with mock.patch.object(self.host.env, "atomic", side_effect=pause_after_pending_state):
+                context = {}
+                self.controller._stage_set(55, str(uuid.uuid4()), context)
+        finally:
+            state_written.set()
+            reader.join(5)
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(results), 1)
+        pending = results[0]
+        self.assertTrue(pending["managed"])
+        self.assertEqual(pending["pending_transaction"]["operation"], "set")
+        self.assertFalse(pending["holding_now"])
+        self.assertTrue(pending["errors"])
+        self.assertNotIn("Orphan", "; ".join(pending["errors"]))
+        self.assertEqual(context["phase"], "staged")
+        self.assertEqual(self.controller.load_state()["transaction"]["operation"], "set")
 
 
 class PowerStateValidation(unittest.TestCase):
