@@ -1,0 +1,753 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-10-16",
+  "timezone": "Asia/Taipei",
+  "kind": "qualified_host_ec_protocol_research",
+  "host": {
+    "vendor": "MECHREVO",
+    "product": "Kuangshi16Pro Series GM6PX0X",
+    "board": "GM6PX0X",
+    "bios": "N.1.09MRO07",
+    "cpu": "Intel Core i9-12900HX",
+    "kernel": "7.2.9-arch1-1",
+    "installed_driver_package": "4.24.0.r37.gbd8f514-1"
+  },
+  "qualification": {
+    "thermal_optimization": false,
+    "fan_curve": false,
+    "rpm_conversion": false,
+    "ec_power_limits": false,
+    "gpu_recovery": false,
+    "preexisting_gpu_fault": true,
+    "controls_changed": false
+  },
+  "firmware": {
+    "dsdt_sha256": "de42c0d802ed746c1d032bf53ebb3b80f92172b8fb55e115b0e433566f542cda",
+    "ecrr_path": "\\_SB.INOU.ECRR",
+    "ecrr_base": "0xfe410000",
+    "fields": {
+      "043e": "CPTM",
+      "044f": "VGAT",
+      "0e0d": "CPUT"
+    }
+  },
+  "oem_artifacts": [
+    {
+      "version": "5.17.49.19",
+      "url": "https://driver.mechrevo.com/d.mechrevo.com/driver/MECHREVO2026/CCU/ControlCenter_5.17.49.19_Mechrevo.zip",
+      "size": 268073852,
+      "sha256": "d5b80ea704c2bebc5d4a8c30faac6cf8c03d6a527932d3cdf2969865e748a93b",
+      "service_sha256": "d46663118d867cfab4c263df5d4132bd6a98390c5cf281eb0e71ab0cc5686c15",
+      "acpi_dll_sha256": "ee2c506dd414222013e6dbe5c67a774b1fa1387a47ad5d705a82f048c1a945bb",
+      "executed": false
+    },
+    {
+      "version": "5.17.51.34",
+      "url": "https://driver.mechrevo.com/d.mechrevo.com/driver/MECHREVO2026/CCU/ControlCenter_5.17.51.34_Mechrevo.zip",
+      "size": 275615905,
+      "sha256": "f73768655deb222125460af75fa5b9ff4d647f589b0602d83e2f2207b1b72c10",
+      "service_sha256": "a2b7d81ecf5c1dbdfc19738f17ba5e01e884d1b3688beb668858727307e2a318",
+      "acpi_dll_sha256": "d8698164417a8416c97b95d44bbd52efd2330f50299bfe0dc205ce0f4f6f5786",
+      "executed": false
+    }
+  ],
+  "initial_temperature_comparison": {
+    "kind": "temporary_read_only_transport_comparison",
+    "gpu_fault_preexisting": true,
+    "thermal_optimization_qualified": false,
+    "samples": [
+      {
+        "i": 0,
+        "read_s": 0.47141895499953534,
+        "package_mc": 94000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 70,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 0.0
+      },
+      {
+        "i": 1,
+        "read_s": 0.4704776420003327,
+        "package_mc": 94000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 46,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 1.000067
+      },
+      {
+        "i": 2,
+        "read_s": 0.4692448610003339,
+        "package_mc": 95000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 91,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 91,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 15,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 91,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 2.000134
+      },
+      {
+        "i": 3,
+        "read_s": 0.46779615600098623,
+        "package_mc": 95000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 91,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 46,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 3.000225
+      },
+      {
+        "i": 4,
+        "read_s": 0.4671442939998087,
+        "package_mc": 94000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 27,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 4.000291
+      },
+      {
+        "i": 5,
+        "read_s": 0.4691811590000725,
+        "package_mc": 94000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 94,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 94,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 83,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 94,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 5.000372
+      },
+      {
+        "i": 6,
+        "read_s": 0.4735521090005932,
+        "package_mc": 95000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 94,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 94,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 83,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 6.000443
+      },
+      {
+        "i": 7,
+        "read_s": 0.4702203320011904,
+        "package_mc": 95000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 108,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 7.000515
+      },
+      {
+        "i": 8,
+        "read_s": 0.4693427519996476,
+        "package_mc": 92000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 108,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 8.000582
+      },
+      {
+        "i": 9,
+        "read_s": 0.4688112159983575,
+        "package_mc": 92000,
+        "wmi_before": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "ecrr": {
+          "043e": 95,
+          "044f": 63,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 14,
+          "0465": 108,
+          "046b": 75,
+          "046c": 19,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "available": 1,
+          "ec_cpu_c": 95,
+          "ec_gpu_c": 63,
+          "fan1_raw": 170,
+          "fan2_raw": 170
+        },
+        "elapsed_s": 9.000668
+      }
+    ]
+  },
+  "final_cli_comparison": {
+    "schema_version": 1,
+    "kind": "ec_transport_diagnostic",
+    "complete": true,
+    "thermal_optimization_qualified": false,
+    "gpu_health_checked": false,
+    "samples": [
+      {
+        "read_duration_s": 0.4770518409986835,
+        "package_before_mc": 91000,
+        "package_after_mc": 91000,
+        "wmi_before": {
+          "ec_cpu_c": 82,
+          "ec_gpu_c": 61,
+          "fan1_raw": 128,
+          "fan2_raw": 128
+        },
+        "ecrr": {
+          "043e": 82,
+          "044f": 61,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 9,
+          "0465": 132,
+          "046b": 75,
+          "046c": 15,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "ec_cpu_c": 82,
+          "ec_gpu_c": 61,
+          "fan1_raw": 129,
+          "fan2_raw": 129
+        },
+        "ecrr_temp_seen_in_wmi": {
+          "ec_cpu_c": true,
+          "ec_gpu_c": true
+        },
+        "elapsed_s": 0.0
+      },
+      {
+        "read_duration_s": 0.4753100359994278,
+        "package_before_mc": 69000,
+        "package_after_mc": 69000,
+        "wmi_before": {
+          "ec_cpu_c": 81,
+          "ec_gpu_c": 61,
+          "fan1_raw": 133,
+          "fan2_raw": 133
+        },
+        "ecrr": {
+          "043e": 81,
+          "044f": 61,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 10,
+          "0465": 50,
+          "046b": 75,
+          "046c": 16,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "ec_cpu_c": 81,
+          "ec_gpu_c": 61,
+          "fan1_raw": 134,
+          "fan2_raw": 134
+        },
+        "ecrr_temp_seen_in_wmi": {
+          "ec_cpu_c": true,
+          "ec_gpu_c": true
+        },
+        "elapsed_s": 1.562857
+      },
+      {
+        "read_duration_s": 0.48021949299982225,
+        "package_before_mc": 81000,
+        "package_after_mc": 81000,
+        "wmi_before": {
+          "ec_cpu_c": 76,
+          "ec_gpu_c": 61,
+          "fan1_raw": 137,
+          "fan2_raw": 137
+        },
+        "ecrr": {
+          "043e": 76,
+          "044f": 61,
+          "0740": 16,
+          "0765": 161,
+          "0766": 180,
+          "0464": 10,
+          "0465": 121,
+          "046b": 75,
+          "046c": 16,
+          "1804": 255,
+          "1809": 255,
+          "0e0d": 0
+        },
+        "wmi_after": {
+          "ec_cpu_c": 76,
+          "ec_gpu_c": 61,
+          "fan1_raw": 138,
+          "fan2_raw": 138
+        },
+        "ecrr_temp_seen_in_wmi": {
+          "ec_cpu_c": true,
+          "ec_gpu_c": true
+        },
+        "elapsed_s": 2.671714
+      }
+    ],
+    "errors": []
+  },
+  "fixed_low_address_comparison": {
+    "samples": [
+      {
+        "elapsed_s": 0.0,
+        "bytes": {
+          "043e": {
+            "ecrr": 95,
+            "wmi": 95
+          },
+          "044f": {
+            "ecrr": 63,
+            "wmi": 63
+          },
+          "0740": {
+            "ecrr": 16,
+            "wmi": 16
+          },
+          "0765": {
+            "ecrr": 161,
+            "wmi": 161
+          },
+          "0766": {
+            "ecrr": 180,
+            "wmi": 180
+          },
+          "078e": {
+            "ecrr": 236,
+            "wmi": 236
+          },
+          "0751": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0783": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0784": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0785": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0786": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0464": {
+            "ecrr": 14,
+            "wmi": 14
+          },
+          "0465": {
+            "ecrr": 252,
+            "wmi": 252
+          },
+          "046b": {
+            "ecrr": 75,
+            "wmi": 75
+          },
+          "046c": {
+            "ecrr": 19,
+            "wmi": 19
+          },
+          "046d": {
+            "ecrr": 115,
+            "wmi": 115
+          }
+        }
+      },
+      {
+        "elapsed_s": 1.982368,
+        "bytes": {
+          "043e": {
+            "ecrr": 95,
+            "wmi": 95
+          },
+          "044f": {
+            "ecrr": 63,
+            "wmi": 63
+          },
+          "0740": {
+            "ecrr": 16,
+            "wmi": 16
+          },
+          "0765": {
+            "ecrr": 161,
+            "wmi": 161
+          },
+          "0766": {
+            "ecrr": 180,
+            "wmi": 180
+          },
+          "078e": {
+            "ecrr": 236,
+            "wmi": 236
+          },
+          "0751": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0783": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0784": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0785": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0786": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0464": {
+            "ecrr": 14,
+            "wmi": 14
+          },
+          "0465": {
+            "ecrr": 64,
+            "wmi": 64
+          },
+          "046b": {
+            "ecrr": 75,
+            "wmi": 75
+          },
+          "046c": {
+            "ecrr": 19,
+            "wmi": 19
+          },
+          "046d": {
+            "ecrr": 115,
+            "wmi": 115
+          }
+        }
+      },
+      {
+        "elapsed_s": 3.958146,
+        "bytes": {
+          "043e": {
+            "ecrr": 95,
+            "wmi": 95
+          },
+          "044f": {
+            "ecrr": 63,
+            "wmi": 63
+          },
+          "0740": {
+            "ecrr": 16,
+            "wmi": 16
+          },
+          "0765": {
+            "ecrr": 161,
+            "wmi": 161
+          },
+          "0766": {
+            "ecrr": 180,
+            "wmi": 180
+          },
+          "078e": {
+            "ecrr": 236,
+            "wmi": 236
+          },
+          "0751": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0783": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0784": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0785": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0786": {
+            "ecrr": 0,
+            "wmi": 0
+          },
+          "0464": {
+            "ecrr": 14,
+            "wmi": 14
+          },
+          "0465": {
+            "ecrr": 83,
+            "wmi": 83
+          },
+          "046b": {
+            "ecrr": 75,
+            "wmi": 75
+          },
+          "046c": {
+            "ecrr": 19,
+            "wmi": 19
+          },
+          "046d": {
+            "ecrr": 81,
+            "wmi": 81
+          }
+        }
+      }
+    ],
+    "probe_unloaded": true,
+    "all_equal": true
+  },
+  "diagnostic_source_sha256": {
+    "scripts/ec_path_probe/mechrevo_ec_probe.c": "c0c31a161bc34a46393cc65c731bbb5b65e5c88cfc151b7ba4c3440f61357812",
+    "scripts/compare_ec_paths.py": "23c1192e72d782652a0cdd36230231f021969a529255884d669aa7aa48033919",
+    "tests/test_compare_ec_paths.py": "5492787e00bb4da4b3fc5956582f7cf5023c57a0d89665ed46f066af00e62ea4"
+  },
+  "verification": {
+    "comparison_unit_tests_passed": 8,
+    "existing_thermal_unit_tests_passed": 32,
+    "module_build_passed": true,
+    "temporary_load_read_unload_passed": true,
+    "root_only_snapshot_verified": true
+  },
+  "limits": [
+    "Only this host and BIOS have been tested.",
+    "WMI reads use mailbox command writes internally.",
+    "Two agreeing EC paths do not establish physical sensor semantics or refresh latency.",
+    "0x1804/0x1809 differ between address spaces and must not be substituted.",
+    "Forced static deobfuscation did not restore critical method bodies.",
+    "RPM bytes are raw candidates, not qualified RPM values.",
+    "No OEM firmware or complete executable is redistributed."
+  ]
+}
