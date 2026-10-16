@@ -2568,8 +2568,22 @@ static int uw_fan_control_start(void)
 	mutex_lock(&uniwill_fan_command_lock);
 	mutex_lock(&uniwill_fan_state_lock);
 	uw_fan_quiesce_locked();
-	uniwill_fan_removed = false;
+	uniwill_fan_removed = true;
 	uniwill_pm_ready = false;
+	direct_fan_control_suspend = false;
+	fans_initialized = false;
+	/* Failed removal can leave an owned/uncertain RAM table. A rebind in
+	 * this module must verify its release before forgetting that ownership.
+	 * Lost capability is not permission to touch an unqualified device. */
+	if (universal_fan_manual_active) {
+		status = uniwill_device_features.uniwill_has_universal_ec_fan_control ?
+			(int)uw_set_fan_auto_locked() : -ENODEV;
+		if (status) {
+			uw_fan_unlock();
+			return status;
+		}
+	}
+	uniwill_fan_removed = false;
 	uniwill_pm_suspended = false;
 	fans_initialized = false;
 	universal_fan_manual_active = false;
@@ -2801,6 +2815,19 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 	mutex_lock(&uniwill_fan_state_lock);
 	uniwill_fan_removed = true;
 	uw_fan_quiesce_locked();
+	/* AP-exists (0x0741) is not proof that firmware disables RAM tables.
+	 * Release only a table this lifecycle owns, while transport/resources
+	 * are still available. Universal AUTO preserves the FULL-mode byte. */
+	if (uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+	    universal_fan_manual_active) {
+		status = (int)uw_set_fan_auto_locked();
+		if (status)
+			TUXEDO_ERROR("Could not restore automatic fan control during removal: %d\n", status);
+	}
+	/* Teardown cannot replay saved PM targets, even when AUTO failed. Keep
+	 * uncertain hardware ownership for diagnostics; reprobe resets it. */
+	direct_fan_control_suspend = false;
+	fans_initialized = false;
 	mutex_unlock(&uniwill_fan_state_lock);
 
 	uw_charging_uninit(dev);

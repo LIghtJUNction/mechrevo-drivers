@@ -30,7 +30,7 @@ typedef uint32_t u32;
 #define pr_info(...) do {} while (0)
 struct platform_device { int unused; };
 struct uniwill_device_features_t {
-    bool uniwill_custom_profile_mode_needed, uniwill_profile_v1;
+    bool uniwill_custom_profile_mode_needed, uniwill_profile_v1, uniwill_has_universal_ec_fan_control;
 };
 static struct uniwill_device_features_t features;
 static struct { void *input_device; } uniwill_keyboard_driver;
@@ -124,6 +124,11 @@ static void uniwill_i8042_filter(void) {}
 static int i8042_install_filter(void (*filter)(void), void *context) {
     assert(filter == uniwill_i8042_filter && context == NULL);
     assert(uniwill_touchp_toggle_seq_pos == 0); resource(10); return 0;
+}
+#define uniwill_device_features features
+/* Fan-owned lifecycle integration is tested with actual AUTO in the fan fixture. */
+static int uw_set_fan_auto_locked(void) {
+    assert(!"Unexpected owned RAM table in isolated non-fan fixture"); return 0;
 }
 /* @ACTUAL_FUNCTIONS@ */
 static int invoke_helper(bool zero) { /* @INVOKE_HELPER@ */ }

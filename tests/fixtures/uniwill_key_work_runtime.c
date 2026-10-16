@@ -141,6 +141,12 @@ static void platform_device_unregister(struct platform_device *dev) { uniwill_ke
 static void platform_driver_unregister(struct platform_driver *drv) { assert(drv == &driver); }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+static struct { bool uniwill_has_universal_ec_fan_control; } uniwill_device_features;
+static bool universal_fan_manual_active, direct_fan_control_suspend, fans_initialized;
+/* This key-work-only fixture never starts RAM fan control. */
+static int uw_set_fan_auto_locked(void) {
+    assert(!"Unexpected owned RAM table in key-work-only fixture"); return 0;
+}
 /* @DRIVER_FUNCTIONS@ */
 #pragma GCC diagnostic pop
 static void send_sequence(void) {

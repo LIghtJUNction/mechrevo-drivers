@@ -16,7 +16,7 @@ typedef uint16_t u16;
 struct device { struct { int unused; } kobj; };
 struct platform_device { struct device dev; };
 struct device_attribute { int unused; };
-struct uniwill_device_features_t { bool uniwill_has_charging_prio, uniwill_has_charging_profile; };
+struct uniwill_device_features_t { bool uniwill_has_charging_prio, uniwill_has_charging_profile, uniwill_has_universal_ec_fan_control; };
 static struct uniwill_device_features_t uniwill_device_features;
 struct char_to_u8_t { char *descriptor; u8 value; };
 static int uw_charging_prio_attr_group, uw_charging_profile_attr_group;
@@ -188,6 +188,11 @@ static int uniwill_write_kbd_bl_enable(u8 value) { (void)value; return 0; }
 static void uw_lightbar_remove(struct platform_device *dev) { (void)dev; }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+static bool universal_fan_manual_active, direct_fan_control_suspend, fans_initialized;
+/* This charging-only fixture never starts RAM fan control. */
+static int uw_set_fan_auto_locked(void) {
+    assert(!"Unexpected owned RAM table in charging-only fixture"); return 0;
+}
 /* @DRIVER_FUNCTIONS@ */
 #pragma GCC diagnostic pop
 

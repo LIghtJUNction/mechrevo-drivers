@@ -26,12 +26,18 @@ static struct work_struct uniwill_key_event_work;
 struct device { struct { int unused; } kobj; };
 struct platform_device { struct device dev; };
 struct serio { int unused; };
-struct uniwill_device_features_t { bool uniwill_profile_v1; };
+struct uniwill_device_features_t { bool uniwill_profile_v1, uniwill_has_universal_ec_fan_control; };
 static struct platform_device platform;
 static struct uniwill_device_features_t features;
 static bool uw_lightbar_loaded, uw_charging_prio_loaded, uw_charging_profile_loaded;
 static bool uniwill_fan_removed, uniwill_fan_work_paused, fans_initialized;
 static bool universal_fan_manual_active;
+#define uniwill_device_features features
+/* This probe-only fixture never starts RAM fan control. Complete production
+ * AUTO and removal integration is exercised by uniwill_fan_concurrency.c. */
+static u32 uw_set_fan_auto_locked(void) {
+    assert(!"Unexpected owned RAM table in probe-only fixture"); return 0;
+}
 static bool direct_fan_control_started, direct_fan_control_restart_needed, direct_fan_control_suspend;
 static u8 direct_fan_control_current_value_fan0, direct_fan_control_current_value_fan1;
 static u8 direct_fan_control_current_value_fan0_suspend_save, direct_fan_control_current_value_fan1_suspend_save;

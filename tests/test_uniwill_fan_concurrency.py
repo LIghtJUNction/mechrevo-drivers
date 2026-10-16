@@ -88,6 +88,24 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
                                 timeout=10, preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_reprobe_releases_failed_remove_owner_or_fails_closed_without_losing_retry(self):
+        self.check_case("universal_remove_reprobe")
+
+    def test_remove_cleanup_failure_or_readback_mismatch_still_completes_ap_disable(self):
+        self.check_case("universal_remove_cleanup_only_failure")
+
+    def test_remove_owned_universal_table_before_resources_and_ap_disable_preserves_full(self):
+        self.check_case("universal_remove_owned")
+
+    def test_remove_each_auto_and_ap_failure_reports_independently_and_still_tears_down(self):
+        self.check_case("universal_remove_failures")
+
+    def test_remove_unowned_table_pending_intent_or_noncapability_does_not_touch_ram(self):
+        self.check_case("universal_remove_unowned")
+
+    def test_remove_owned_universal_cleanup_blocks_concurrent_manual_reentry(self):
+        self.check_case("universal_remove_manual")
+
     def test_universal_suspend_serializes_and_blocks_new_manual_request(self):
         self.check_case("universal_suspend_manual")
 

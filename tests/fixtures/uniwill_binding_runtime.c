@@ -23,7 +23,7 @@ struct tuxedo_keyboard_driver {
 };
 struct uniwill_interface_t { const char *string_id; void (*event_callb)(u32); };
 struct wmi_device { int unused; };
-struct uniwill_device_features_t { bool uniwill_profile_v1; };
+struct uniwill_device_features_t { bool uniwill_profile_v1, uniwill_has_universal_ec_fan_control; };
 static struct uniwill_device_features_t features;
 static struct uniwill_device_features_t *uniwill_get_device_features(void) { return &features; }
 static void set_rom_id(void) {}
@@ -141,6 +141,11 @@ static bool wmi_has_guid(const char *g) { (void)g; return !missing_guid; }
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#define uniwill_device_features features
+/* Fan-owned lifecycle integration is tested with actual AUTO in the fan fixture. */
+static int uw_set_fan_auto_locked(void) {
+    assert(!"Unexpected owned RAM table in isolated non-fan fixture"); return 0;
+}
 /* @DRIVER_FUNCTIONS@ */
 #pragma GCC diagnostic pop
 static void bind_ok(void) {

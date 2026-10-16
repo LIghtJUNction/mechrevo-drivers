@@ -2,7 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
-#define TUXEDO_ERROR(...) do {} while (0)
+#define TUXEDO_ERROR(format, status) record_error(format, status)
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -104,6 +104,15 @@ static void msleep(unsigned int value) { (void)value; }
 struct event { int actor; char kind; u16 address; u8 value; };
 static struct event events[2048];
 static int event_count, table_writes;
+static int ec_accesses, fault_from = -1, fault_errno = -EIO, cleanup_mismatch_reads;
+static bool faults_ram_only;
+static int error_count, error_status[8];
+static const char *error_format[8];
+static void record_error(const char *format, int status)
+{
+    assert(error_count < 8);
+    error_format[error_count] = format; error_status[error_count++] = status;
+}
 static u8 ec[UINT16_MAX + 1u];
 static bool paused, release_pause;
 static int pause_actor = 1, pause_occurrence = 1, seen;
@@ -134,9 +143,14 @@ static int uniwill_read_ec_ram(u16 address, u8 *value)
     *value = ec[address];
     assert(event_count < 2048);
     events[event_count++] = (struct event){actor, 'r', address, *value};
+    int status = fault_from >= 0 && ec_accesses >= fault_from && (!faults_ram_only || address == 0x07c5 || address == 0x07c6) ? fault_errno : 0;
+    ++ec_accesses;
+    if (!status && address == 0x07c6 && !(ec[address] & 4) && cleanup_mismatch_reads) {
+        --cleanup_mismatch_reads; *value ^= 4;
+    }
     pause_if_selected('r', address);
     pthread_mutex_unlock(&harness);
-    return 0;
+    return status;
 }
 static int uniwill_write_ec_ram(u16 address, u8 value)
 {
@@ -145,11 +159,13 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     pause_if_selected('w', address);
     assert(event_count < 2048);
     events[event_count++] = (struct event){actor, 'w', address, value};
-    ec[address] = value;
+    int status = fault_from >= 0 && ec_accesses >= fault_from && (!faults_ram_only || address == 0x07c5 || address == 0x07c6) ? fault_errno : 0;
+    ++ec_accesses;
+    if (!status) ec[address] = value;
     if (address >= 0x0f00 && address <= 0x0f5f)
         ++table_writes;
     pthread_mutex_unlock(&harness);
-    return 0;
+    return status;
 }
 
 #pragma GCC diagnostic push
@@ -249,6 +265,26 @@ static void prepare_universal(void)
     assert(universal_fan_manual_active && !direct_fan_control_started);
     assert(!direct_fan_control_restart_delayed_work.pending);
     event_count = table_writes = 0;
+}
+static void reset_removed_lifecycle(void)
+{
+    fault_from = -1; faults_ram_only = false; cleanup_mismatch_reads = 0;
+    assert(uw_fan_control_start() == 0);
+    uniwill_pm_ready = true;
+    prepare_universal();
+    ec_accesses = error_count = event_count = 0;
+}
+static void assert_remove_order(void)
+{
+    int last_ram = -1, resource = -1, ap = -1;
+    for (int i = 0; i < event_count; ++i) {
+        if (events[i].address == 0x07c5 || events[i].address == 0x07c6) last_ram = i;
+        if (events[i].kind == 'L') resource = i;
+        if (events[i].kind == 'w' && events[i].address == 0x0741) ap = i;
+    }
+    assert(resource >= 0 && ap > resource && resource > last_ram);
+    assert(uniwill_fan_removed && uniwill_fan_work_paused);
+    assert(!direct_fan_control_suspend && !fans_initialized && !direct_fan_control_restart_delayed_work.pending);
 }
 static void assert_auto(void)
 {
@@ -351,6 +387,113 @@ int main(int argc, char **argv)
         int before = event_count;
         assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
         assert(uniwill_keyboard_resume(NULL) == -ENODEV && event_count == before);
+    } else if (strcmp(test, "universal_remove_owned") == 0) {
+        prepare_universal(); assert(set_full_fan_mode(true) == 0);
+        ec[0x07c5] |= 0x23; ec[0x07c6] |= 0xa3;
+        event_count = ec_accesses = 0;
+        uniwill_keyboard_remove(NULL);
+        assert_remove_order();
+        assert(!universal_fan_manual_active && error_count == 0);
+        assert(ec[0x07c5] == 0x23 && ec[0x07c6] == 0xa3 && ec[0x0751] == 0x51);
+        int before = event_count;
+        assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
+        assert(uniwill_keyboard_resume(NULL) == -ENODEV && event_count == before);
+    } else if (strcmp(test, "universal_remove_failures") == 0) {
+        reset_removed_lifecycle(); uniwill_keyboard_remove(NULL);
+        int count = ec_accesses;
+        assert(count == 7); /* six AUTO accesses then mandatory AP-disable */
+        const int codes[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int code = 0; code < sizeof(codes)/sizeof(codes[0]); ++code) {
+            for (int failure = 0; failure < count; ++failure) {
+                reset_removed_lifecycle(); assert(set_full_fan_mode(true) == 0);
+                event_count = ec_accesses = 0;
+                fault_errno = codes[code]; fault_from = failure;
+                uniwill_keyboard_remove(NULL); assert_remove_order();
+                assert(ec[0x0751] == 0x51);
+                if (failure < count-1) {
+                    assert(universal_fan_manual_active && error_count == 2);
+                    assert(strstr(error_format[0], "automatic fan control during removal"));
+                    assert(error_status[0] == codes[code]);
+                } else assert(!universal_fan_manual_active && error_count == 1);
+                assert(strstr(error_format[error_count-1], "disable manual fan mode"));
+                assert(error_status[error_count-1] == codes[code]);
+                int before = event_count;
+                assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
+                assert(event_count == before);
+            }
+        }
+    } else if (strcmp(test, "universal_remove_cleanup_only_failure") == 0) {
+        const int codes[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int code = 0; code < sizeof(codes)/sizeof(codes[0]); ++code) {
+            for (int failure = 0; failure < 6; ++failure) {
+                reset_removed_lifecycle(); ec[0x0741] = 1;
+                fault_errno = codes[code]; faults_ram_only = true; fault_from = failure;
+                uniwill_keyboard_remove(NULL); assert_remove_order();
+                assert(universal_fan_manual_active && error_count == 1);
+                assert(strstr(error_format[0], "automatic fan control during removal") && error_status[0] == codes[code]);
+                assert(ec[0x0741] == 0); /* mandatory teardown succeeds despite cleanup failure */
+            }
+        }
+        reset_removed_lifecycle(); cleanup_mismatch_reads = 3; ec[0x0741] = 1;
+        uniwill_keyboard_remove(NULL); assert_remove_order();
+        assert(cleanup_mismatch_reads == 0 && error_count == 1 && error_status[0] == -EIO);
+        assert(universal_fan_manual_active && !(ec[0x07c6] & 4)); /* disabled storage, unverified readback */
+        assert(ec[0x0741] == 0);
+    } else if (strcmp(test, "universal_remove_reprobe") == 0) {
+        /* Failed removal must not lose the RAM owner on a same-module rebind. */
+        reset_removed_lifecycle(); faults_ram_only = true; fault_from = 0;
+        uniwill_keyboard_remove(NULL);
+        assert(universal_fan_manual_active && (ec[0x07c6] & 4) && ec[0x0741] == 0);
+        fault_from = -1; faults_ram_only = false; event_count = ec_accesses = error_count = 0;
+        assert(uw_fan_control_start() == 0);
+        assert(!universal_fan_manual_active && !(ec[0x07c6] & 4) && !(ec[0x07c5] & 0x80));
+        assert(!uniwill_pm_ready && !uniwill_fan_removed && !direct_fan_control_suspend && !fans_initialized);
+        int count = ec_accesses; assert(count == 7);
+        for (int failure = 0; failure < count; ++failure) {
+            reset_removed_lifecycle(); faults_ram_only = true; fault_from = 0;
+            uniwill_keyboard_remove(NULL);
+            fault_from = failure; faults_ram_only = false; event_count = ec_accesses = error_count = 0;
+            assert(uw_fan_control_start() == -EIO);
+            assert(uniwill_fan_removed && !uniwill_pm_ready && !direct_fan_control_suspend && !fans_initialized);
+            assert(universal_fan_manual_active == (failure < count-1));
+            int before = event_count;
+            assert((int)uw_set_fan(0, 110) == -ENODEV && uw_init_fan() == -ENODEV);
+            assert((int)uw_set_fan_auto() == -ENODEV && event_count == before);
+            fault_from = -1; event_count = ec_accesses = 0;
+            assert(uw_fan_control_start() == 0 && !universal_fan_manual_active);
+            assert(!(ec[0x07c6] & 4) && !uniwill_pm_ready && !uniwill_fan_removed);
+        }
+        reset_removed_lifecycle(); faults_ram_only = true; fault_from = 0;
+        uniwill_keyboard_remove(NULL);
+        fault_from = -1; faults_ram_only = false;
+        uniwill_device_features.uniwill_has_universal_ec_fan_control = false;
+        event_count = ec_accesses = 0;
+        assert(uw_fan_control_start() == -ENODEV && universal_fan_manual_active);
+        assert(uniwill_fan_removed && !uniwill_pm_ready && ec_accesses == 0);
+        uniwill_device_features.uniwill_has_universal_ec_fan_control = true;
+        assert(uw_fan_control_start() == 0 && !universal_fan_manual_active);
+    } else if (strcmp(test, "universal_remove_unowned") == 0) {
+        for (int branch = 0; branch < 3; ++branch) {
+            fault_from = -1; assert(uw_fan_control_start() == 0); uniwill_pm_ready = true;
+            uniwill_device_features.uniwill_has_universal_ec_fan_control = branch != 2;
+            universal_fan_manual_active = branch == 2; /* impossible flag/cap mismatch must not touch RAM */
+            if (branch == 1) {
+                prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+                assert(direct_fan_control_suspend && !universal_fan_manual_active);
+            }
+            ec[0x07c5] = 0xa3; ec[0x07c6] = 0xa7; /* external/unowned table */
+            event_count = ec_accesses = error_count = 0;
+            uniwill_keyboard_remove(NULL); assert_remove_order();
+            assert(ec_accesses == 1 && error_count == 0);
+            assert(ec[0x07c5] == 0xa3 && ec[0x07c6] == 0xa7);
+        }
+    } else if (strcmp(test, "universal_remove_manual") == 0) {
+        prepare_universal(); pause_address = 0x07c6; pause_kind = 'r';
+        pthread_t one = start(1, REMOVE); wait_until(&paused);
+        pthread_t two = start(2, MANUAL); wait_contender();
+        assert(pthread_join(one, NULL) == 0 && pthread_join(two, NULL) == 0);
+        assert(result[2] == -ENODEV && !universal_fan_manual_active && !(ec[0x07c6] & 4));
+        assert_remove_order();
     } else if (strcmp(test, "mode_update") == 0) {
         ec[0x0751] = 0x15; pause_address = 0x0751; pause_kind = 'r';
         interleave(FULL, UPDATE);
