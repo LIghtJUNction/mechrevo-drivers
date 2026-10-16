@@ -261,26 +261,54 @@ class System:
         return result
 
     def sample(self):
-        start = time.monotonic()
-        package = int((self.hwmon / "temp1_input").read_text())
-        result = {"monotonic_s": start, "package_mc": package,
-                  "core_max_mc": max(int(p.read_text()) for p in self.hwmon.glob("temp*_input")
-                                     if p.name != "temp1_input"),
-                  "cpu0_package_throttle_count": int(self.text(
-                      "/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count")),
-                  "energy_uj": int(self.text("/sys/class/powercap/intel-rapl:0/energy_uj")),
-                  "energy_max_uj": int(self.text("/sys/class/powercap/intel-rapl:0/max_energy_range_uj")),
-                  "ec": {name: self.read_ioctl(name) for name in READ_REQUESTS if name != "available"},
-                  "rapl": {zone: {name: int(self.text("/sys/class/powercap/" + zone + "/" + name))
-                                  for name in ("constraint_0_power_limit_uw", "constraint_1_power_limit_uw",
-                                               "constraint_0_time_window_us", "constraint_1_time_window_us")}
-                           for zone in ZONES}}
-        result["fan_rpm"] = self.fan_rpm()
-        result["package_after_mc"] = int((self.hwmon / "temp1_input").read_text())
-        result["cpu0_throttle_details"] = self.throttle_details()
+        previous = None
+        def stamp():
+            nonlocal previous
+            value = time.monotonic()
+            try:
+                finite = type(value) in (int, float) and math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if (not finite or value < 0 or (previous is not None and value < previous)):
+                raise ObservationError("Invalid or decreasing monotonic read timestamp")
+            previous = value
+            return value
+
+        start = stamp()
+        windows = {}
+        def read_group(name, reader):
+            before = stamp()
+            value = reader()
+            after = stamp()
+            windows[name] = {"start_monotonic_s": before, "end_monotonic_s": after}
+            return value
+
+        # Keep the original read order and number of hardware accesses. Bounds
+        # describe userspace read calls, not atomic hardware acquisition times.
+        result = {"monotonic_s": start, "read_windows": windows}
+        result["package_mc"] = read_group("package_before", lambda: int((self.hwmon / "temp1_input").read_text()))
+        result["core_max_mc"] = read_group("core_max", lambda: max(
+            int(p.read_text()) for p in self.hwmon.glob("temp*_input") if p.name != "temp1_input"))
+        result["cpu0_package_throttle_count"] = read_group("throttle_count", lambda: int(self.text(
+            "/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count")))
+        energy, modulus = read_group("energy", lambda: (
+            int(self.text("/sys/class/powercap/intel-rapl:0/energy_uj")),
+            int(self.text("/sys/class/powercap/intel-rapl:0/max_energy_range_uj"))))
+        result["energy_uj"], result["energy_max_uj"] = energy, modulus
+        result["ec"] = read_group("ec", lambda: {
+            name: self.read_ioctl(name) for name in READ_REQUESTS if name != "available"})
+        result["rapl"] = read_group("rapl", lambda: {
+            zone: {name: int(self.text("/sys/class/powercap/" + zone + "/" + name))
+                   for name in ("constraint_0_power_limit_uw", "constraint_1_power_limit_uw",
+                                "constraint_0_time_window_us", "constraint_1_time_window_us")}
+            for zone in ZONES})
+        result["fan_rpm"] = read_group("fan_rpm", self.fan_rpm)
+        result["package_after_mc"] = read_group("package_after", lambda: int(
+            (self.hwmon / "temp1_input").read_text()))
+        result["cpu0_throttle_details"] = read_group("throttle_details", self.throttle_details)
         if self.read_thermal_msr:
-            result["thermal_msr"] = self.thermal_msr()
-        result["read_duration_s"] = time.monotonic() - start
+            result["thermal_msr"] = read_group("thermal_msr", self.thermal_msr)
+        result["read_duration_s"] = stamp() - start
         if not all(0 <= result[k] <= 125000 for k in ("package_mc", "core_max_mc", "package_after_mc")):
             raise ObservationError("CPU temperature is outside the diagnostic range")
         if (not all(0 <= v <= 125 for k, v in result["ec"].items() if k.startswith("ec_"))

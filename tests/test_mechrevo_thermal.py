@@ -305,6 +305,106 @@ class ThermalSystemAdapter(unittest.TestCase):
         self.assertTrue(all(r >> 30 == 2 for r in self.requests))
         self.assertEqual({p:p.read_bytes() for p in before},before)
 
+    def assert_timed_adapter(self, with_msr, with_rpm=False):
+        if with_rpm:
+            self.rpm_fixture()
+        if with_msr:
+            self.qualify_msr_fixture()
+        self.system.open_sensors()
+        now, events = [100.0], []
+        original_read = Path.read_text
+        original_ioctl, original_pread = self.system.ioctl, THERMAL.os.pread
+        def timed(kind, operation, *args, **kwargs):
+            before = now[0]
+            try:
+                return operation(*args, **kwargs)
+            finally:
+                now[0] += 0.05 if kind == "ioctl" else 0.02
+                events.append((kind, before, now[0]))
+        def text(path, *args, **kwargs):
+            return timed("text", original_read, path, *args, **kwargs)
+        with mock.patch.object(THERMAL.time, "monotonic", side_effect=lambda: now[0]), \
+                mock.patch.object(Path, "read_text", text), \
+                mock.patch.object(self.system, "ioctl", side_effect=lambda *a: timed("ioctl", original_ioctl, *a)), \
+                mock.patch.object(THERMAL.os, "pread", side_effect=lambda *a: timed("msr", original_pread, *a)):
+            sample = self.system.sample()
+        expected = [("package_before", 1), ("core_max", 2), ("throttle_count", 1),
+                    ("energy", 2), ("ec", 4), ("rapl", 8), ("fan_rpm", 6 if with_rpm else 1),
+                    ("package_after", 1), ("throttle_details", 3)]
+        if with_msr:
+            expected.append(("thermal_msr", 3))
+        self.assertEqual(list(sample["read_windows"]), [name for name, _ in expected])
+        previous, position = sample["monotonic_s"], 0
+        for name, count in expected:
+            window = sample["read_windows"][name]
+            begin, end = window["start_monotonic_s"], window["end_monotonic_s"]
+            self.assertGreaterEqual(begin, previous)
+            self.assertGreater(end, begin)
+            group = events[position:position+count]
+            self.assertEqual(len(group), count)
+            self.assertEqual(begin, group[0][1])
+            self.assertEqual(end, group[-1][2])
+            self.assertTrue(all(begin <= a <= b <= end for _, a, b in group))
+            previous, position = end, position+count
+        self.assertEqual(position, len(events))
+        self.assertEqual(previous, sample["monotonic_s"] + sample["read_duration_s"])
+        self.assertEqual(sample["fan_rpm"]["available"], with_rpm)
+        if with_rpm:
+            self.assertEqual(sample["fan_rpm"]["cpu_rpm"], 3816)
+            self.assertEqual(sample["fan_rpm"]["gpu_rpm"], 4939)
+        self.assertEqual(self.requests, [THERMAL.READ_REQUESTS[name] for name in THERMAL.READ_REQUESTS])
+        self.assertEqual(sample["package_mc"], 80000)
+        self.assertEqual(sample["energy_uj"], 1000000)
+        return sample
+
+    def test_read_windows_enclose_actual_reads_in_original_order_without_optional_msr(self):
+        sample = self.assert_timed_adapter(False)
+        self.assertNotIn("thermal_msr", sample)
+        self.assertNotIn("thermal_msr", sample["read_windows"])
+
+    def test_read_windows_enclose_all_requested_msr_reads_after_other_channels(self):
+        sample = self.assert_timed_adapter(True)
+        self.assertEqual(len(sample["thermal_msr"]), 3)
+
+    def test_available_rpm_window_encloses_discovery_and_both_labels_and_inputs(self):
+        # Two discovered hwmon names (coretemp and mechrevo_ec), then four
+        # label/input reads. Discovery itself belongs inside this same window.
+        self.assert_timed_adapter(False, with_rpm=True)
+
+    def test_invalid_or_decreasing_read_clock_refuses_sample_before_later_io(self):
+        self.system.open_sensors()
+        for stamps in ([float("nan")], [float("inf")], [10**400], [-1], [True], ["1"],
+                       [100, 99], [100, 100, 99], [100, 100, float("nan")]):
+            with self.subTest(stamps=stamps), \
+                    mock.patch.object(THERMAL.time, "monotonic", side_effect=stamps):
+                with self.assertRaisesRegex(THERMAL.ObservationError, "monotonic read timestamp"):
+                    self.system.sample()
+        self.assertEqual(self.requests, [THERMAL.READ_REQUESTS["available"]])
+
+    def test_read_failure_does_not_publish_partial_window_sample_and_preserves_prior(self):
+        self.system.open_sensors()
+        fake = FakeSystem()
+        original = self.system.text
+        calls = [0]
+        def sample():
+            calls[0] += 1
+            if calls[0] == 2:
+                def fail_energy(name):
+                    if name.endswith("/energy_uj"):
+                        raise OSError("injected energy read failure")
+                    return original(name)
+                self.system.text = fail_energy
+            return self.system.sample()
+        fake.cap = 35000000
+        fake.power["desired_limit_uw"] = fake.cap
+        fake.sample = sample
+        result = THERMAL.observe(2, 1, fake, fake.clock, fake.sleep)
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(len(result["samples"]), 1)
+        self.assertEqual(len(result["samples"][0]["read_windows"]), 9)
+        self.assertIn("injected energy read failure", result["errors"][0])
+
     def rpm_fixture(self, cpu="3816", gpu="4939", node="hwmon7"):
         base = "/sys/class/hwmon/" + node + "/"
         for name, value in {"name": "mechrevo_ec", "fan1_label": "CPU fan",
