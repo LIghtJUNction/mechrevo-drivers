@@ -1,0 +1,67 @@
+# Maintained local candidate; never installs or starts a daemon during build/check.
+pkgname=thermald-mechrevo
+pkgver=2.5.13
+pkgrel=2
+epoch=2
+pkgdesc='thermald with checked-temperature error handling and preference-state preservation'
+arch=('x86_64' 'x86_64_v3')
+url='https://github.com/intel/thermal_daemon'
+license=('GPL-2.0-or-later')
+depends=('dbus-glib' 'libevdev' 'libxml2' 'upower')
+makedepends=('autoconf-archive' 'automake' 'gcc' 'git' 'gtk-doc' 'make' 'patch' 'pkgconf' 'python')
+provides=("thermald=${epoch}:${pkgver}")
+conflicts=('thermald')
+backup=('etc/thermald/thermal-cpu-cdev-order.xml' 'etc/thermald/thermald-features.xml')
+options=('!strip' '!debug' '!lto')
+_source_commit=5fdc5bbca7f8c3f5bb2ad6540e8211a159a88a3a
+_source_url="${THERMALD_SOURCE_URL:-$url.git}"
+# Optional offline input must be a local repository, not an alternate remote.
+[[ $_source_url == "$url.git" || $_source_url == file:///* ]] || { echo 'Only official upstream or a local pinned repository is allowed' >&2; return 1; }
+source=("thermal_daemon::git+${_source_url}#commit=${_source_commit}"
+        '0001-checked-temperature.patch' '0002-preference-state.patch'
+        '0003-periodic-restart-cache.patch')
+sha256sums=('SKIP'
+            '44e981f3cb6d3711a52a6abfa14990b9998e839104036e7c25dbb94498900294'
+            '48e53b95949a47b3ced77ca878f7f15cf9354dd8859b43e05c65c6e5c011846d'
+            '55daf26df567cdd68d3aaee601e2d2eba02e155e09416be1339392229bc7d06e')
+
+prepare() {
+    cd "$srcdir/thermal_daemon" || return 1
+    [[ $(git rev-parse HEAD) == "$_source_commit" ]] || { echo 'Wrong upstream commit' >&2; return 1; }
+    patch -p1 --batch --forward --fuzz=0 -i "$srcdir/0001-checked-temperature.patch" || return 1
+    patch -p1 --batch --forward --fuzz=0 -i "$srcdir/0002-preference-state.patch" || return 1
+    patch -p1 --batch --forward --fuzz=0 -i "$srcdir/0003-periodic-restart-cache.patch" || return 1
+}
+
+build() {
+    cd "$srcdir/thermal_daemon" || return 1
+    mkdir -p "$srcdir/thermal_daemon/m4" || return 1
+    gtkdocize --srcdir "$srcdir/thermal_daemon" --copy --flavour no-tmpl || return 1
+    NO_CONFIGURE=1 ./autogen.sh --disable-doc --disable-gtk-doc || return 1
+    mkdir -p "$srcdir/build" || return 1
+    cd "$srcdir/build" || return 1
+    "$srcdir/thermal_daemon/configure" --prefix=/usr --sysconfdir=/etc \
+        --with-dbus-sys-dir=/usr/share/dbus-1/system.d --localstatedir=/var \
+        --sbindir=/usr/bin --disable-doc --disable-gtk-doc || return 1
+    nice -n 10 make -j2 || return 1
+}
+
+check() {
+    local root=${THERMALD_CONTRACT_ROOT:-"$startdir/../../.."}
+    [[ -f $root/tests/test_thermald_checked_temperature.py && ! -L $root/tests/test_thermald_checked_temperature.py ]] || return 1
+    cmp "$srcdir/0001-checked-temperature.patch" "$root/packaging/arch/thermald-mechrevo/0001-checked-temperature.patch" || return 1
+    cmp "$srcdir/0002-preference-state.patch" "$root/packaging/arch/thermald-mechrevo/0002-preference-state.patch" || return 1
+    [[ -d $srcdir/thermal_daemon/src ]] || return 1
+    cmp "$srcdir/0003-periodic-restart-cache.patch" "$root/packaging/arch/thermald-mechrevo/0003-periodic-restart-cache.patch" || return 1
+    export THERMALD_PREPARED_SOURCE="$srcdir/thermal_daemon/src"
+    export MECHREVO_TEST_TMPDIR="$srcdir/.contract-tmp"
+    mkdir -p "$MECHREVO_TEST_TMPDIR" || return 1
+    python -B -m unittest discover -s "$root/tests" -p test_thermald_checked_temperature.py -v || return 1
+}
+
+package() {
+    [[ -f $srcdir/build/Makefile && -x $srcdir/build/thermald ]] || return 1
+    nice -n 10 make -j2 -C "$srcdir/build" DESTDIR="$pkgdir" install || return 1
+    install -Dm644 "$srcdir/thermal_daemon/COPYING" "$pkgdir/usr/share/licenses/$pkgname/COPYING" || return 1
+    # No .install script, systemctl call, ALPM hook or daemon execution.
+}

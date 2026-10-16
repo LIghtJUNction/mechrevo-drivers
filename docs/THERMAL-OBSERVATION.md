@@ -138,3 +138,26 @@ The command succeeded, but file tracking was partial: zero recorded gaps, 166 re
 A separate bounded journal window from 18:40 through 18:45 on this boot contains 675 records, below the 2,000-record cap. It has 203 temperature-bearing control actions, with RAPL action temperatures spanning 68–100°C. All 14 forced-to-min actions immediately followed an action temperature below 81°C. Retained source computes the polling trip as the lowest 90°C trip minus 10% (81°C), then resets cooling devices to minimum cooling; the configured RAPL minimum-cooling state is 55W. This explains the observed request sequence, without proving a physical power-limit readback, a temperature between action logs or the cause of fast temperature changes.
 
 A distinct source defect was reproduced using actual sensor/zone/trip/RAPL functions with mocked sysfs and engine services: failed, empty or negative sensor reads became zero and could relax the simulated 27.5W limit to 55W. The checked-read private prototype retains cooling for invalid reads in that zone; valid zero remains a successful reading and preserves the original release behavior. Multi-sensor failures are collected before zone updates. Virtual sensor dependency updates, error propagation and adaptive resource cleanup have isolated regression coverage. A separate preference-state delta preserves successful `zone_temp` replay state. Neither prototype nor delta is publicly packaged, linked into an installed daemon or hardware-accepted. Other zones/owners can still adjust shared cooling devices. The journal window contains no zero-temperature action establishing this defect as the cause of the actual spikes.
+
+
+## 2026-10-16：温控候选加入虚拟传感器重启保护
+
+真实 pthread 与实际 zone active/inactive、read_zone_temp 入口的隔离测试复现：
+先缓存合法低温 0 或 75°C，停用 worker 后让底层读取失败，重新启用且首采尚未执行时，
+旧实现仍可向温区提交旧低温。首次失败采样完成后才变为无效。通知函数仍是记录替身，
+没有把该测试写成实机 RAPL 调整，也没有将它归因为当前日志里的温度突升。
+第三补丁在真正创建新 worker 前持 sample_mutex 使缓存失效；重复启用活动 worker 不清掉有效缓存。
+真实创建/退出、属性释放、创建失败后重试、重复启停及活动对象析构也有回归；
+受控等待替身不能证明生产 sleep 的退出延迟或任意并发 enable/disable 安全。
+
+三补丁 `thermald-mechrevo 2:2.5.13-2` 已完成全新生产编译和链接（38.744 秒），
+12 项公开回归经独立复测通过（17.269 秒），包括旧源码精确失败对照与 prepared 源码比对。
+候选为 x86_64_v3、439327 字节，SHA256 `5478e28da267a76e59c9c92928ee0b8d80e6cb0757a53ea1eb299bb23c162661`。
+独立审查核对 9 个包内文件、17 个公开冻结文件、171 个 prepared 源文件；
+48 文件恢复备份逐 SHA/大小/权限/属主独立读回通过。旧双补丁候选不包含重启保护，保留作历史证据。
+候选未安装、未执行新 daemon，当前 stock thermald 和功耗配置保持原样。
+
+构建、打包命令成功不等于文件跟踪完整：新生产跟踪 partial，6 gaps / 382 unresolved；
+打包 partial，4 gaps / 2 unresolved；独立公开回归跟踪 partial，0 gaps / 112 临时删除事件。
+完整备份读回不会补齐这些历史缺口。候选不带安装脚本或 hooks，普通系统 hooks、D-Bus 激活、
+现有自定义配置保存及服务恢复仍须受控核验，不能据此宣布硬件散热改善或安装资格已通过。

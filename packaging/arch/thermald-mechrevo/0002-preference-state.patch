@@ -1,0 +1,21 @@
+--- a/src/thd_zone.cpp
++++ b/src/thd_zone.cpp
+@@ -74,10 +74,14 @@
+         if (!sensor->read_temperature_checked(temp)) return;
+         readings.push_back(temp);
+     }
+-    for (cthd_sensor *sensor : sensors)
+-        thermal_zone_temp_change(sensor->get_index(), 0, thd_engine->get_preference());
+-    for (unsigned int i = 0; i < sensors.size(); ++i)
+-        thermal_zone_temp_change(sensors[i]->get_index(), readings[i], thd_engine->get_preference());
++    for (unsigned int i = 0; i < sensors.size(); ++i) {
++        zone_temp = readings[i];
++        thermal_zone_temp_change(sensors[i]->get_index(), 0, thd_engine->get_preference());
++    }
++    for (unsigned int i = 0; i < sensors.size(); ++i) {
++        zone_temp = readings[i];
++        thermal_zone_temp_change(sensors[i]->get_index(), zone_temp, thd_engine->get_preference());
++    }
+ }
+ 
+ int cthd_zone::read_user_set_psv_temp() {

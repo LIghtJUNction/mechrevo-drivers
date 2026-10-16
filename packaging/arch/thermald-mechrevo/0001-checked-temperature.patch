@@ -1,0 +1,619 @@
+--- a/src/thd_sensor.h
++++ b/src/thd_sensor.h
+@@ -31,6 +31,8 @@
+ #include "thd_util.h"
+ 
+ #define SENSOR_TYPE_THERMAL_SYSFS	0
++static constexpr int THD_SENSOR_READ_ERROR = -3; // Not a valid temperature/no-match.
++
+ #define SENSOR_TYPE_RAW				1
+ 
+ class cthd_sensor {
+@@ -64,6 +66,8 @@
+ 	}
+ 
+ 	virtual unsigned int read_temperature();
++	// Success writes out, including valid zero. Failure leaves out unchanged.
++	virtual bool read_temperature_checked(unsigned int &out);
+ 	int get_index() {
+ 		return index;
+ 	}
+--- a/src/thd_sensor.cpp
++++ b/src/thd_sensor.cpp
+@@ -62,19 +62,21 @@
+ }
+ 
+ unsigned int cthd_sensor::read_temperature() {
+-	csys_fs sysfs;
+-	int temp, ret;
++    unsigned int value = 0;
++    read_temperature_checked(value); // Legacy API remains ambiguous on failure.
++    return value;
++}
+ 
+-	thd_log_debug("read_temperature sensor ID %d\n", index);
+-	temp = 0;  // Initialize before read
+-	if (type == SENSOR_TYPE_THERMAL_SYSFS)
+-		ret = sensor_sysfs.read("temp", &temp);
+-	else
+-		ret = sensor_sysfs.read("", &temp);
+-	if (ret < 0 || temp < 0)
+-		temp = 0;
+-	thd_log_debug("Sensor %s :temp %u\n", type_str.c_str(), temp);
+-	return (unsigned int)temp / scale;
++bool cthd_sensor::read_temperature_checked(unsigned int &out) {
++    int temp = 0;
++    const int ret = type == SENSOR_TYPE_THERMAL_SYSFS
++        ? sensor_sysfs.read("temp", &temp) : sensor_sysfs.read("", &temp);
++    if (ret <= 0 || temp < 0 || scale <= 0) {
++        thd_log_warn("Invalid temperature read for sensor %s; skipping sample\n", type_str.c_str());
++        return false;
++    }
++    out = static_cast<unsigned int>(temp / scale);
++    return true;
+ }
+ 
+ void cthd_sensor::enable_uevent() {
+--- a/src/thd_zone.cpp
++++ b/src/thd_zone.cpp
+@@ -67,25 +67,17 @@
+ }
+ 
+ void cthd_zone::update_zone_preference() {
+-	if (!zone_active)
+-		return;
+-	thd_log_debug("update_zone_preference\n");
+-
+-	for (unsigned int i = 0; i < sensors.size(); ++i) {
+-		cthd_sensor *sensor;
+-		sensor = sensors[i];
+-		zone_temp = sensor->read_temperature();
+-		thermal_zone_temp_change(sensor->get_index(), 0,
+-				thd_engine->get_preference());
+-	}
+-
+-	for (unsigned int i = 0; i < sensors.size(); ++i) {
+-		cthd_sensor *sensor;
+-		sensor = sensors[i];
+-		zone_temp = sensor->read_temperature();
+-		thermal_zone_temp_change(sensor->get_index(), zone_temp,
+-				thd_engine->get_preference());
+-	}
++    if (!zone_active) return;
++    std::vector<unsigned int> readings;
++    for (cthd_sensor *sensor : sensors) {
++        unsigned int temp;
++        if (!sensor->read_temperature_checked(temp)) return;
++        readings.push_back(temp);
++    }
++    for (cthd_sensor *sensor : sensors)
++        thermal_zone_temp_change(sensor->get_index(), 0, thd_engine->get_preference());
++    for (unsigned int i = 0; i < sensors.size(); ++i)
++        thermal_zone_temp_change(sensors[i]->get_index(), readings[i], thd_engine->get_preference());
+ }
+ 
+ int cthd_zone::read_user_set_psv_temp() {
+@@ -185,23 +177,24 @@
+ }
+ 
+ void cthd_zone::read_zone_temp() {
+-	if (zone_active) {
+-		unsigned int temp;
+-		zone_temp = 0;
+-		for (unsigned int i = 0; i < sensors.size(); ++i) {
+-			cthd_sensor *sensor;
+-			sensor = sensors[i];
+-			temp = sensor->read_temperature();
+-			if (zone_temp < temp)
+-				zone_temp = temp;
+-			if (sensor_rel == SENSOR_INDEPENDENT)
+-				thermal_zone_temp_change(sensor->get_index(), temp,
+-						thd_engine->get_preference());
+-		}
+-		if (sensor_rel == SENSORS_CORELATED && zone_temp)
+-			thermal_zone_temp_change(sensors[0]->get_index(), zone_temp,
+-					thd_engine->get_preference());
+-	}
++    if (!zone_active) return;
++    std::vector<unsigned int> readings;
++    for (cthd_sensor *sensor : sensors) {
++        unsigned int temp;
++        if (!sensor->read_temperature_checked(temp)) {
++            thd_log_warn("Skipping zone %d update: invalid sensor %s\n", index, sensor->get_sensor_type().c_str());
++            return; // This zone makes no cooling changes; other zones remain independent.
++        }
++        readings.push_back(temp);
++    }
++    zone_temp = 0;
++    for (unsigned int i = 0; i < sensors.size(); ++i) {
++        if (zone_temp < readings[i]) zone_temp = readings[i];
++        if (sensor_rel == SENSOR_INDEPENDENT)
++            thermal_zone_temp_change(sensors[i]->get_index(), readings[i], thd_engine->get_preference());
++    }
++    if (sensor_rel == SENSORS_CORELATED && zone_temp)
++        thermal_zone_temp_change(sensors[0]->get_index(), zone_temp, thd_engine->get_preference());
+ }
+ 
+ void cthd_zone::zone_temperature_notification(int type, int data) {
+--- a/src/thd_sensor_virtual.h
++++ b/src/thd_sensor_virtual.h
+@@ -29,6 +29,7 @@
+ #include <atomic>
+ #include <vector>
+ #include <memory>
++#include <mutex>
+ 
+ typedef struct _link_sensor_t {
+ 	cthd_sensor *sensor;
+@@ -46,6 +47,10 @@
+ 
+ class cthd_sensor_virtual: public cthd_sensor {
+ private:
++	std::mutex sample_mutex;
++    static std::mutex dependency_mutex;
++    static bool dependency_reaches(cthd_sensor *start, cthd_sensor *target, std::vector<cthd_sensor *> &seen);
++	bool last_temp_valid = false;
+ 	std::vector <std::unique_ptr<link_sensor_t>> link_sensors;
+ 	double multiplier;
+ 	double offset;
+@@ -71,6 +76,8 @@
+ 	int sensor_update();
+ 	unsigned int _read_temperature();
+ 	unsigned int read_temperature() override;
++	bool read_temperature_checked(unsigned int &out) override;
++	bool _read_temperature_checked(unsigned int &out);
+ 	void sensor_dump() override {
+ 		thd_log_info("Sensor:%s \n", type_str.c_str());
+ 
+@@ -89,6 +96,10 @@
+ 	void enable_periodic_timer();
+ 	void disable_periodic_timer();
+ 	void update_polling_table(struct polling_table_entry& entry);
++    std::vector<polling_table_entry> polling_table_snapshot() {
++        std::lock_guard<std::mutex> guard(sample_mutex);
++        return polling_table;
++    }
+ };
+ 
+ #endif /* THD_SENSOR_VIRTUAL_H_ */
+--- a/src/thd_sensor_virtual.cpp
++++ b/src/thd_sensor_virtual.cpp
+@@ -24,6 +24,8 @@
+ #include "thd_sensor_virtual.h"
+ #include "thd_engine.h"
+ #include <cmath>
++#include <algorithm>
++#include <climits>
+ #include <memory>
+ 
+ cthd_sensor_virtual::cthd_sensor_virtual(int _index, std::string _type_str,
+@@ -53,21 +55,21 @@
+ 	link_sensors.clear();
+ }
+ 
+-int cthd_sensor_virtual::add_target(std::string& _link_type_str, double coeff, double offset, int power_sensor)
+-{
+-		cthd_sensor *sensor = thd_engine->search_sensor(_link_type_str);
+-		// If there is no sensor, this is treated as constant
+-
+-		std::unique_ptr<link_sensor_t> link_sensor(new link_sensor_t());
+-
+-		link_sensor->sensor = sensor;
+-		link_sensor->offset = offset;
+-		link_sensor->coeff = coeff;
+-		link_sensor->prev_avg = 0.0;
+-		link_sensor->power_sensor = power_sensor;
+-		link_sensors.push_back(std::move(link_sensor));
+-
+-		return THD_SUCCESS;
++int cthd_sensor_virtual::add_target(std::string& name, double coeff, double offset, int power_sensor) {
++    std::lock_guard<std::mutex> graph_guard(dependency_mutex);
++    cthd_sensor *sensor = thd_engine->search_sensor(name);
++    std::vector<cthd_sensor *> seen;
++    if (dependency_reaches(sensor, this, seen)) return THD_ERROR;
++    std::lock_guard<std::mutex> guard(sample_mutex);
++    std::unique_ptr<link_sensor_t> link(new link_sensor_t());
++    link->sensor = sensor;
++    link->offset = offset;
++    link->coeff = coeff;
++    link->prev_avg = 0.0;
++    link->power_sensor = power_sensor;
++    link_sensors.push_back(std::move(link));
++    last_temp_valid = false;
++    return THD_SUCCESS;
+ }
+ 
+ int cthd_sensor_virtual::sensor_update() {
+@@ -90,103 +92,87 @@
+ }
+ 
+ unsigned int cthd_sensor_virtual::read_temperature() {
+-	if (polling.load())
+-		return static_cast<unsigned int>(last_temp.load());
+-
+-	return _read_temperature();
++    unsigned int value = 0;
++    read_temperature_checked(value);
++    return value;
++}
++
++bool cthd_sensor_virtual::read_temperature_checked(unsigned int &out) {
++    if (!polling.load()) return _read_temperature_checked(out);
++    std::lock_guard<std::mutex> guard(sample_mutex);
++    if (!last_temp_valid) return false;
++    out = static_cast<unsigned int>(last_temp.load());
++    return true;
+ }
+ 
+ unsigned int cthd_sensor_virtual::_read_temperature() {
+-	double virt_temp = 0.0;
+-	int temp = 0;
+-
+-	if (link_sensors.empty()) {
+-		thd_log_warn("Virtual sensor %s has no linked sensors\n", type_str.c_str());
+-		return 0;
+-	}
+-
+-	link_sensor_t *link_sensor = link_sensors[0].get();
+-
+-	if (link_sensor->sensor && !link_sensor->coeff && !link_sensor->offset) {
+-		temp = link_sensor->sensor->read_temperature();
+-		temp = temp * multiplier + offset;
+-		thd_log_debug("cthd_sensor_virtual::read_temperature %d\n", temp);
+-
+-		unsigned int clamped_temp = temp < 0 ? 0u : static_cast<unsigned int>(temp);
+-		last_temp.store(clamped_temp);
+-		return clamped_temp;
+-	}
+-
+-	for (unsigned int i = 0; i < link_sensors.size(); ++i) {
+-		link_sensor_t *link_sensor = link_sensors[i].get();
+-		std::string link_sensor_name;
+-
+-		if (link_sensor->sensor) {
+-			link_sensor_name = link_sensor->sensor->get_sensor_type();
+-			temp = link_sensor->sensor->read_temperature();
+-		} else {
+-			temp = 1000;
+-			link_sensor_name = "constant";
+-		}
+-
+-		double avg;
+-		double current_virt_temp;
+-
+-		if (!link_sensor->power_sensor)
+-			temp = temp / 1000; //convert to degree C
+-
+-		if (!link_sensor->prev_avg)
+-			link_sensor->prev_avg = (double)temp;
+-
+-		avg = link_sensor->offset * (double) temp  + ((1.0 - link_sensor->offset) * link_sensor->prev_avg);
+-		current_virt_temp = link_sensor->coeff * avg;
+-		link_sensor->prev_avg = avg;
+-		virt_temp += current_virt_temp;
+-			
+-		thd_log_debug("%s-> temp[%d] avg[%g] coeff[%g], result[%g] \n", link_sensor_name.c_str(), temp, avg, current_virt_temp, virt_temp);
+-
+-	}
+-
+-	thd_log_debug("virt temp:%g\n", virt_temp);
+-
+-	temp = static_cast<int>(std::round(virt_temp));
+-
+-	int temp_mc = temp * 1000;
+-	if (temp_mc < 0)
+-		temp_mc = 0;
+-
+-	// Keep cache and return value in the same unit (mC).
+-	last_temp.store(temp_mc);
+-
+-	return static_cast<unsigned int>(temp_mc);
+-}
+-
+-int cthd_sensor_virtual::sensor_update_param(const std::string& new_dep_sensor, double slope, double intercept)
+-{
+-	cthd_sensor *sensor = thd_engine->search_sensor(new_dep_sensor);
+-
+-
+-	if (sensor) {
+-		std::unique_ptr<link_sensor_t> link_sensor(new link_sensor_t());
+-
+-		link_sensor->sensor = sensor;
+-		link_sensor->offset = 0;
+-		link_sensor->coeff = 0;
+-		link_sensor->prev_avg = 0.0;
+-		link_sensors.push_back(std::move(link_sensor));
+-
+-	} else
+-		return THD_ERROR;
+-
+-	multiplier = slope;
+-	offset = intercept;
+-
+-	return THD_SUCCESS;
+-}
+-
+-void cthd_sensor_virtual::update_polling_table(struct polling_table_entry& entry)
+-{
+-		polling_table.push_back(entry);
++    unsigned int value = 0;
++    _read_temperature_checked(value);
++    return value;
++}
++
++bool cthd_sensor_virtual::_read_temperature_checked(unsigned int &out) {
++    std::lock_guard<std::mutex> guard(sample_mutex);
++    last_temp_valid = false;
++    if (link_sensors.empty()) return false;
++    const bool linear = link_sensors[0]->sensor && !link_sensors[0]->coeff && !link_sensors[0]->offset;
++    std::vector<unsigned int> readings;
++    const unsigned int input_count = linear ? 1 : link_sensors.size();
++    for (unsigned int i = 0; i < input_count; ++i) {
++        const auto &link = link_sensors[i];
++        unsigned int value = 1000; // Null sources intentionally represent constants.
++        if (link->sensor && !link->sensor->read_temperature_checked(value)) return false;
++        if (value > INT_MAX) return false;
++        readings.push_back(value);
++    }
++    double result;
++    std::vector<double> averages;
++    if (linear) {
++        result = readings[0] * multiplier + offset;
++    } else {
++        double sum = 0;
++        for (unsigned int i = 0; i < link_sensors.size(); ++i) {
++            const auto &link = link_sensors[i];
++            const int temp = link->power_sensor ? readings[i] : readings[i] / 1000;
++            const double prior = link->prev_avg ? link->prev_avg : temp;
++            const double avg = link->offset * temp + (1.0-link->offset) * prior;
++            averages.push_back(avg);
++            sum += link->coeff * avg;
++        }
++        result = std::round(sum) * 1000;
++    }
++    if (!std::isfinite(result) || result > INT_MAX) return false;
++    const int clamped = result < 0 ? 0 : static_cast<int>(result);
++    for (unsigned int i = 0; i < averages.size(); ++i) link_sensors[i]->prev_avg = averages[i];
++    last_temp.store(clamped);
++    last_temp_valid = true;
++    out = static_cast<unsigned int>(clamped);
++    return true;
++}
++
++int cthd_sensor_virtual::sensor_update_param(const std::string& name, double slope, double intercept) {
++    std::lock_guard<std::mutex> graph_guard(dependency_mutex);
++    cthd_sensor *sensor = thd_engine->search_sensor(name);
++    if (!sensor) return THD_ERROR;
++    std::vector<cthd_sensor *> seen;
++    if (dependency_reaches(sensor, this, seen)) return THD_ERROR;
++    std::lock_guard<std::mutex> guard(sample_mutex);
++    std::unique_ptr<link_sensor_t> link(new link_sensor_t());
++    link->sensor = sensor;
++    link->offset = 0;
++    link->coeff = 0;
++    link->prev_avg = 0.0;
++    link->power_sensor = 0;
++    link_sensors.push_back(std::move(link)); // Preserve existing append semantics.
++    multiplier = slope;
++    offset = intercept;
++    last_temp_valid = false;
++    return THD_SUCCESS;
++}
++
++void cthd_sensor_virtual::update_polling_table(struct polling_table_entry& entry) {
++    std::lock_guard<std::mutex> guard(sample_mutex);
++    polling_table.push_back(entry);
+ }
+ 
+ static void *periodic_callback(void *data) {
+@@ -198,13 +184,15 @@
+ 			break;
+ 		}
+ 
+-		sensor->_read_temperature();
++        unsigned int checked_temperature;
++        const bool valid_sample = sensor->_read_temperature_checked(checked_temperature);
+ 
+ 		int period = 0;
+-		for (size_t i = sensor->polling_table.size(); i > 0; --i) {
+-				struct polling_table_entry entry = sensor->polling_table[i - 1];
+-
+-				if (sensor->last_temp.load() >= entry.virtual_temp) {
++        const auto table = sensor->polling_table_snapshot();
++        for (size_t i = valid_sample ? table.size() : 0; i > 0; --i) {
++                struct polling_table_entry entry = table[i - 1];
++
++				if (static_cast<int>(checked_temperature) >= entry.virtual_temp) {
+ 					period = entry.sample_period;
+ 					break;
+ 				}
+@@ -276,3 +264,27 @@
+ 	polling.store(false);
+ }
+ 
++
++std::mutex cthd_sensor_virtual::dependency_mutex;
++
++bool cthd_sensor_virtual::dependency_reaches(cthd_sensor *start, cthd_sensor *target, std::vector<cthd_sensor *> &seen) {
++    if (!start) return false;
++    if (start == target) return true;
++    if (std::find(seen.begin(), seen.end(), start) != seen.end()) return false;
++    seen.push_back(start);
++    auto *derived = dynamic_cast<cthd_sensor_virtual *>(start);
++    if (!derived) return false;
++    std::vector<cthd_sensor *> inputs;
++    {
++        std::lock_guard<std::mutex> guard(derived->sample_mutex);
++        if (!derived->link_sensors.empty() && derived->link_sensors[0]->sensor
++                && !derived->link_sensors[0]->coeff && !derived->link_sensors[0]->offset) {
++            inputs.push_back(derived->link_sensors[0]->sensor);
++        } else {
++            for (const auto &link : derived->link_sensors) inputs.push_back(link->sensor);
++        }
++    }
++    for (cthd_sensor *input : inputs)
++        if (dependency_reaches(input, target, seen)) return true;
++    return false;
++}
+--- a/src/thd_sensor_rapl_power.h
++++ b/src/thd_sensor_rapl_power.h
+@@ -32,6 +32,7 @@
+ public:
+ 	cthd_sensor_rapl_power(int index);
+ 	unsigned int read_temperature() override;
++	bool read_temperature_checked(unsigned int &out) override;
+ };
+ 
+ #endif
+--- a/src/thd_sensor_rapl_power.cpp
++++ b/src/thd_sensor_rapl_power.cpp
+@@ -43,3 +43,9 @@
+ 
+ 	return pkg_power;
+ }
++
++// The existing meter API has no status channel; this does not invent one.
++bool cthd_sensor_rapl_power::read_temperature_checked(unsigned int &out) {
++    out = read_temperature();
++    return true;
++}
+--- a/src/thd_engine.cpp
++++ b/src/thd_engine.cpp
+@@ -1018,11 +1018,9 @@
+ }
+ 
+ int cthd_engine::get_sensor_temperature(int index, unsigned int *temperature) {
+-	if (index >= 0 && index < (int) sensors.size()) {
+-		*temperature = sensors[index]->read_temperature();
+-		return THD_SUCCESS;
+-	} else
+-		return THD_ERROR;
++    if (temperature && index >= 0 && index < (int)sensors.size()
++            && sensors[index]->read_temperature_checked(*temperature)) return THD_SUCCESS;
++    return THD_ERROR;
+ }
+ 
+ cthd_zone* cthd_engine::get_zone(int index) {
+--- a/src/thd_gddv.cpp
++++ b/src/thd_gddv.cpp
+@@ -1559,7 +1559,10 @@
+ 		return THD_ERROR;
+ 	}
+ 
+-	int value = sensor->read_temperature();
++	unsigned int checked_value;
++    if (!sensor->read_temperature_checked(checked_value) || checked_value > INT_MAX)
++        return THD_SENSOR_READ_ERROR;
++    int value = static_cast<int>(checked_value);
+ 
+ 	// Conditions are specified in decikelvin, temperatures are in
+ 	// millicelsius.
+@@ -1729,6 +1732,7 @@
+ 			ret = THD_SUCCESS;
+ 	}
+ 
++    if (ret == THD_SENSOR_READ_ERROR) return ret;
+ 	if (!ret) {
+ 		// After a target is matched, periodically when the condition set
+ 		// is periodically checked, because of time component it will fail
+@@ -1757,28 +1761,34 @@
+ }
+ 
+ int cthd_gddv::evaluate_condition_set(std::vector<struct condition>& condition_set) {
+-	for (int i = 0; i < (int) condition_set.size(); i++) {
+-		thd_log_debug("evaluate condition.condition at index %d\n", i);
+-		if (evaluate_condition(condition_set[i]) != 0)
+-			return THD_ERROR;
+-	}
+-	return THD_SUCCESS;
++    for (auto &condition : condition_set) {
++        const int ret = evaluate_condition(condition);
++        if (ret == THD_SENSOR_READ_ERROR) return ret;
++        if (ret != THD_SUCCESS) return THD_ERROR;
++    }
++    return THD_SUCCESS;
+ }
+ 
+ int cthd_gddv::evaluate_conditions() {
+-	int target = -1;
+-
+-	for (int i = 0; i < (int) conditions.size(); i++) {
+-		thd_log_debug("evaluate condition set %d\n", i);
+-		if (evaluate_condition_set(conditions[i]) == THD_SUCCESS) {
+-			target = conditions[i][0].target;
+-			thd_log_debug("Condition Set matched:%d target:%d\n", i, target);
+-			current_target_matched = target;
+-			break;
+-		}
+-	}
+-
+-	return target;
++    std::vector<std::vector<time_t>> saved_times;
++    for (const auto &set : conditions) {
++        saved_times.emplace_back();
++        for (const auto &condition : set) saved_times.back().push_back(condition.state_entry_time);
++    }
++    for (auto &set : conditions) {
++        const int ret = evaluate_condition_set(set);
++        if (ret == THD_SENSOR_READ_ERROR) {
++            for (unsigned int i = 0; i < conditions.size(); ++i)
++                for (unsigned int j = 0; j < conditions[i].size(); ++j)
++                    conditions[i][j].state_entry_time = saved_times[i][j];
++            return THD_SENSOR_READ_ERROR; // Caller preserves current matched target.
++        }
++        if (ret == THD_SUCCESS) {
++            current_target_matched = set[0].target;
++            return current_target_matched;
++        }
++    }
++    return -1; // Genuine no-match remains distinct from an invalid sensor read.
+ }
+ 
+ struct psvt* cthd_gddv::find_psvt(const std::string& name) {
+--- a/src/thd_engine_adaptive.cpp
++++ b/src/thd_engine_adaptive.cpp
+@@ -589,6 +589,7 @@
+ 	if (fallback_id < 0)
+ 		target = gddv.evaluate_conditions();
+ 
++    if (target == THD_SENSOR_READ_ERROR) return;
+ 	if (current_matched_target == target) {
+ 		thd_log_debug("No change in target\n");
+ 		return;
+@@ -849,6 +850,7 @@
+ 		thd_log_info(
+ 				"Some conditions are not supported, so check if any condition set can be matched\n");
+ 		int target = gddv.evaluate_conditions();
++        if (target == THD_SENSOR_READ_ERROR) { gddv.gddv_free(); return THD_ERROR; }
+ 		if (target == -1) {
+ 			thd_log_info("Also unable to evaluate any conditions\n");
+ 			thd_log_info(
+@@ -877,8 +879,9 @@
+ 
+ 	// Check if any conditions can be satisfied at this time
+ 	// If not just install the default passive IETM.D0 table
+-	if (gddv.evaluate_conditions() == -1)
+-		install_passive_default();
++    int checked_target = gddv.evaluate_conditions();
++    if (checked_target == THD_SENSOR_READ_ERROR) { gddv.gddv_free(); return THD_ERROR; }
++    if (checked_target == -1) install_passive_default();
+ 
+ 	thd_log_info("adaptive engine reached end\n");
+ 
+--- a/src/thd_dbus_interface.cpp
++++ b/src/thd_dbus_interface.cpp
+@@ -338,7 +338,13 @@
+ 	strncpy(path_str, sensor->get_sensor_path().c_str(),
+ 	MAX_DBUS_REPLY_STR_LEN);
+ 	path_str[MAX_DBUS_REPLY_STR_LEN] = '\0';
+-	*temp = (gint) sensor->read_temperature();
++	unsigned int checked_temperature;
++    if (!sensor->read_temperature_checked(checked_temperature)) {
++        g_free(sensor_str);
++        g_free(path_str);
++        return FALSE;
++    }
++    *temp = (gint) checked_temperature;
+ 	*sensor_out = sensor_str;
+ 	*path = path_str;
+ 

@@ -1,0 +1,15 @@
+--- a/src/thd_sensor_virtual.cpp
++++ b/src/thd_sensor_virtual.cpp
+@@ -232,6 +232,12 @@
+ 
+ 	if (polling.load())
+ 		return;
++
++    // A stopped worker cannot vouch for the next activation's first sample.
++    {
++        std::lock_guard<std::mutex> guard(sample_mutex);
++        last_temp_valid = false;
++    }
+ 
+ 	stop_polling.store(false);
+ 	pthread_attr_init(&thd_attr);
