@@ -151,6 +151,16 @@ XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合，不能假�
 这证明的是条件算法，没有确定 Action 请求实际采用的分类、成员筛选、名称或转换器，
 也不能推广到替换后的 resolver 或宣称最终 JSON 已知；未执行原厂、CLR 或 VM 代码。
 
+私有 `mapping/aot-ac-typecode-followup` 又确定了分类返回值的具体含义：
+原始 `PrimitiveTypeCode` 元数据为 `0 = Empty`、`1 = Object`、`39 = String`，不是布尔结果。
+固定初始化表实际插入 40 项（代码 2–41）；原包 `System.String` 表项的值是 39，
+命中该项时会进入前述 primitive contract 分支。匿名根的唯一泛型参数解析到同一原包
+`System.String`，字段、Action 属性和 getter 的共享类型参数签名也交叉一致，
+因此可以确认 Action 的声明类型是字符串；这没有证明匿名根实际采用哪个反射分类分支。
+27 条结构篡改负例均拒绝，126 份旧冻结文件内容/权限/所有者未变。
+`Empty` 只是已确认的枚举常量，不能据此声称它在该请求上实际返回；
+匿名根分类、成员名称/筛选、实际转换器和最终 JSON 仍未闭合，未执行原厂或 CLR/VM。
+
 
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，
