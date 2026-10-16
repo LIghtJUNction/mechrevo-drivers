@@ -325,6 +325,14 @@ int main(int argc, char **argv)
         for (int previous = 0; previous < 256; ++previous)
             for (int value = 0; value < 256; ++value) {
                 ec[address()] = previous;
+                u8 saved = cache(); bool saved_valid = valid();
+                reads = writes = 0;
+                if (profile && value > 2) {
+                    assert(set(value) == -EINVAL);
+                    assert(reads == 0 && writes == 0);
+                    assert(ec[address()] == previous && cache() == saved && valid() == saved_valid);
+                    continue;
+                }
                 assert(set(value) == 0);
                 assert(ec[address()] == ((previous & ~mask()) | encoded(value)));
                 assert(cache() == (value & (profile ? 3 : 1))); assert(valid());
@@ -333,7 +341,11 @@ int main(int argc, char **argv)
         for (int kind = 0; kind < 2; ++kind) for (int previous = 0; previous < 256; ++previous) {
             profile = kind; ec[address()] = previous; u8 output = 0xa5;
             int result = profile ? uw_get_charging_profile(&output) : uw_get_charging_priority(&output);
-            assert(result == 0); assert(output == ((previous & mask()) >> (profile ? 4 : 7)));
+            if (profile && ((previous >> 4) & 3) == 3) {
+                assert(result == -EIO && output == 0xa5);
+            } else {
+                assert(result == 0); assert(output == ((previous & mask()) >> (profile ? 4 : 7)));
+            }
         }
     } else if (!strcmp(name, "get_errors")) {
         int err[] = {-EIO, -ETIMEDOUT, -ENODEV, -EAGAIN};
@@ -362,6 +374,27 @@ int main(int argc, char **argv)
         assert(loaded());
         reads = writes = 0; restore(); assert(reads == 0 && writes == 0);
         assert(!valid()); assert(errors == 1 && last_error == -ETIMEDOUT);
+    } else if (!strcmp(name, "profile_reserved_init")) {
+        for (int previous = 0; previous < 256; ++previous) {
+            if (((previous >> 4) & 3) != 3) continue;
+            reset(true); ec[address()] = previous; init();
+            assert(loaded());
+            reads = writes = 0; restore();
+            /* Old HEAD cached reserved 3 and re-wrote it during this restore. */
+            assert(reads == 0 && writes == 0);
+            assert(!valid()); assert(errors == 1 && last_error == -EIO);
+            assert(store("balanced", 8) == 8 && valid() && cache() == 1);
+            assert(ec[address()] == ((previous & ~mask()) | encoded(1)));
+            ec[address()] = previous; restore();
+            assert(ec[address()] == ((previous & ~mask()) | encoded(1)));
+        }
+    } else if (!strcmp(name, "profile_invalid_uncached")) {
+        for (int value = 3; value < 256; ++value) {
+            reset(true); ec[address()] = 0xa5;
+            assert(set(value) == -EINVAL);
+            assert(!valid() && cache() == 0 && reads == 0 && writes == 0 && ec[address()] == 0xa5);
+            restore(); assert(reads == 0 && writes == 0);
+        }
     } else if (!strcmp(name, "init_recovery")) {
         for (int kind = 0; kind < 2; ++kind) {
             reset(kind); fault('r', -EIO); init();

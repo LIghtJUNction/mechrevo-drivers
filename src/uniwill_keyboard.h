@@ -819,8 +819,11 @@ static int uw_set_charging_profile_locked(u8 charging_profile)
 {
 	int result;
 
+	/* Code 3 is reserved; never write or cache an undefined profile. */
+	if (charging_profile > 2)
+		return -EINVAL;
+
 	/* Store unshifted value for later restoration. */
-	charging_profile &= 0x03;
 	result = uniwill_update_ec_ram(0x07a6, 0x03 << 4, charging_profile << 4);
 	if (!result) {
 		uw_charging_profile_last_written_value = charging_profile;
@@ -844,9 +847,13 @@ static int uw_get_charging_profile(u8 *charging_profile)
 	u8 value;
 	int result = uniwill_read_ec_ram(0x07a6, &value);
 
-	if (!result)
-		*charging_profile = (value >> 4) & 0x03;
-	return result;
+	if (result)
+		return result;
+	value = (value >> 4) & 0x03;
+	if (value > 2)
+		return -EIO;
+	*charging_profile = value;
+	return 0;
 }
 
 static int uw_has_charging_profile(bool *status)

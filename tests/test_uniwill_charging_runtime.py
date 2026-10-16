@@ -117,6 +117,12 @@ class UniwillChargingRuntime(unittest.TestCase):
     def test_failed_init_does_not_restore_unknown_profile(self):
         self.check_case('profile_init_failure')
 
+    def test_reserved_profile_init_never_restores_and_valid_sysfs_retry_recovers(self):
+        self.check_case('profile_reserved_init')
+
+    def test_invalid_profile_setter_never_validates_unknown_cache_or_accesses_ec(self):
+        self.check_case('profile_invalid_uncached')
+
     def test_failed_init_allows_explicit_sysfs_recovery(self):
         self.check_case('init_recovery')
 
