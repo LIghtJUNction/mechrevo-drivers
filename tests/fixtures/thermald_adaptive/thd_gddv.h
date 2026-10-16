@@ -1,0 +1,332 @@
+/*
+ * cthd_engine_adaptive.cpp: Adaptive thermal engine
+ *
+ * Copyright (C) 2013 Intel Corporation. All rights reserved.
+ * Copyright 2020 Google LLC
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 or later as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ *
+ * Author Name Matthew Garrett <mjg59@google.com>
+ *
+ */
+
+#ifndef THD_GDDV_H_
+#define THD_GDDV_H_
+
+#ifndef ANDROID
+#include <libevdev/libevdev.h>
+#include <upower.h>
+#endif
+
+#include <memory>
+#include "thd_engine.h"
+#include "thd_trt_art_reader.h"
+
+#define DECI_KELVIN_TO_CELSIUS(t)       ({                      \
+        int _t = (t);                                          \
+        ((_t-2732 >= 0) ? (_t-2732+5)/10 : (_t-2732-5)/10);     \
+})
+
+enum adaptive_condition : uint32_t { // NOLINT(performance-enum-size)
+	Default = 0x01,
+	Orientation,
+	Proximity,
+	Motion,
+	Dock,
+	Workload,
+	Cooling_mode,
+	Power_source,
+	Aggregate_power_percentage,
+	Lid_state,
+	Platform_type,
+	Platform_SKU,
+	Utilisation,
+	TDP,
+	Duty_cycle,
+	Power,
+	Temperature,
+	Display_orientation,
+	Oem0,
+	Oem1,
+	Oem2,
+	Oem3,
+	Oem4,
+	Oem5,
+	PMAX,
+	PSRC,
+	ARTG,
+	CTYP,
+	PROP,
+	Unk1,
+	Unk2,
+	Battery_state,
+	Battery_rate,
+	Battery_remaining,
+	Battery_voltage,
+	PBSS,
+	Battery_cycles,
+	Battery_last_full,
+	Power_personality,
+	Battery_design_capacity,
+	Screen_state,
+	AVOL,
+	ACUR,
+	AP01,
+	AP02,
+	AP10,
+	Time,
+	Temperature_without_hysteresis,
+	Mixed_reality,
+	User_presence,
+	RBHF,
+	VBNL,
+	CMPP,
+	Battery_percentage,
+	Battery_count,
+	Power_slider,
+	OS_type = 86
+};
+
+/*
+ * Adaptive condition ID ranges, matching Intel DPTF's ConditionType
+ * (OemConditionBaseId / SwOemConditionBaseId / ParticipantConditionBaseId).
+ *
+ * [OEM_CONDITION_BASE_ID, SW_OEM_CONDITION_BASE_ID)
+ *     OEM variables exported by the firmware as odvpN sysfs entries.
+ * [SW_OEM_CONDITION_BASE_ID, PARTICIPANT_CONDITION_BASE_ID)
+ *     Software-OEM conditions set at runtime by OEM software through the
+ *     DPTF/ESIF interface. These have no equivalent on Linux, so thermald
+ *     never matches them instead of misreading them as ODVP variables.
+ */
+#define OEM_CONDITION_BASE_ID		0x1000
+#define SW_OEM_CONDITION_BASE_ID	0x2000
+#define PARTICIPANT_CONDITION_BASE_ID	0x10000
+
+enum adaptive_comparison : uint8_t {
+	ADAPTIVE_EQUAL = 0x01, ADAPTIVE_LESSER_OR_EQUAL, ADAPTIVE_GREATER_OR_EQUAL, ADAPTIVE_NOT_EQUAL,
+};
+
+enum adaptive_operation : uint8_t {
+	AND = 0x01, FOR
+};
+
+struct psv {
+	std::string name;
+	std::string source;
+	std::string target;
+	int priority;
+	int sample_period;
+	int temp;
+	int domain;
+	int control_knob;
+	std::string limit;
+	int step_size;
+	int limit_coeff;
+	int unlimit_coeff;
+};
+
+struct condition {
+	uint64_t condition;
+	std::string device;
+	uint64_t comparison;
+	int argument;
+	enum adaptive_operation operation;
+	enum adaptive_comparison time_comparison;
+	time_t time;
+	int target;
+	int state;
+	time_t state_entry_time;
+	int ignore_condition;
+};
+
+struct custom_condition {
+	enum adaptive_condition condition;
+	std::string name;
+	std::string participant;
+	int domain;
+	int type;
+};
+
+struct psvt {
+	std::string name;
+	std::vector<struct psv> psvs;
+};
+
+struct itmt_entry {
+	std::string target;
+	int trip_point;
+	std::string pl1_min;
+	std::string pl1_max;
+	std::string unused;
+};
+
+struct trt_entry {
+	std::string source;
+	std::string dest;
+	int priority;
+	int sample_rate;
+	int resd0;
+	int resd1;
+	int resd2;
+	int resd3;
+};
+
+struct itmt {
+	int version;
+	std::string name;
+	std::vector<struct itmt_entry> itmt_entries;
+};
+
+struct trippoint {
+	std::string name;
+	std::string type_str;
+	trip_point_type_t type;
+	int temp;
+};
+
+struct vsct_entry {
+	std::string target;
+	int domain_type;
+	int coeff_type;
+	int coeff;
+	int operation;
+	int alpha;
+	int trigger_point;
+};
+
+struct vspt_entry {
+	int virtual_temp;
+	int sample_period;
+};
+
+class cthd_gddv {
+private:
+	std::vector<ppcc_t> ppccs;
+	std::vector<struct custom_condition> custom_conditions;
+	std::vector<rel_object_t> rel_list;
+	std::vector<struct psvt> psvts;
+	std::vector<struct itmt> itmts;
+	std::vector<std::string> idsps;
+	std::vector<struct trippoint> trippoints;
+	std::string int3400_path;
+#ifndef ANDROID
+	UpClient *upower_client;
+	GDBusProxy *power_profiles_daemon;
+	struct libevdev *tablet_dev;
+	struct libevdev *lid_dev;
+#endif
+	std::string int3400_base_path;
+	int power_slider;
+	int current_target_matched;
+	/*
+	 * Length of the buffer currently being parsed by get_type/
+	 * get_uint64/get_string. Each parse_* helper assigns this from its
+	 * own `len` parameter on entry so that bounds checks in the readers
+	 * cannot walk off the end of attacker-controlled buffers.
+	 */
+	int gddv_cur_buf_len;
+	void destroy_dynamic_sources();
+	int get_type(char *object, int *offset);
+	uint64_t get_uint64(char *object, int *offset);
+	char* get_string(char *object, int *offset);
+	char* get_string_obj(char *object, int *offset);
+
+	unsigned int crc32(char const *p, unsigned int len);
+	int format_dv_filename(std::stringstream& filename);
+
+	int merge_custom(struct custom_condition *custom,
+			struct condition *condition);
+	int merge_appc(void);
+	int parse_appc(char *appc, int len);
+	int parse_apat(char *apat, int len);
+	int parse_apct(char *apct, int len);
+	int parse_ppcc(char *name, char *ppcc, int len);
+	int parse_psvt(char *name, char *psvt, int len);
+	int parse_itmt(char *name, char *itmt, int len);
+	int parse_itmt3(char *name, char *itmt, unsigned int len);
+	int parse_vsct(char *name, char *psvt, int len);
+	int parse_vspt(char *name, char *psvt, int len);
+	int parse_trt(char *trt, int len);
+	void parse_idsp(char *name, char *idsp, int len);
+	void parse_trip_point(char *name, char *type, char *val, int len);
+	int handle_compressed_gddv(char *buf, int size);
+	int parse_gddv_key(char *buf, int size, int *end_offset);
+	int parse_gddv(char *buf, int size, int *end_offset, int depth = 0);
+	int verify_condition(const struct condition& condition);
+	int compare_condition(const struct condition& condition, int value);
+	int compare_time(const struct condition& condition);
+	int evaluate_oem_condition(const struct condition& condition);
+	int evaluate_temperature_condition(struct condition condition);
+	int evaluate_ac_condition(const struct condition& condition);
+	int evaluate_lid_condition(const struct condition& condition);
+	int evaluate_workload_condition(const struct condition& condition);
+	int evaluate_platform_type_condition(const struct condition& condition);
+	int evaluate_power_slider_condition(const struct condition& condition);
+	int evaluate_os_type_condition(const struct condition& condition);
+	int evaluate_condition(struct condition& condition);
+	int evaluate_condition_set(std::vector<struct condition>& condition_set);
+	void exec_fallback_target(int target);
+	void dump_apat();
+	void dump_apct();
+	void dump_ppcc();
+	void dump_psvt();
+	void dump_itmt();
+	void dump_idsps();
+	void dump_trips();
+	void dump_vsct();
+	void dump_vspt();
+#ifndef ANDROID
+	void setup_input_devices();
+#endif
+	int get_trip_temp(const std::string& name, trip_point_type_t type);
+
+public:
+#ifndef ANDROID
+	cthd_gddv() :
+			upower_client(
+			nullptr), power_profiles_daemon(nullptr), tablet_dev(nullptr), lid_dev(nullptr), int3400_base_path(""), power_slider(75), current_target_matched(-1), gddv_cur_buf_len(0) {
+	}
+#else
+	cthd_gddv() :
+			int3400_base_path(""), current_condition_set(0xffff) {
+	}
+
+#endif
+	~cthd_gddv();
+
+	std::vector<std::vector<struct condition>> conditions;
+	std::vector<struct adaptive_target> targets;
+
+	std::string vscts_name;
+	std::vector<struct vsct_entry> vscts;
+	std::vector<struct vspt_entry> vspts;
+
+	ppcc_t* get_ppcc_param(const std::string& name);
+	int gddv_init(std::string& base_path);
+	std::unique_ptr<char[]> gddv_load(size_t *size);
+	void gddv_free(void);
+	int verify_conditions();
+	int evaluate_conditions();
+	void update_power_slider();
+	int find_agressive_target();
+	struct psvt* find_psvt(const std::string& name);
+	struct itmt* find_itmt(const std::string& name);
+	struct psvt* find_def_psvt();
+	int search_idsp(const std::string& name);
+
+};
+
+#endif /* THD_GDDV_H_ */

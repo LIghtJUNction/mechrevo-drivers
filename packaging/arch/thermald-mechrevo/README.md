@@ -1,7 +1,7 @@
 # thermald checked-temperature candidate
 
 Local candidate only; not installed or accepted for live operation. Package release
-2 adds a third patch for a reproduced virtual-sensor pthread restart window: a
+2 added a third patch for a reproduced virtual-sensor pthread restart window: a
 previously valid cold cache could be exposed before the first new sample. The
 cache is now invalidated before creating the replacement worker. The old
 two-patch release 1 archive remains separate historical evidence, with that
@@ -46,9 +46,12 @@ attribute cleanup, repeated activation, injected create failure and active
 destruction. It gates the first new sample to distinguish stale caches of both
 0 and 75,000 millidegrees; the two-patch source fails the exact stale-cache
 assertion. Sysfs and cooling notifications remain doubles; production sleep
-latency, whole-daemon scheduling and hardware cooling are not verified. Adaptive/GDDV, DBus allocation/cleanup, virtual dependency
-cycles and concurrent mutation currently have private actual-function tests;
-they are not covered by these public test methods and need portable coverage.
+latency, whole-daemon scheduling and hardware cooling are not verified. Release 3 adds portable actual-function adaptive/GDDV startup and cleanup,
+invalid-sentinel/ordinary-no-match, predicate short-circuit, virtual dependency
+cycles, transactional filtering/cache and concurrent graph/parameter tests.
+The full contract command requires all four test modules in package check(),
+including their exact prepared-source verification. DBus allocation-failure
+cleanup still has private coverage and needs a portable regression.
 
 This differently named package provides `thermald=2:2.5.13` and conflicts with
 `thermald`; replacement requires an explicit pacman transaction. Its
@@ -68,7 +71,7 @@ no automatic restore/activation executor is included. This candidate is unsigned
 and unpublished, and has not been installed or run.
 
 
-## Local pkgrel2 artifact qualification (2026-10-16)
+## Historical pkgrel2 artifact qualification (2026-10-16)
 
 Fresh three-patch production compilation/link completed in 38.744 seconds.
 Candidate `thermald-mechrevo-2:2.5.13-2-x86_64_v3.pkg.tar.zst` is 439,327 bytes,
@@ -88,3 +91,28 @@ size, mode and owner. Actual new production tracking remains partial (six gaps,
 The independent public test run succeeded with zero gaps and 112 unresolved
 temporary-file removal events. These limits remain separate from command success.
 This is an unsigned, unpublished, uninstalled artifact; no new daemon was run.
+
+
+## Local pkgrel3 artifact qualification (2026-10-16)
+
+The complete public contract run passed 25 tests without skips in 31.547 seconds,
+with actual prepared production-source inputs and unchanged before/after source
+hashes. Package check() now requires all four contract modules and runs the full
+`test_thermald_checked*.py` pattern; two actual Bash-function tests detect missing
+adaptive coverage or selection of an incomplete test pattern.
+
+Candidate `thermald-mechrevo-2:2.5.13-3-x86_64_v3.pkg.tar.zst` is 439,443 bytes,
+SHA256 `e3c5eb728bb2eb40102d0f1c331b8244375854076ec811314a7857fa9cf4662d`.
+All nine payload files, 16 directories and three metadata entries were reviewed;
+payload bytes/modes/owners equal pkgrel2. BUILDINFO uses recipe SHA256
+`996d222b1f70d2bc62ce183b48b567f7cd03e36fc711099fb9622c19666c8c61`.
+The three production patches and daemon bytes are unchanged. This is a single
+`makepkg -R -d` repackage using the independently copied and qualified real build
+tree, not another production compilation or dependency check. The preceding
+complete tests and exact source/binary provenance supply the skipped-phase evidence.
+
+The 22-file / 681,059-byte candidate backup passed independent SHA/size/mode/owner
+readback. Test tracking remains partial with zero gaps and 248 temporary-removal
+events; repackage tracking has two gaps and four unresolved events. Raw evidence
+is retained separately from successful commands. The candidate is uninstalled,
+unsigned and unpublished; the new daemon has not run and no thermal benefit is claimed.

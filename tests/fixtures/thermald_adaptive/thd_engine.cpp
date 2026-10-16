@@ -1,0 +1,1372 @@
+/*
+ * thd_engine.cpp: thermal engine class implementation
+ *
+ * Copyright (C) 2012 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 or later as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ *
+ * Author Name <Srinivas.Pandruvada@linux.intel.com>
+ *
+ */
+
+/* This class acts as the parent class of all thermal engines. Main functions are:
+ * - Initialization
+ * - Read cooling devices and thermal zones(sensors), which can be overridden in child
+ * - Starts a poll loop, All the thermal processing happens in this thread's context
+ * - Message processing loop
+ * - If either a poll interval is expired or notified via netlink, it schedules a
+ *   a change notification on the associated cthd_zone to read and process.
+ */
+
+#include <dirent.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/utsname.h>
+#include <locale>
+#include <memory>
+#include <mutex>
+#include <limits.h>
+#include <stdlib.h>
+#include "thd_engine.h"
+#include "thd_cdev_therm_sys_fs.h"
+#include "thd_zone_therm_sys_fs.h"
+#include "thd_zone_dynamic.h"
+#include "thd_cdev_gen_sysfs.h"
+#include "thd_util.h"
+#include "thd_int3400.h"
+#include "thd_platform.h"
+#include "thd_platform_intel.h"
+#include "thd_platform_arm.h"
+
+static void *cthd_engine_thread(void *arg);
+
+static bool canonicalize_sysfs_path(const std::string &path,
+		std::string &canonical_path) {
+	if (path.empty())
+		return false;
+
+	char resolved_path[PATH_MAX];
+	if (realpath(path.c_str(), resolved_path) == nullptr)
+		return false;
+
+	canonical_path.assign(resolved_path);
+	if (!starts_with(canonical_path, "/sys/"))
+		return false;
+
+	return true;
+}
+
+cthd_engine::cthd_engine(std::string _uuid) :
+		current_cdev_index(0), current_zone_index(0), current_sensor_index(0), parse_thermal_zone_success(
+				false), parse_thermal_cdev_success(false), uuid(std::move(_uuid)), parser_disabled(
+				false), adaptive_mode(false), poll_timeout_msec(-1), wakeup_fd(
+				-1), uevent_fd(-1), control_mode(COMPLEMENTRY), write_pipe_fd(
+				0), preference(0), status(true), thz_last_uevent_time(0), thz_last_temp_ind_time(
+				0), thz_last_update_event_time(0), terminate(false), has_invariant_tsc(0),
+				has_aperf(0), proc_list_matched(false), poll_interval_sec(0), poll_sensor_mask(0),
+				fast_poll_sensor_mask(0), saved_poll_interval(0), poll_fd_cnt(0), rt_kernel(false),
+				parser_init_done(false) {
+	thd_engine = pthread_t();
+	thd_attr = pthread_attr_t();
+
+	memset(poll_fds, 0, sizeof(poll_fds));
+	memset(last_cpu_update, 0, sizeof(last_cpu_update));
+}
+
+cthd_engine::~cthd_engine() {
+	if (parser_init_done)
+		parser.parser_deinit();
+}
+
+void cthd_engine::thd_engine_thread() {
+	unsigned int i;
+	int n;
+	time_t tm;
+	int poll_timeout_sec = poll_timeout_msec / 1000;
+
+	thd_log_info("thd_engine_thread begin\n");
+	for (;;) {
+		if (terminate)
+			break;
+
+		n = poll(poll_fds, poll_fd_cnt, poll_timeout_msec);
+		thd_log_debug("poll exit %d polls_fd event %d %d\n", n,
+				poll_fds[0].revents, poll_fds[1].revents);
+		if (n < 0) {
+			thd_log_warn("Write to pipe failed\n");
+			continue;
+		}
+		time(&tm);
+		rapl_power_meter.rapl_measure_power();
+
+		if (n == 0 || (tm - thz_last_temp_ind_time) >= poll_timeout_sec) {
+			if (!status) {
+				thd_log_msg("Thermal Daemon is disabled\n");
+				continue;
+			}
+			thd_engine_lock();
+			// Polling mode enabled. Trigger a temp change message
+			for (i = 0; i < zones.size(); ++i) {
+				cthd_zone *zone = zones[i].get();
+				zone->zone_temperature_notification(0, 0);
+			}
+			thd_engine_unlock();
+			thz_last_temp_ind_time = tm;
+		}
+		if (uevent_fd >= 0 && (poll_fds[uevent_fd].revents & POLLIN)) {
+			// Kobj uevent
+			if (kobj_uevent.check_for_event()) {
+				time_t tm;
+
+				time(&tm);
+				thd_log_debug("kobj uevent for thermal\n");
+				if ((tm - thz_last_uevent_time)
+						>= thz_notify_debounce_interval) {
+					thd_engine_lock();
+					for (i = 0; i < zones.size(); ++i) {
+						cthd_zone *zone = zones[i].get();
+						zone->zone_temperature_notification(0, 0);
+					}
+					thd_engine_unlock();
+				} else {
+					thd_log_debug("IGNORE THZ kevent\n");
+				}
+				thz_last_uevent_time = tm;
+			}
+		}
+		if (wakeup_fd >= 0 && (poll_fds[wakeup_fd].revents & POLLIN)) {
+			message_capsul_t msg;
+
+			thd_log_debug("wakeup fd event\n");
+			int result = read(poll_fds[wakeup_fd].fd, &msg,
+					sizeof(message_capsul_t));
+			if (result < 0) {
+				thd_log_warn("read on wakeup fd failed\n");
+				poll_fds[wakeup_fd].revents = 0;
+				continue;
+			}
+			if (proc_message(&msg) < 0) {
+				thd_log_debug("Terminating thread..\n");
+			}
+		}
+
+		if ((tm - thz_last_update_event_time) >= thd_poll_interval) {
+			thd_engine_lock();
+			update_engine_state();
+			thd_engine_unlock();
+			thz_last_update_event_time = tm;
+		}
+
+		workarounds();
+	}
+	thd_log_debug("thd_engine_thread_end\n");
+}
+
+bool cthd_engine::set_preference(const int pref) {
+	return true;
+}
+
+#define POWER_FLOOR_ENABLE_ATTRIBUTE "/sys/bus/pci/devices/0000:00:04.0/power_limits/power_floor_enable"
+#define POWER_FLOOR_STATUS_ATTRIBUTE  "/sys/bus/pci/devices/0000:00:04.0/power_limits/power_floor_status"
+
+void cthd_engine::enable_power_floor_event()
+{
+	int fd;
+
+	/* Enable feature via sysfs knob */
+	fd = open(POWER_FLOOR_ENABLE_ATTRIBUTE, O_RDWR);
+	if (fd < 0) {
+		thd_log_debug("Unable to open power floor status file\n");
+		return;
+	}
+
+	if (write(fd, "1\n", 2) < 0) {
+		thd_log_debug("Unable to enable power floor notifications\n");
+		close(fd);
+		return;
+	}
+
+	close(fd);
+
+	fd = open(POWER_FLOOR_STATUS_ATTRIBUTE, O_RDONLY);
+	if (fd < 0) {
+		thd_log_debug("Unable to open power floor status file\n");
+		return;
+	}
+	close(fd);
+
+	cthd_cdev *cdev;
+
+	cdev = search_cdev("intel_powerclamp");
+	if (!cdev) {
+		thd_log_debug("Power clamp driver not found!\n");
+		return;
+	}
+
+	std::unique_ptr<cthd_sensor> sensor(new cthd_sensor(
+			current_sensor_index, POWER_FLOOR_STATUS_ATTRIBUTE,
+			"power_floor", SENSOR_TYPE_RAW));
+	if (sensor->sensor_update() != THD_SUCCESS) {
+		return;
+	}
+
+	std::unique_ptr<cthd_zone_dynamic> zone(new cthd_zone_dynamic(current_zone_index,
+			"power_floor", 1, PASSIVE, "power_floor", "intel_powerclamp"));
+	if (!zone) {
+		return;
+	}
+
+	sensors.push_back(std::move(sensor));
+	++current_sensor_index;
+
+	if (zone->zone_update() != THD_SUCCESS) {
+		// sensor will be deleted when all elements of sensors are deleted from sensors[]
+		return;
+	}
+
+	/* Add if present */
+	cthd_cdev *cdev_pci = match_cdev("PCIe_Port_Link_Speed");
+	if (cdev_pci) {
+		thd_log_debug("PCIe port link cooling device present\n");
+		cthd_trip_point *trip = zone->get_trip_at_index(0);
+		if (trip)
+			trip->thd_trip_point_add_cdev(*cdev_pci,
+					cthd_trip_point::default_influence);
+	}
+
+	zone->set_zone_active();
+	zone->zone_dump();
+	zones.push_back(std::move(zone));
+	++current_zone_index;
+}
+
+void cthd_engine::check_acpi_platform_profile() {
+	// Check PM profile and warn to start on non-mobile platforms
+	csys_fs pm_profile_fs("/sys/firmware/acpi/pm_profile");
+	if (pm_profile_fs.exists()) {
+		std::string pm_profile;
+		pm_profile_fs.read("", pm_profile);
+		thd_log_info("PM profile is %s\n", pm_profile.c_str());
+		if (pm_profile != "2" && pm_profile != "8") {
+			thd_log_warn("Non-mobile platform: thermal tables may not have been validated.\n");
+		}
+	} else {
+		thd_log_info("PM profile is not available, skipping check\n");
+	}
+}
+
+void cthd_engine::thd_parse_features()
+{
+	features_parser.parser_init();
+	if (features_parser.start_parse() == THD_SUCCESS) {
+		thd_log_debug("Parsed features from XML config file\n");
+		int ret = features_parser.start_parse();
+		if (ret == THD_SUCCESS) {
+			thd_log_debug("Features parsed successfully from XML config file\n");
+		} else {
+			thd_log_debug("Failed to parse features from XML config file\n");
+		}
+		features_parser.parser_deinit();
+	} else {
+		thd_log_debug("No features parsed from XML config file\n");
+	}
+}
+
+int cthd_engine::thd_engine_init(bool ignore_cpuid_check, bool adaptive) {
+	int ret;
+
+	adaptive_mode = adaptive;
+
+	if (ignore_cpuid_check) {
+		thd_log_debug("Ignore CPU ID check for MSRs\n");
+		proc_list_matched = true;
+	} else {
+		check_cpu_id();
+
+		if (!proc_list_matched) {
+			if ((parser_init() == THD_SUCCESS) && parser.platform_matched()) {
+				thd_log_msg("Unsupported cpu model, using thermal-conf.xml only\n");
+			} else {
+				thd_log_msg("Unsupported cpu model, use thermal-conf.xml file or run with --ignore-cpuid-check\n");
+				return THD_ERROR;
+			}
+		}
+
+		check_acpi_platform_profile();
+	}
+
+	ret = read_thermal_sensors();
+	if (ret != THD_SUCCESS) {
+		thd_log_error("Thermal sysfs Error in reading sensors\n");
+		// This is a fatal error and daemon will exit
+		return THD_FATAL_ERROR;
+	}
+
+	ret = read_cooling_devices();
+	if (ret != THD_SUCCESS) {
+		thd_log_error("Thermal sysfs Error in reading cooling devs\n");
+		// This is a fatal error and daemon will exit
+		return THD_FATAL_ERROR;
+	}
+
+	ret = read_thermal_zones();
+	if (ret != THD_SUCCESS) {
+		thd_log_error("No thermal sensors found\n");
+		// This is a fatal error and daemon will exit
+		return THD_FATAL_ERROR;
+	}
+
+	if (power_floor_enable)
+		enable_power_floor_event();
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::thd_engine_start() {
+	int ret;
+	int wake_fds[2];
+
+	check_for_rt_kernel();
+
+	// Pipe is used for communication between two processes
+	ret = pipe(wake_fds);
+	if (ret) {
+		thd_log_error("Thermal sysfs: pipe creation failed %d:\n", ret);
+		return THD_FATAL_ERROR;
+	}
+	if (fcntl(wake_fds[0], F_SETFL, O_NONBLOCK) < 0) {
+		thd_log_error("Cannot set non-blocking on pipe: %s\n", strerror(errno));
+		return THD_FATAL_ERROR;
+	}
+	if (fcntl(wake_fds[1], F_SETFL, O_NONBLOCK) < 0) {
+		thd_log_error("Cannot set non-blocking on pipe: %s\n", strerror(errno));
+		return THD_FATAL_ERROR;
+	}
+	write_pipe_fd = wake_fds[1];
+
+	memset(poll_fds, 0, sizeof(poll_fds));
+
+	wakeup_fd = poll_fd_cnt;
+	poll_fds[wakeup_fd].fd = wake_fds[0];
+	poll_fds[wakeup_fd].events = POLLIN;
+	poll_fds[wakeup_fd].revents = 0;
+	poll_fd_cnt++;
+
+	poll_timeout_msec = -1;
+	if (poll_interval_sec) {
+		thd_log_msg("Polling mode is enabled: %d\n", poll_interval_sec);
+		poll_timeout_msec = poll_interval_sec * 1000;
+	}
+
+	if (!parser_init() && parser.platform_matched()) {
+		parser.set_default_preference();
+		int poll_secs = parser.get_polling_interval();
+		if (poll_secs) {
+			thd_log_info("Poll interval is defined in XML config %d seconds\n", poll_secs);
+			poll_interval_sec = poll_secs;
+			poll_timeout_msec = poll_secs * 1000;
+		}
+	}
+
+	// Check if polling is disabled and sensors don't support
+	// async mode, in that enable force polling
+	if (!poll_interval_sec) {
+		unsigned int i;
+		for (i = 0; i < zones.size(); ++i) {
+			cthd_zone *zone = zones[i].get();
+			if (!zone->zone_active_status())
+				continue;
+			if (!zone->check_sensor_async_status()) {
+				thd_log_msg(
+						"Polling will be enabled as some sensors are not capable to notify asynchronously\n");
+				poll_timeout_msec = def_poll_interval;
+				break;
+			}
+		}
+		if (i == zones.size()) {
+			thd_log_info("Proceed without polling mode!\n");
+		}
+
+		if (check_feature(KOBJECT_UEVENT_SUPPORT) == 0) {
+			thd_log_info("Kobject uevent support is disabled by config file\n");
+			goto skip_kobj;
+		}
+
+		uevent_fd = poll_fd_cnt;
+		poll_fds[uevent_fd].fd = kobj_uevent.kobj_uevent_open();
+		if (poll_fds[uevent_fd].fd < 0) {
+			thd_log_warn("Invalid kobj_uevent handle\n");
+			uevent_fd = -1;
+			goto skip_kobj;
+		}
+		thd_log_info("FD = %d\n", poll_fds[uevent_fd].fd);
+		kobj_uevent.register_dev_path(
+				(char *) "/devices/virtual/thermal/thermal_zone");
+		poll_fds[uevent_fd].events = POLLIN;
+		poll_fds[uevent_fd].revents = 0;
+		poll_fd_cnt++;
+	}
+	skip_kobj:
+#ifndef DISABLE_PTHREAD
+	// Create thread
+	pthread_attr_init(&thd_attr);
+	pthread_attr_setdetachstate(&thd_attr, PTHREAD_CREATE_DETACHED);
+	ret = pthread_create(&thd_engine, &thd_attr, cthd_engine_thread,
+			(void*) this);
+#else
+	{
+		pid_t childpid;
+
+		if((childpid = fork()) == - 1)
+		{
+			perror("fork");
+			exit(EXIT_FAILURE);
+		}
+
+		if(childpid == 0)
+		{
+			/* Child process closes up input side of pipe */
+			close(wake_fds[1]);
+			cthd_engine_thread((void*)this);
+		}
+		else
+		{
+			/* Parent process closes up output side of pipe */
+			close(wake_fds[0]);
+		}
+	}
+#endif
+	thd_pref.refresh();
+	preference = thd_pref.get_preference();
+	thd_log_info("Current user preference is %d\n", preference);
+
+	if (control_mode == EXCLUSIVE) {
+		thd_log_info("Control is taken over from kernel\n");
+		takeover_thermal_control();
+	}
+
+	return ret;
+}
+
+int cthd_engine::thd_engine_stop() {
+	return THD_SUCCESS;
+}
+
+static void *cthd_engine_thread(void *arg) {
+	cthd_engine *obj = (cthd_engine*) arg;
+
+	obj->thd_engine_thread();
+
+	return nullptr;
+}
+
+void cthd_engine::send_message(message_name_t msg_id, int size,
+		unsigned char *msg) {
+	message_capsul_t msg_cap;
+
+	memset(&msg_cap, 0, sizeof(message_capsul_t));
+
+	msg_cap.msg_id = msg_id;
+	msg_cap.msg_size = (size > MAX_MSG_SIZE) ? MAX_MSG_SIZE : size;
+	if (msg)
+		memcpy(msg_cap.msg, msg, msg_cap.msg_size);
+	int result = write(write_pipe_fd, &msg_cap, sizeof(message_capsul_t));
+	if (result < 0)
+		thd_log_warn("Write to pipe failed\n");
+}
+
+void cthd_engine::process_pref_change() {
+	int new_pref;
+
+	thd_pref.refresh();
+	new_pref = thd_pref.get_preference();
+	if (new_pref == PREF_DISABLED) {
+		status = false;
+		return;
+	}
+	status = true;
+	if (preference != new_pref) {
+		thd_log_msg("Preference changed\n");
+	}
+	preference = new_pref;
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		cthd_zone *zone = zones[i].get();
+		zone->update_zone_preference();
+	}
+
+	if (control_mode == EXCLUSIVE) {
+		thd_log_info("Control is taken over from kernel\n");
+		takeover_thermal_control();
+	}
+}
+
+void cthd_engine::thd_engine_terminate() {
+	send_message(TERMINATE, 0, nullptr);
+	sleep(1);
+	process_terminate();
+}
+
+int cthd_engine::thd_engine_set_user_max_temp(const char *zone_type,
+		const char *user_set_point) {
+	std::string str(user_set_point);
+	cthd_zone *zone;
+
+	thd_log_debug("thd_engine_set_user_set_point %s\n", user_set_point);
+
+	std::locale loc;
+	if (std::isdigit(str[0], loc) == 0) {
+		thd_log_warn("thd_engine_set_user_set_point Invalid set point\n");
+		return THD_ERROR;
+	}
+
+	zone = get_zone(zone_type);
+	if (!zone) {
+		thd_log_warn("thd_engine_set_user_set_point Invalid zone\n");
+		return THD_ERROR;
+	}
+	return zone->update_max_temperature(atoi(user_set_point));
+}
+
+int cthd_engine::thd_engine_set_user_psv_temp(const char *zone_type,
+		const char *user_set_point) {
+	std::string str(user_set_point);
+	cthd_zone *zone;
+
+	thd_log_debug("thd_engine_set_user_psv_temp %s\n", user_set_point);
+
+	std::locale loc;
+	if (std::isdigit(str[0], loc) == 0) {
+		thd_log_warn("thd_engine_set_user_psv_temp Invalid set point\n");
+		return THD_ERROR;
+	}
+
+	zone = get_zone(zone_type);
+	if (!zone) {
+		thd_log_warn("thd_engine_set_user_psv_temp Invalid zone\n");
+		return THD_ERROR;
+	}
+	return zone->update_psv_temperature(atoi(user_set_point));
+}
+
+void cthd_engine::thermal_zone_change(message_capsul_t *msg) {
+
+	thermal_zone_notify_t *pmsg = (thermal_zone_notify_t*) msg->msg;
+	for (unsigned i = 0; i < zones.size(); ++i) {
+		cthd_zone *zone = zones[i].get();
+		if (zone->zone_active_status())
+			zone->zone_temperature_notification(pmsg->type, pmsg->data);
+		else {
+			thd_log_debug("zone is not active\n");
+		}
+	}
+}
+
+void cthd_engine::poll_enable_disable(bool status, message_capsul_t *msg) {
+	unsigned int *sensor_id = (unsigned int*) msg->msg;
+
+	if (status) {
+		poll_sensor_mask |= (1 << (*sensor_id));
+		poll_timeout_msec = def_poll_interval;
+		thd_log_debug("thd_engine polling enabled via %u\n", *sensor_id);
+	} else {
+		poll_sensor_mask &= ~(1 << (*sensor_id));
+		if (!poll_sensor_mask) {
+			poll_timeout_msec = -1;
+			thd_log_debug("thd_engine polling last disabled via %u\n",
+					*sensor_id);
+		}
+	}
+}
+
+void cthd_engine::fast_poll_enable_disable(bool status, message_capsul_t *msg) {
+	unsigned int *sensor_id = (unsigned int*) msg->msg;
+
+	if (status) {
+		fast_poll_sensor_mask |= (1 << (*sensor_id));
+		if (!saved_poll_interval)
+			saved_poll_interval = poll_timeout_msec;
+		poll_timeout_msec = 1000;
+		thd_log_debug("thd_engine fast polling enabled via %u\n", *sensor_id);
+	} else {
+		fast_poll_sensor_mask &= ~(1 << (*sensor_id));
+		if (!fast_poll_sensor_mask) {
+			if (saved_poll_interval)
+				poll_timeout_msec = saved_poll_interval;
+			thd_log_debug("thd_engine polling last disabled via %u\n",
+					*sensor_id);
+		}
+	}
+}
+
+int cthd_engine::proc_message(message_capsul_t *msg) {
+	int ret = 0;
+
+	thd_log_debug("Received message %d\n", msg->msg_id);
+	switch (msg->msg_id) {
+	case WAKEUP:
+		break;
+	case TERMINATE:
+		thd_log_msg("Terminating ...\n");
+
+		ret = -1;
+		terminate = true;
+		break;
+	case PREF_CHANGED:
+		process_pref_change();
+		break;
+	case THERMAL_ZONE_NOTIFY:
+		if (!status) {
+			thd_log_msg("Thermal Daemon is disabled\n");
+			break;
+		}
+		thermal_zone_change(msg);
+		break;
+	case RELOAD_ZONES:
+		thd_engine_reload_zones();
+		break;
+	case POLL_ENABLE:
+		if (!poll_interval_sec) {
+			poll_enable_disable(true, msg);
+		}
+		break;
+	case POLL_DISABLE:
+		if (!poll_interval_sec) {
+			poll_enable_disable(false, msg);
+		}
+		break;
+	case FAST_POLL_ENABLE:
+		fast_poll_enable_disable(true, msg);
+		break;
+	case FAST_POLL_DISABLE:
+		fast_poll_enable_disable(false, msg);
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+cthd_cdev *cthd_engine::thd_get_cdev_at_index(int index) {
+	for (int i = 0; i < (int) cdevs.size(); ++i) {
+		if (cdevs[i]->thd_cdev_get_index() == index)
+			return cdevs[i].get();
+	}
+	return nullptr;
+}
+
+void cthd_engine::takeover_thermal_control() {
+	csys_fs sysfs("/sys/class/thermal/");
+
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path = "/sys/class/thermal/";
+	cthd_INT3400 int3400(uuid);
+
+	thd_log_info("Taking over thermal control\n");
+
+	int3400.set_default_uuid();
+
+	if ((dir = opendir(base_path.c_str())) != nullptr) {
+		while ((entry = readdir(dir)) != nullptr) {
+			if (!strncmp(entry->d_name, "thermal_zone",
+					strlen("thermal_zone"))) {
+				// Safe integer parsing for zone number
+				const char *num_str = entry->d_name + strlen("thermal_zone");
+				int i;
+				if (parse_int_value(std::string(num_str), &i, 0, INT_MAX) != 0) {
+					continue;  // Invalid zone number, skip
+				}
+				std::ostringstream policy;
+				std::string curr_policy;
+				std::ostringstream type;
+				std::string thermal_type;
+				std::ostringstream mode;
+
+				policy << "thermal_zone" << i << "/policy";
+				if (sysfs.exists(policy.str().c_str())) {
+					int ret;
+
+					ret = sysfs.read(policy.str(), curr_policy);
+					if (ret >= 0) {
+						zone_preferences.push_back(std::move(curr_policy));
+						sysfs.write(policy.str(), "user_space");
+					}
+				}
+				type << "thermal_zone" << i << "/type";
+				if (sysfs.exists(type.str().c_str())) {
+					sysfs.read(type.str(), thermal_type);
+					thd_log_info("Thermal zone of type %s\n", thermal_type.c_str());
+					if (thermal_type == "INT3400") {
+						mode << "thermal_zone" << i << "/mode";
+						sysfs.write(mode.str(), "enabled");
+					}
+				}
+			}
+		}
+		closedir(dir);
+	}
+}
+
+void cthd_engine::giveup_thermal_control() {
+	if (control_mode != EXCLUSIVE)
+		return;
+
+	if (zone_preferences.size() == 0)
+		return;
+
+	thd_log_info("Giving up thermal control\n");
+
+	csys_fs sysfs("/sys/class/thermal/");
+
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path = "/sys/class/thermal/";
+	int cnt = 0;
+	if ((dir = opendir(base_path.c_str())) != nullptr) {
+		while ((entry = readdir(dir)) != nullptr) {
+			if (!strncmp(entry->d_name, "thermal_zone",
+					strlen("thermal_zone"))) {
+				// Safe integer parsing for zone number
+				const char *num_str = entry->d_name + strlen("thermal_zone");
+				int i;
+				if (parse_int_value(std::string(num_str), &i, 0, INT_MAX) != 0) {
+					continue;  // Invalid zone number, skip
+				}
+				std::ostringstream policy;
+				std::ostringstream type;
+				std::string thermal_type;
+				std::ostringstream mode;
+
+				policy << "thermal_zone" << i << "/policy";
+				if (sysfs.exists(policy.str().c_str())) {
+					sysfs.write(policy.str(), zone_preferences[cnt++]);
+				}
+				type << "thermal_zone" << i << "/type";
+				if (sysfs.exists(type.str().c_str())) {
+					sysfs.read(type.str(), thermal_type);
+					if (thermal_type == "INT3400") {
+						mode << "thermal_zone" << i << "/mode";
+						sysfs.write(mode.str(), "disabled");
+					}
+				}
+			}
+		}
+		closedir(dir);
+	}
+}
+
+void cthd_engine::process_terminate() {
+	thd_log_msg("terminating on user request ..\n");
+	giveup_thermal_control();
+}
+
+void cthd_engine::thd_engine_poll_enable(int sensor_id) {
+	send_message(POLL_ENABLE, (int) sizeof(sensor_id),
+			(unsigned char*) &sensor_id);
+}
+
+void cthd_engine::thd_engine_poll_disable(int sensor_id) {
+	send_message(POLL_DISABLE, (int) sizeof(sensor_id),
+			(unsigned char*) &sensor_id);
+}
+
+void cthd_engine::thd_engine_fast_poll_enable(int sensor_id) {
+	send_message(FAST_POLL_ENABLE, (int) sizeof(sensor_id),
+			(unsigned char*) &sensor_id);
+}
+
+void cthd_engine::thd_engine_fast_poll_disable(int sensor_id) {
+	send_message(FAST_POLL_DISABLE, (int) sizeof(sensor_id),
+			(unsigned char*) &sensor_id);
+}
+
+void cthd_engine::thd_engine_reload_zones() {
+	thd_log_msg(" Reloading zones\n");
+	zones.clear();
+
+	int ret = read_thermal_zones();
+	if (ret != THD_SUCCESS) {
+		thd_log_error("No thermal sensors found\n");
+		// This is a fatal error and daemon will exit
+		return;
+	}
+}
+
+int cthd_engine::check_cpu_id() {
+	// Create platform instance using factory method
+	std::unique_ptr<cthd_platform> platform = cthd_platform::create_platform();
+	if (!platform) {
+		thd_log_error("Failed to create platform instance\n");
+		proc_list_matched = false;
+		return THD_ERROR;
+	}
+
+	// Dump platform information
+	platform->dump_platform_info();
+
+	// Call platform-specific CPU ID check
+	int ret = platform->check_cpu_id(proc_list_matched);
+
+	return ret;
+}
+
+void cthd_engine::thd_read_default_thermal_sensors() {
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path = "/sys/class/thermal/";
+	int max_index = 0;
+
+	if ((dir = opendir("/sys/class/thermal/thermal_zone1/")) == nullptr) {
+		thd_log_info("Waiting for thermal sysfs to be ready\n");
+		sleep(2);
+	} else {
+		closedir(dir);
+	}
+
+	thd_log_debug("thd_read_default_thermal_sensors\n");
+	if ((dir = opendir(base_path.c_str())) != nullptr) {
+		while ((entry = readdir(dir)) != nullptr) {
+			if (!strncmp(entry->d_name, "thermal_zone",
+					strlen("thermal_zone"))) {
+				int i;
+				i = atoi(entry->d_name + strlen("thermal_zone"));
+				if (i > max_index)
+					max_index = i;
+				std::unique_ptr<cthd_sensor> sensor(new cthd_sensor(i,
+						base_path + entry->d_name + "/", ""));
+				if (sensor->sensor_update() != THD_SUCCESS) {
+					continue;
+				}
+				sensors.push_back(std::move(sensor));
+			}
+		}
+		closedir(dir);
+	}
+	if (sensors.size())
+		current_sensor_index = max_index + 1;
+
+	thd_log_info("thd_read_default_thermal_sensors loaded %zu sensors\n",
+			sensors.size());
+}
+
+void cthd_engine::thd_read_default_thermal_zones() {
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path = "/sys/class/thermal/";
+	int max_index = 0;
+
+	thd_log_debug("thd_read_default_thermal_zones\n");
+	if ((dir = opendir(base_path.c_str())) != nullptr) {
+		while ((entry = readdir(dir)) != nullptr) {
+			if (!strncmp(entry->d_name, "thermal_zone",
+					strlen("thermal_zone"))) {
+				int i;
+				i = atoi(entry->d_name + strlen("thermal_zone"));
+				if (i > max_index)
+					max_index = i;
+				std::unique_ptr<cthd_sysfs_zone> zone(new cthd_sysfs_zone(i,
+						"/sys/class/thermal/thermal_zone"));
+				if (zone->zone_update() != THD_SUCCESS) {
+					continue;
+				}
+				if (control_mode == EXCLUSIVE)
+					zone->set_zone_active();
+				zones.push_back(std::move(zone));
+			}
+		}
+		closedir(dir);
+	}
+	if (zones.size())
+		current_zone_index = max_index + 1;
+	thd_log_info("thd_read_default_thermal_zones loaded %zu zones\n",
+			zones.size());
+}
+
+void cthd_engine::thd_read_default_cooling_devices() {
+
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path = "/sys/class/thermal/";
+	int max_index = 0;
+
+	thd_log_debug("thd_read_default_cooling devices\n");
+	if ((dir = opendir(base_path.c_str())) != nullptr) {
+		while ((entry = readdir(dir)) != nullptr) {
+			if (!strncmp(entry->d_name, "cooling_device",
+					strlen("cooling_device"))) {
+				int i;
+				i = atoi(entry->d_name + strlen("cooling_device"));
+				if (i > max_index)
+					max_index = i;
+				std::unique_ptr<cthd_sysfs_cdev> cdev(new cthd_sysfs_cdev(i,
+						"/sys/class/thermal/"));
+				if (cdev->update() != THD_SUCCESS) {
+					continue;
+				}
+				cdevs.push_back(std::move(cdev));
+			}
+		}
+		closedir(dir);
+	}
+	if (cdevs.size())
+		current_cdev_index = max_index + 1;
+
+	thd_log_info("thd_read_default_cooling devices loaded %zu cdevs\n",
+			cdevs.size());
+}
+
+ppcc_t* cthd_engine::get_ppcc_param(const std::string& name) {
+	return parser.get_ppcc_param(name);
+}
+
+cthd_zone* cthd_engine::search_zone(const std::string& name) {
+	cthd_zone *zone;
+
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		zone = zones[i].get();
+		if (!zone)
+			continue;
+		if (zone->get_zone_type() == name)
+			return zone;
+		if (!name.compare(0, 4, "pch_")) {
+			if (!zone->get_zone_type().compare(0, 4, "pch_")) {
+				thd_log_info("Matching partial zone %s %s\n", name.c_str(),
+						zone->get_zone_type().c_str());
+				return zone;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+cthd_cdev* cthd_engine::search_cdev(const std::string& name) {
+	cthd_cdev *cdev;
+
+	for (unsigned int i = 0; i < cdevs.size(); ++i) {
+		cdev = cdevs[i].get();
+		if (!cdev)
+			continue;
+		if (cdev->get_cdev_type() == name)
+			return cdev;
+		if (cdev->get_cdev_alias() == name)
+			return cdev;
+	}
+
+	return nullptr;
+}
+
+// Partial match instead of full match
+cthd_cdev* cthd_engine::match_cdev(const std::string& name) {
+	cthd_cdev *cdev;
+
+	for (unsigned int i = 0; i < cdevs.size(); ++i) {
+		cdev = cdevs[i].get();
+		if (!cdev)
+			continue;
+		std::string cdev_name = cdev->get_cdev_type();
+		size_t match = cdev_name.find(name);
+		if (match != std::string::npos) {
+			return cdev;
+		}
+	}
+
+	return nullptr;
+}
+
+cthd_sensor* cthd_engine::search_sensor(const std::string& name) {
+	cthd_sensor *sensor;
+
+	for (unsigned int i = 0; i < sensors.size(); ++i) {
+		sensor = sensors[i].get();
+		if (!sensor)
+			continue;
+		if (sensor->get_sensor_type() == name)
+			return sensor;
+		if (!name.compare(0, 4, "pch_")) {
+			if (!sensor->get_sensor_type().compare(0, 4, "pch_")) {
+				thd_log_info("Matching partial %s %s\n", name.c_str(),
+						sensor->get_sensor_type().c_str());
+				return sensor;
+			}
+		}
+
+	}
+
+	return nullptr;
+}
+
+cthd_sensor* cthd_engine::get_sensor(int index) {
+	if (index >= 0 && index < (int) sensors.size())
+		return sensors[index].get();
+	else
+		return nullptr;
+}
+
+int cthd_engine::get_sensor_temperature(int index, unsigned int *temperature) {
+	if (index >= 0 && index < (int) sensors.size()) {
+		*temperature = sensors[index]->read_temperature();
+		return THD_SUCCESS;
+	} else
+		return THD_ERROR;
+}
+
+cthd_zone* cthd_engine::get_zone(int index) {
+	if (index == -1)
+		return nullptr;
+	if (index >= 0 && index < (int) zones.size())
+		return zones[index].get();
+	else
+		return nullptr;
+}
+
+cthd_zone* cthd_engine::get_zone(const std::string& type) {
+	cthd_zone *zone;
+
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		zone = zones[i].get();
+		if (zone->get_zone_type() == type)
+			return zone;
+	}
+
+	return nullptr;
+}
+
+// Code copied from
+// https://web.archive.org/web/20130822155153/https://rt.wiki.kernel.org/index.php/RT_PREEMPT_HOWTO#Runtime_detection_of_an_RT-PREEMPT_Kernel
+void cthd_engine::check_for_rt_kernel() {
+	struct utsname _uname;
+	char *crit1 = nullptr;
+	int crit2 = 0;
+	FILE *fd;
+
+	uname(&_uname);
+	crit1 = strcasestr(_uname.version, "PREEMPT RT");
+
+	if ((fd = fopen("/sys/kernel/realtime", "r")) != nullptr) {
+		int flag;
+		crit2 = ((fscanf(fd, "%d", &flag) == 1) && (flag == 1));
+		fclose(fd);
+	}
+	if (crit1 && crit2)
+		rt_kernel = true;
+	else
+		rt_kernel = false;
+
+	thd_log_info("Running on a %s kernel\n",
+			rt_kernel ? "PREEMPT RT" : "vanilla");
+}
+
+int cthd_engine::user_add_sensor(std::string name, const std::string& path) {
+	std::string canonical_path;
+	if (!canonicalize_sysfs_path(path, canonical_path)) {
+		thd_log_debug("Invalid sensor path %s\n", path.c_str());
+		return THD_ERROR;
+	}
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	for (unsigned int i = 0; i < sensors.size(); ++i) {
+		if (sensors[i]->get_sensor_type() == name) {
+			cthd_sensor *sensor = sensors[i].get();
+			sensor->update_path(std::move(canonical_path));
+			return THD_SUCCESS;
+		}
+	}
+
+	std::unique_ptr<cthd_sensor> sensor(new cthd_sensor(current_sensor_index, std::move(canonical_path), std::move(name), SENSOR_TYPE_RAW));
+	if (sensor->sensor_update() != THD_SUCCESS) {
+		return THD_ERROR;
+	}
+	sensors.push_back(std::move(sensor));
+	++current_sensor_index;
+
+	send_message(WAKEUP, 0, nullptr);
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::user_add_virtual_sensor(std::string name,
+		std::string dep_sensor, double slope, double intercept) {
+	cthd_sensor *sensor;
+	int ret;
+
+	if (!is_valid_thermal_object_name(name)) {
+		thd_log_warn("Invalid virtual sensor name %s\n", name.c_str());
+		return THD_ERROR;
+	}
+
+	if (!is_valid_finite_value(slope, -1000.0, 1000.0)
+			|| !is_valid_finite_value(intercept, -1000.0, 1000.0)) {
+		thd_log_warn("Invalid virtual sensor parameters for %s\n", name.c_str());
+		return THD_ERROR;
+	}
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+
+	for (unsigned int i = 0; i < sensors.size(); ++i) {
+		if (sensors[i]->get_sensor_type() == name) {
+			sensor = sensors[i].get();
+			if (sensor->is_virtual()) {
+				cthd_sensor_virtual *virt_sensor =
+						(cthd_sensor_virtual *) sensor;
+				ret = virt_sensor->sensor_update_param(dep_sensor, slope,
+						intercept);
+			} else {
+				return THD_ERROR;
+			}
+			return ret;
+		}
+	}
+	std::unique_ptr<cthd_sensor_virtual> virt_sensor(new cthd_sensor_virtual(
+			current_sensor_index, std::move(name),
+			dep_sensor, slope, intercept));
+	if (virt_sensor->sensor_update() != THD_SUCCESS) {
+		return THD_ERROR;
+	}
+	sensors.push_back(std::move(virt_sensor));
+	++current_sensor_index;
+
+	send_message(WAKEUP, 0, nullptr);
+
+	return THD_SUCCESS;
+}
+
+cthd_sensor *cthd_engine::user_get_sensor(unsigned int index) {
+
+	if (index < sensors.size())
+		return sensors[index].get();
+	else
+		return nullptr;
+}
+
+cthd_zone *cthd_engine::user_get_zone(unsigned int index) {
+	if (index < zones.size())
+		return zones[index].get();
+	else
+		return nullptr;
+}
+
+cthd_cdev *cthd_engine::user_get_cdev(unsigned int index) {
+	if (index < cdevs.size())
+		return cdevs[index].get();
+	else
+		return nullptr;
+}
+
+int cthd_engine::user_set_psv_temp(const std::string& name, unsigned int temp) {
+	cthd_zone *zone;
+	int ret;
+
+	if (!is_valid_thermal_object_name(name))
+		return THD_ERROR;
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	zone = get_zone(name);
+	if (!zone) {
+		thd_log_warn("user_set_psv_temp\n");
+		return THD_ERROR;
+	}
+	thd_log_info("Setting psv %u\n", temp);
+	ret = zone->update_psv_temperature(temp);
+
+	return ret;
+}
+
+int cthd_engine::user_set_max_temp(const std::string& name, unsigned int temp) {
+	cthd_zone *zone;
+	int ret;
+
+	if (!is_valid_thermal_object_name(name))
+		return THD_ERROR;
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	zone = get_zone(name);
+	if (!zone) {
+		thd_log_warn("user_set_max_temp\n");
+		return THD_ERROR;
+	}
+	thd_log_info("Setting max %u\n", temp);
+	ret = zone->update_max_temperature(temp);
+
+	return ret;
+}
+
+int cthd_engine::user_add_zone(std::string zone_name, unsigned int trip_temp,
+		std::string sensor_name, std::string cdev_name) {
+	if (!is_valid_thermal_object_name(zone_name)) {
+		thd_log_warn("Invalid zone name %s\n", zone_name.c_str());
+		return THD_ERROR;
+	}
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	int ret = THD_SUCCESS;
+
+	std::unique_ptr<cthd_zone_dynamic> zone(new cthd_zone_dynamic(current_zone_index,
+			std::move(zone_name), trip_temp, PASSIVE, std::move(sensor_name), std::move(cdev_name)));
+	if (!zone) {
+		return THD_ERROR;
+	}
+	if (zone->zone_update() == THD_SUCCESS) {
+		zone->set_zone_active();
+		zones.push_back(std::move(zone));
+		++current_zone_index;
+	} else {
+		return THD_ERROR;
+	}
+
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		zones[i]->zone_dump();
+	}
+
+	return ret;
+}
+
+int cthd_engine::user_set_zone_status(const std::string& name, int status) {
+	cthd_zone *zone;
+
+	if (!is_valid_thermal_object_name(name))
+		return THD_ERROR;
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	zone = get_zone(name);
+	if (!zone) {
+		return THD_ERROR;
+	}
+
+	thd_log_info("Zone Set status %d\n", status);
+	if (status)
+		zone->set_zone_active();
+	else
+		zone->set_zone_inactive();
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::user_get_zone_status(const std::string& name, int *status) {
+	cthd_zone *zone;
+
+	if (!is_valid_thermal_object_name(name))
+		return THD_ERROR;
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	zone = get_zone(name);
+	if (!zone) {
+		return THD_ERROR;
+	}
+
+	if (zone->zone_active_status())
+		*status = 1;
+	else
+		*status = 0;
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::user_delete_zone(const std::string& name) {
+	if (!is_valid_thermal_object_name(name))
+		return THD_ERROR;
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		if (zones[i]->get_zone_type() == name) {
+			zones.erase(zones.begin() + i);
+			break;
+		}
+	}
+
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		zones[i]->zone_dump();
+	}
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::user_add_cdev(std::string cdev_name, const std::string& cdev_path,
+		int min_state, int max_state, int step) {
+	cthd_cdev *cdev;
+	std::string canonical_cdev_path;
+
+	if (!canonicalize_sysfs_path(cdev_path, canonical_cdev_path)) {
+		thd_log_debug("Invalid cdev path %s\n", cdev_path.c_str());
+		return THD_ERROR;
+	}
+
+	std::lock_guard<std::mutex> guard(thd_engine_mutex);
+	// Check if there is existing cdev with this name and path
+	cdev = search_cdev(cdev_name);
+	if (!cdev) {
+		std::unique_ptr<cthd_gen_sysfs_cdev> cdev_sysfs(new cthd_gen_sysfs_cdev(current_cdev_index, std::move(canonical_cdev_path)));
+		if (!cdev_sysfs) {
+			return THD_ERROR;
+		}
+		cdev_sysfs->set_cdev_type(std::move(cdev_name));
+		if (cdev_sysfs->update() != THD_SUCCESS) {
+			return THD_ERROR;
+		}
+		cdevs.push_back(std::move(cdev_sysfs));
+		cdev = cdevs.back().get();
+		++current_cdev_index;
+	}
+	cdev->set_min_state(min_state);
+	cdev->set_max_state(max_state);
+	cdev->set_inc_dec_value(step);
+
+	for (unsigned int i = 0; i < cdevs.size(); ++i) {
+		cdevs[i]->cdev_dump();
+	}
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine::parser_init() {
+	if (check_feature(XML_THERMAL_CONFIG) == 0) {
+		thd_log_info("Parser is disabled by config file\n");
+		parser_disabled = true;
+	}
+
+	if (parser_disabled)
+		return THD_ERROR;
+	if (parser_init_done)
+		return THD_SUCCESS;
+	if (parser.parser_init(get_config_file()) == THD_SUCCESS) {
+		if (parser.start_parse() == THD_SUCCESS) {
+			parser.dump_thermal_conf();
+			parser_init_done = true;
+			return THD_SUCCESS;
+		}
+	}
+
+	return THD_ERROR;
+}
+
+void cthd_engine::parser_deinit() {
+	if (parser_init_done) {
+		parser.parser_deinit();
+		parser_init_done = false;
+	}
+}
+
+int cthd_engine::debug_mode_on(void) {
+	static constexpr char debug_mode[] = TDRUNDIR "/debug_mode";
+	struct stat s;
+
+	if (stat(debug_mode, &s))
+		return 0;
+
+	return 1;
+}
+

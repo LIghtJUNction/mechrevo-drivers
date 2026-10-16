@@ -161,3 +161,21 @@ A distinct source defect was reproduced using actual sensor/zone/trip/RAPL funct
 打包 partial，4 gaps / 2 unresolved；独立公开回归跟踪 partial，0 gaps / 112 临时删除事件。
 完整备份读回不会补齐这些历史缺口。候选不带安装脚本或 hooks，普通系统 hooks、D-Bus 激活、
 现有自定义配置保存及服务恢复仍须受控核验，不能据此宣布硬件散热改善或安装资格已通过。
+
+
+## 2026-10-16：温控公开回归补齐至 25 项
+
+自适应温控启动失败、真实 FD/别名资源释放、无效温度与普通不匹配的区分、条件短路，
+以及虚拟传感器依赖环、滤波/缓存事务和真实线程并发，现在有固定 GPL 原源的便携公开测试。
+使用实际三补丁 prepared 输入独立运行，25 项全部通过、无跳过（31.547 秒）。
+配方 check() 强制四类测试文件存在并执行完整模式；源码/变体负例要求特定断言。
+这些回归仍不是整个 daemon 或物理散热验收，DBus 分配失败清理的便携覆盖仍待补。
+
+pkgrel3 仅扩展构建测试门禁并重新封装，三个生产补丁和 daemon 与 pkgrel2 完全相同；
+没有重复生产编译。候选 439443 字节，SHA256 `e3c5eb728bb2eb40102d0f1c331b8244375854076ec811314a7857fa9cf4662d`，
+22 文件恢复材料已逐项独立读回。测试跟踪 partial（0 gaps / 248 临时删除事件），
+重包跟踪 partial（2 gaps / 4 unresolved），原始诊断保留。候选尚未安装或运行。
+
+PackageKit 自然恢复 inactive/PID0 后，新只读 preflight4 完整通过了开始/结束的
+boot、六个运行模块身份、五份保护配置、服务/进程和 hook 核对；没有停止 PackageKit 或刷新 pin。
+它只证明当次检查的一致性，不能阻止将来的 D-Bus 再激活，也不代表安装/激活已获资格。

@@ -1,0 +1,11 @@
+{
+  "upstream": "https://github.com/intel/thermal_daemon",
+  "commit": "5fdc5bbca7f8c3f5bb2ad6540e8211a159a88a3a",
+  "license": "GPL-2.0-or-later",
+  "sha256": {
+    "thd_engine.cpp": "050ce1f0575ff7e709b7898dda8a266476011e4605bf525eb9e94332807d2897",
+    "thd_dbus_interface.cpp": "9569396b0b77bc134cb7ef1aa2f0603443dce1ef097b3ee57c1a77da6ed1f4fc",
+    "thd_util.cpp": "4fcc648782d3522c167b491f1a663ca00649d950fd28b49b735b0bc19f1135e8"
+  },
+  "reuses": "../thermald_checked/provenance.json: thd_sensor.{h,cpp}, thd_sensor_virtual.{h,cpp}"
+}

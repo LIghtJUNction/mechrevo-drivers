@@ -1,7 +1,7 @@
 # Maintained local candidate; never installs or starts a daemon during build/check.
 pkgname=thermald-mechrevo
 pkgver=2.5.13
-pkgrel=2
+pkgrel=3
 epoch=2
 pkgdesc='thermald with checked-temperature error handling and preference-state preservation'
 arch=('x86_64' 'x86_64_v3')
@@ -48,7 +48,11 @@ build() {
 
 check() {
     local root=${THERMALD_CONTRACT_ROOT:-"$startdir/../../.."}
-    [[ -f $root/tests/test_thermald_checked_temperature.py && ! -L $root/tests/test_thermald_checked_temperature.py ]] || return 1
+    local test_file
+    for test_file in test_thermald_checked_temperature.py test_thermald_checked_adaptive.py \
+                     test_thermald_checked_virtual.py test_thermald_checked_packaging.py; do
+        [[ -f $root/tests/$test_file && ! -L $root/tests/$test_file ]] || return 1
+    done
     cmp "$srcdir/0001-checked-temperature.patch" "$root/packaging/arch/thermald-mechrevo/0001-checked-temperature.patch" || return 1
     cmp "$srcdir/0002-preference-state.patch" "$root/packaging/arch/thermald-mechrevo/0002-preference-state.patch" || return 1
     [[ -d $srcdir/thermal_daemon/src ]] || return 1
@@ -56,7 +60,7 @@ check() {
     export THERMALD_PREPARED_SOURCE="$srcdir/thermal_daemon/src"
     export MECHREVO_TEST_TMPDIR="$srcdir/.contract-tmp"
     mkdir -p "$MECHREVO_TEST_TMPDIR" || return 1
-    python -B -m unittest discover -s "$root/tests" -p test_thermald_checked_temperature.py -v || return 1
+    python -B -m unittest discover -s "$root/tests" -p 'test_thermald_checked*.py' -v || return 1
 }
 
 package() {

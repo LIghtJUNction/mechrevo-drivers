@@ -28,6 +28,26 @@ class ThermaldCheckedPackaging(unittest.TestCase):
   for name in ['0001-checked-temperature.patch','0002-preference-state.patch','0003-periodic-restart-cache.patch']:shutil.copy2(RECIPE/name,self.d/'src'/name)
   (self.d/'src/0002-preference-state.patch').write_text('altered input')
   r=self.recipe('check');self.assertNotEqual(r.returncode,0);self.assertFalse((self.d/'src/.contract-tmp').exists())
+ def complete_check_inputs(self):
+  root=self.d/'contract';(root/'tests').mkdir(parents=True)
+  names=['test_thermald_checked_temperature.py','test_thermald_checked_adaptive.py','test_thermald_checked_virtual.py','test_thermald_checked_packaging.py']
+  for name in names:(root/'tests'/name).write_text('# Test-only presence fixture; python boundary is intercepted.\n')
+  recipe=root/'packaging/arch/thermald-mechrevo';recipe.mkdir(parents=True)
+  for name in ['0001-checked-temperature.patch','0002-preference-state.patch','0003-periodic-restart-cache.patch']:
+   shutil.copy2(RECIPE/name,self.d/'src'/name);shutil.copy2(RECIPE/name,recipe/name)
+  (self.d/'src/thermal_daemon/src').mkdir(parents=True)
+  return root
+ def test_check_invokes_all_contracts_with_actual_prepared_source(self):
+  root=self.complete_check_inputs()
+  r=self.recipe('python() { printf "%s\\n" "$THERMALD_PREPARED_SOURCE" "$@"; }; check',{'THERMALD_CONTRACT_ROOT':str(root)})
+  self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+  args=r.stdout.splitlines();self.assertEqual(args[0],str(self.d/'src/thermal_daemon/src'))
+  self.assertEqual(args[args.index('-p')+1],'test_thermald_checked*.py')
+  self.assertEqual(args[args.index('-s')+1],str(root/'tests'))
+ def test_missing_adaptive_contract_is_rejected_before_python(self):
+  root=self.complete_check_inputs();(root/'tests/test_thermald_checked_adaptive.py').unlink()
+  r=self.recipe('python() { echo unexpected-python-launch; }; check',{'THERMALD_CONTRACT_ROOT':str(root)})
+  self.assertNotEqual(r.returncode,0);self.assertNotIn('unexpected-python-launch',r.stdout)
  def test_package_requires_built_inputs_and_installs_without_execution(self):
   r=self.recipe('package');self.assertNotEqual(r.returncode,0)
   b=self.d/'src/build';b.mkdir();binary=b/'thermald';binary.write_text('#!/bin/sh\nexit 99\n');binary.chmod(0o755)
