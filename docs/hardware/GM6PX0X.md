@@ -4,6 +4,34 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
+## 2026-10-16 观察器 r15 安装与额外 PM 补偿
+
+MSR 观察器修复源码 `cbb3396`，内建支持/设备身份/描述符生命周期66项回归通过，
+根代理的普通文件及叶子符号链接两条独立旧负例均在新源拒绝。
+包 `mechrevo-power-control 0.1.0-15`（63358字节）已单次安装，SHA256
+`936eeb3f37511a4d03d88ffb90a7f2d392ba1f3884d880451c45099d45e871c4`。
+仅观察器与POWER-CONTROL、THERMAL-OBSERVATION两份文档改变，其余7载荷原字节相同；
+10载荷的字节/模式/root归属及包完整性22项0改动均核对通过。
+安装后执行新版入口3秒显式MSR只读观测，3样本/3.140753秒，complete/valid、errors/faults空，
+双扇RPM及3项原始MSR读取通过。五配置、六loaded notes、三服务PID、节点/CPU online起止一致，
+没有服务重启、驱动加载、MSR/EC写、trace或EFI动作。55W/90°C/poll1/debounce0保持。
+该短时诊断通过不代表热尖峰或整机散热已修复；其间参考95°C，稍后状态85°C，写入者仍未知。
+
+源码 `f2435d1` 另修条件式profile挂起清位写不确定落地后的恢复，143相关回归通过；
+固定 `a20a146` 干净副本完整818项、无跳过、69.059秒通过，log SHA256
+`f1f24f13518f17d62e49ca9fdfdc8e8f5ba42d9f82146a2dcfac477588ec9e21`。
+当前7.2.9内核28模块以W=1 -j2编译通过、5既有警告，57个跟踪文件前后相同。
+此PM功能分支在本机为false，未打包/安装/加载此新增驱动源码；r112候选仍固定e389，磁盘/主镜像仍r106。
+
+跟踪分别保留：观察器作者partial6gaps/239unresolved，完整818回归partial6gaps/1142unresolved，
+构包partial1权限gap/0unresolved，安装selected roots partial0gap/13unresolved，
+实机checkpoint partial0gap/12unresolved，源码编译partial0gap/311unresolved；后验核对不修补历史。
+安装未跟踪/usr父时间戳及pacman.log范围；UKI保护门禁为元数据，未重复全镜像解析。
+PackageKit旧补充快照曾误用不存在大写unit；本轮按真实packagekit.service确认loaded/inactive0，不能补证早期历史。
+完整收据见本地 `power-control-r15/evidence/` 与 `root-full-init/target-dirty/pm-msr-iteration/`；
+统一Backups `power-control-r15-installed-20261016/`、`thermal-msr-fixed-20261016/`、
+`pm-profile-abort-20261016/`、`pm-profile-root-build-20261016/` 分别保留交付、诊断、PM及编译证据。
+
 ## 2026-10-16 r112 候选包与完整回归（未安装）
 
 固定功能源码 `e389631bbaac7bdfb8deacc68c54e4c4f908b6ba` 的干净副本完整运行803项测试，
@@ -88,7 +116,7 @@ TCC实验包仍未安装，热尖峰及动态偏移修改者未解决，实机�
 
 15:48:34 后台快照清理更新了菜单/历史身份并重新签名启动器；本轮经日志、PE 各节相同及验签，
 在锁下保存三份变化文件并捕获新基线。发布后其余二十份受保护文件保持，
-六个运行模块、五份配置、三个服务 PID 均保持，PackageKit inactive/PID 0。
+六个运行模块、五份配置、三个服务 PID 均保持；PackageKit 状态见本轮更正。
 当前核心仍为 r37、WMI r60、传感器 r76；磁盘包为 r106，功耗工具 r14、TCC 3.0.10-1。
 TCC pkgrel 3 未安装、AUR 未更新；未重启、重载模块、睡眠或执行新硬件策略。
 高温尖峰及动态偏移修改来源未解决，硬件验收保持 9/20。
@@ -115,7 +143,7 @@ TCC pkgrel 3 未安装、AUR 未更新；未重启、重载模块、睡眠或执
 UKI 重建和 PackageKit refresh，系统 pacman 配置及全局 hooks 未改。
 实际四个前置 hooks、三个后置 hooks 包含旧 DKMS 移除、新 DKMS 安装、depmod 和 hwdb 更新。
 安装后五份配置、六个运行 build ID、三个服务 PID（97821/397302/1003）、
-传感器/RGB inode、五个启动文件完整身份及 EFI mount 与安装前一致，PackageKit inactive/PID 0。
+传感器/RGB inode、五个启动文件完整身份及 EFI mount 与安装前一致；PackageKit 状态见本轮更正。
 当前核心 r37、WMI r60、传感器 r76；启动 UKI 未更新，不能把磁盘安装或一次重启当作新核心已激活。
 功耗工具仍为 r14，TCC 仍为上游 3.0.10-1；pkgrel 3 候选未安装，AUR 未更新。
 高温尖峰和动态 TCC offset 修改来源仍未解决，硬件验收保持 9/20。

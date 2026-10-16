@@ -22,7 +22,7 @@
 | 外屏与持续负载 | 0/2 | 尚无本轮完整验收 | HDMI、USB-C 各连接状态及长期负载 |
 
 最近已核验包：`mechrevo-drivers-dkms-git 4.24.0.r106.gaaf6b36-1`、
-`mechrevo-power-control 0.1.0-14`。内核 `7.2.9-arch1-1`。
+`mechrevo-power-control 0.1.0-15`。内核 `7.2.9-arch1-1`。
 `tccd`、`thermald`、`nvidia-powerd` 均 active，但服务 active 不代表显卡健康。
 用户已在 05:37:55 重启。keyboard/IO/NVIDIA/compatibility 仍运行 r37，WMI 仍运行 r60；
 五个核心 build ID 在本轮安装前后保持，
@@ -32,6 +32,41 @@ CPU 内部温度分别为 63–78°C 和 64–69°C；新增 CPU0 封装热节�
 两段观测均无新增 GPU/PCIe 故障。平均封装功耗分别约 16.98 W 和 13.58 W。
 这是自然桌面负载下的短时记录，不是满载散热、性能改善或掉线根因的验收。
 原始观测及散列在本地 `.local-tests/postboot-20261016/`，不公开完整机器日志。
+
+## 观察器 r15 已安装与短时实机验收
+
+`cbb33960a470cd7d791341fc1ceff56a21a7c578` 修复显式 MSR 诊断接受普通文件/符号链接、
+缺少内建支持资格及关闭失败丢失结果的问题。66 项相关回归通过；根代理独立两条旧负例在新源拒绝。
+`mechrevo-power-control 0.1.0-15` 已单次安装，包 SHA256
+`936eeb3f37511a4d03d88ffb90a7f2d392ba1f3884d880451c45099d45e871c4`。
+10 份载荷的字节/模式/root 归属及 Qkk 22 项、0 改动核对通过；仅观察器和两份文档改变，功耗控制代码原字节保持。
+新版安装入口随后完成一次显式 MSR 只读验收：3 个样本、3.140753 秒，结果 complete/valid，
+errors/faults 均为空，双扇 RPM 和三项原始 MSR 可读；这不是持续散热或性能验收。
+
+五份配置、六个运行模块、三个服务 PID、传感器/RGB、已有 MSR 节点及 CPU online 起止一致；
+55 W/90°C/poll 1/debounce 0 策略保持。仅本事务屏蔽 PackageKit 刷新，系统配置/全局 hooks 未改。
+启动镜像在该安装门禁中核对持久元数据，小菜单/启动器/publicdb 核对散列；没有重新解析或重发布 UKI。
+构包跟踪 partial 1 权限 gap/0 unresolved；安装所选根目录 partial 0 gap/13 unresolved，
+实机输出 checkpoint 跟踪 partial 0 gap/12 unresolved；安装后核对与实机后保护回读 complete。
+`/usr` 父时间戳及 pacman.log 不在安装选定根目录，不能把所选范围写成整个事务历史完整。
+818 项完整回归通过、无跳过；源码副本固定 `a20a146`，69.059 秒，跟踪 partial 6 gaps/1142 unresolved。
+恢复包 r14 保留；新载荷及小证据归档于统一 Backups 的 `power-control-r15-installed-20261016/`。
+
+该次实机观测前/三个样本/结束均为 TCC offset 5°C、触发参考 95°C；稍后独立状态读取又为15°C/85°C。
+这没有将变化定位到该3秒窗口，也没有证明安装或观察器引起变化；写入者仍未知，散热硬件评分保持9/20。
+
+PackageKit 证据更正：此前部分根补充快照查询了不存在的 `PackageKit.service`，
+其 inactive/PID 0 不支持当时“未启动”的结论，原回执不改写。该次 r15 安装门禁及前后核对改用实际
+`packagekit.service`，确认 LoadState=loaded、inactive/PID 0；不得据此次核对补造早期状态历史。
+
+## 条件式 profile 挂起失败补偿（源码，未安装）
+
+`f2435d1e4211a0fd484bba007e0e8a0a408d0e97` 修复 `0x0727` bit 6 清位写已落地但返回错误后漏恢复的问题。
+保存原位状态现在发生在尝试写之前；补偿读改写只恢复原先置位的 bit 6，保持原错误码，补偿错误单独记录。
+两条旧真实 C 负例失败，新源相同用例通过；143 项相关回归及上述818项完整回归通过。
+当前内核28模块 `W=1 -j2` 编译通过，保留5条既有警告，源码前后不变；跟踪 partial 0 gap/311 unresolved。
+本机 GM6PX0X 不启用该条件分支，不能算本机降温修复。该新增驱动改动未打包、安装或加载；
+磁盘驱动和主启动镜像仍r106，原r112候选仍只对应 `e389631`；运行核心/WMI/传感器仍r37/r60/r76。
 
 ## 部分设速失败后的双目标恢复修复与 r112 候选（未安装）
 
@@ -72,7 +107,7 @@ SHA256 `67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2`。
 20 项文件/锁/故障回归、14 组解析回归及 6 个真实镜像篡改负例通过。
 事务 5.818 秒；没有调用会吞错的全局构建/安装 wrapper 或启动器 pre/post hooks。
 原镜像 `/efi/EFI/Linux/omarchy_linux.efi` 与 Recovery 条目保留，其余受保护文件、配置、
-六个运行模块和三个服务 PID 保持；PackageKit 未启动。菜单 rename 不等于 FAT 断电事务。
+六个运行模块和三个服务 PID 保持；PackageKit 早期状态结论见本轮更正。菜单 rename 不等于 FAT 断电事务。
 当前仍运行核心 r37、WMI r60、传感器 r76，尚未重启或实机验收，硬件分数仍为 9/20。
 
 恢复材料在统一 Backups 的 `boot-before-r106-sync-20261016/`，发布证据及冻结工具在
@@ -107,7 +142,7 @@ r106 镜像 SHA256 均与发布后回执一致；没有主动触发同步或签�
 本次使用独立事务配置，最后优先的私有 hook 目录仅在该事务屏蔽 udev 全局 change、
 UKI 重建和 PackageKit refresh；系统配置未改。实际执行旧 DKMS 移除、新 DKMS 安装、
 depmod、hwdb 更新及其余已核对的守卫。安装后五份配置、六个运行 build ID、三个服务 PID、
-传感器/RGB 节点、启动镜像及引导配置完整身份与基线一致，PackageKit 保持 inactive/PID 0。
+传感器/RGB 节点、启动镜像及引导配置完整身份与基线一致；PackageKit 状态结论见本轮更正。
 该次磁盘安装保持旧 UKI；后续启动镜像同步见上一节。当前仍运行核心 r37、WMI r60、传感器 r76；
 尚未重启，模块激活和实机验收仍须单独完成。TCC pkgrel 3 未安装，AUR 未更新，硬件验收仍为 9/20。
 
