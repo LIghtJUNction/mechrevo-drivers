@@ -112,3 +112,12 @@ GPU 检查失败也会停止后续 EC 采样；这不能阻止检查与读取之
 3个样本的MSR/RPM读取及前后保护核对通过。该单次结果不代表长期采样、其他型号或散热效果验收；
 此前 GPU 失联时拒绝采样的结果仍保留。温度尖峰及内部热状态依然存在，
 有效采样不等于散热通过。工具不会替用户重启。
+
+
+## Q71 tracefs registration qualification, 2026-10-16
+
+A private tracefs backend was tested on the current 7.2.9-arch1-1 boot using registration-only mode. The first v3 trial rejected the actual dynamic pathname field format; cleanup completed and the before/after runtime guard matched. The frozen failure evidence is retained. Linux's dynamic string field is `__data_loc char[]`, size 4, signed 1; the earlier unsigned-only check was wrong.
+
+A separate v4 fixes that exact format contract and durably records the original definition, event ID and raw format before validation. All 8 entry/return probes registered and passed actual format checks, producing 24 retained audit records. Probe hit/miss counts remained 0/0 because none were enabled. All owned definitions and the private instance were removed; global/foreign tracing state, five protected configuration files, CPU online state, module-name list and the daemon/GUI process identities matched before and after. Backend final duration was 0.792 seconds; wrapper wall time was 2.053 seconds. The v4 filesystem fixture suite passed 45 tests, while the actual registration/cleanup wrapper tracking was complete with no gaps or unresolved events.
+
+This qualifies registration and normal cleanup only. Observation, decoder behavior on real captured events, real signal/crash recovery and bounded overhead under enabled probes remain unverified; no MSR samples were collected. No AML, EC query or SMI was deliberately triggered. The dynamic TCC-offset writer and thermal spikes remain unresolved. Both the failed v3 and successful v4 receipts have independently verified recovery archives.

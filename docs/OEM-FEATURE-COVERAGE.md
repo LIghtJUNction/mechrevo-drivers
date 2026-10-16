@@ -213,6 +213,11 @@ TypeMap/fixup 和相同原句柄命中，返回正确种类的类型定义及读
 这关闭了上述条件下的冷查找成功路径，仍未证明运行时模块登记、热缓存内容、根的基类型/枚举分类或最终 JSON。
 未执行原厂、CLR 或 VM 代码。
 
+后续原生基类型检查确认：匿名根的导入句柄与 String 的直接句柄均指向 System.Object；
+规范类型表也已绑定 Object、ValueType、Enum 和 MulticastDelegate。
+34 个原字节变异、10 项原生边界对照及独立补充的 4 个变异通过，270 份旧证据未变。
+这仍不证明反射对象身份、运行时分类缓存或 IsEnum 的实际结果；最终 JSON 继续待验证。
+
 
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，
