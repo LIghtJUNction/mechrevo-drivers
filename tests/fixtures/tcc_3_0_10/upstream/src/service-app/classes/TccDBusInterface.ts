@@ -1,0 +1,482 @@
+/*!
+ * Copyright (c) 2019-2026 TUXEDO Computers GmbH <tux@tuxedocomputers.com>
+ *
+ * This file is part of TUXEDO Control Center.
+ *
+ * TUXEDO Control Center is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * TUXEDO Control Center is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with TUXEDO Control Center.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import * as dbus from 'dbus-next';
+import { BehaviorSubject } from 'rxjs';
+import { FnLockController } from '../../common/classes/FnLockController';
+import type { ChargeType } from '../../common/classes/PowerSupplyController';
+import type { ChargingWorker } from './ChargingWorker';
+
+/**
+ * Structure for DBus interface data, passed to interface
+ */
+export class TccDBusData {
+    public dbusAvailable: boolean = false;
+    public device: string = '';
+    public deviceHasAquaris: boolean = false;
+    public displayModesJSON: string = '{}';
+    public isX11: number = -1;
+    public tuxedoWmiAvailable: boolean = false;
+    public fanHwmonAvailable: boolean = false;
+    public tccdVersion: string = '';
+    public fanData: string = '';
+    public webcamSwitchAvailable: boolean = false;
+    public webcamSwitchStatus: boolean = false;
+    public forceYUV420OutputSwitchAvailable: boolean = false;
+    public iGpuInfoValuesJSON: string = '{}';
+    public dGpuInfoValuesJSON: string = '{}';
+    public iGpuAvailable: number = -1;
+    public dGpuAvailable: number = -1;
+    public cpuPowerValuesJSON: string = '{}';
+    public primeState: string = '-1';
+    public modeReapplyPending: boolean;
+    public tempProfileName: string = '';
+    public tempProfileId: string = '';
+    public activeProfileJSON: string = '{}';
+    public profilesJSON: string = '{}';
+    public customProfilesJSON: string = '{}';
+    public defaultProfilesJSON: string = '{}';
+    public defaultValuesProfileJSON: string = '{}';
+    public settingsJSON: string = '{}';
+    public odmProfilesAvailable: string[] = [''];
+    public odmPowerLimitsJSON: string = '{}';
+    public keyboardBacklightCapabilitiesJSON: string = '{}';
+    public keyboardBacklightStatesJSON: string = '{}';
+    public keyboardBacklightStatesNewJSON: BehaviorSubject<string> = new BehaviorSubject<string>(undefined);
+    public fansMinSpeed: number = -1;
+    public fansOffAvailable: boolean = false;
+    public sensorDataCollectionStatus: boolean = false;
+    public d0MetricsUsage: boolean = false;
+    public nvidiaPowerCTRLDefaultPowerLimit: number = 0;
+    public nvidiaPowerCTRLMaxPowerLimit: number = 1000;
+    public nvidiaPowerCTRLAvailable: boolean = false;
+    public isUnsupportedConfigurableTGPDevice: boolean = true;
+}
+
+export class TccDBusOptions {
+    public triggerStateCheck?: () => Promise<void>;
+    public chargingWorker?: ChargingWorker;
+}
+
+export class TccDBusInterface extends dbus.interface.Interface {
+    private interfaceOptions: TccDBusOptions;
+    private fnLock: FnLockController = new FnLockController();
+    private dataCollectionTimeout: NodeJS.Timeout | null = null;
+
+    constructor(
+        private data: TccDBusData,
+        options: TccDBusOptions = {},
+    ) {
+        super('com.tuxedocomputers.tccd');
+
+        this.interfaceOptions = options;
+        if (this.interfaceOptions.triggerStateCheck === undefined) {
+            this.interfaceOptions.triggerStateCheck = async (): Promise<void> => {};
+        }
+    }
+
+    private resetDataCollectionTimeout(): void {
+        if (this.dataCollectionTimeout) {
+            clearTimeout(this.dataCollectionTimeout);
+        }
+
+        this.dataCollectionTimeout = setTimeout((): void => {
+            this.data.sensorDataCollectionStatus = false;
+        }, 10000);
+    }
+
+    // todo: functions should start with Get or Set
+    // biome-ignore lint: function is never read because of dbus
+    private GetDeviceName(): string {
+        return this.data.device;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private DeviceHasAquaris(): boolean {
+        return this.data.deviceHasAquaris;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDisplayModesJSON(): string {
+        return this.data.displayModesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetIsX11(): number {
+        return this.data.isX11;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private TuxedoWmiAvailable(): boolean {
+        return this.data.tuxedoWmiAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private FanHwmonAvailable(): boolean {
+        return this.data.fanHwmonAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private TccdVersion(): string {
+        return this.data.tccdVersion;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetFanDataJSON(): string {
+        return this.data.fanData;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private WebcamSWAvailable(): boolean {
+        return this.data.webcamSwitchAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetWebcamSWStatus(): boolean {
+        return this.data.webcamSwitchStatus;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetForceYUV420OutputSwitchAvailable(): boolean {
+        return this.data.forceYUV420OutputSwitchAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetIGpuInfoValuesJSON(): string {
+        this.resetDataCollectionTimeout();
+        return this.data.iGpuInfoValuesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDGpuInfoValuesJSON(): string {
+        this.resetDataCollectionTimeout();
+        return this.data.dGpuInfoValuesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetIGpuAvailable(): number {
+        return this.data.iGpuAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDGpuAvailable(): number {
+        return this.data.dGpuAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetPrimeState(): string {
+        return this.data.primeState;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetCpuPowerValuesJSON(): string {
+        return this.data.cpuPowerValuesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetSensorDataCollectionStatus(status: boolean): void {
+        this.data.sensorDataCollectionStatus = status;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetSensorDataCollectionStatus(): boolean {
+        return this.data.sensorDataCollectionStatus;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetDGpuD0Metrics(status: boolean): void {
+        this.data.d0MetricsUsage = status;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDGpuD0Metrics(): boolean {
+        return this.data.d0MetricsUsage;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private ConsumeModeReapplyPending(): boolean {
+        // Unlikely, but possible race condition.
+        // However no harmful impact, it will just cause the screen to flicker twice instead of once.
+        if (this.data.modeReapplyPending) {
+            this.data.modeReapplyPending = false;
+            return true;
+        }
+        return false;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetActiveProfileJSON(): string {
+        return this.data.activeProfileJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetTempProfile(profileName: string): boolean {
+        this.data.tempProfileName = profileName;
+        return true;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetTempProfileById(id: string): boolean {
+        this.data.tempProfileId = id;
+        this.interfaceOptions.triggerStateCheck();
+        return true;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetProfilesJSON(): string {
+        return this.data.profilesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetCustomProfilesJSON(): string {
+        return this.data.customProfilesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDefaultProfilesJSON(): string {
+        return this.data.defaultProfilesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetDefaultValuesProfileJSON(): string {
+        return this.data.defaultValuesProfileJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetSettingsJSON(): string {
+        return this.data.settingsJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private ODMProfilesAvailable(): string[] {
+        return this.data.odmProfilesAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private ODMPowerLimitsJSON(): string {
+        return this.data.odmPowerLimitsJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetKeyboardBacklightCapabilitiesJSON(): string {
+        return this.data.keyboardBacklightCapabilitiesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetKeyboardBacklightStatesJSON(): string {
+        return this.data.keyboardBacklightStatesJSON;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetKeyboardBacklightStatesJSON(keyboardBacklightStatesJSON: string): boolean {
+        this.data.keyboardBacklightStatesNewJSON.next(keyboardBacklightStatesJSON);
+        return true;
+    }
+
+    public ModeReapplyPendingChanged(): boolean {
+        return this.data.modeReapplyPending;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetFansMinSpeed(): number {
+        return this.data.fansMinSpeed;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetFansOffAvailable(): boolean {
+        return this.data.fansOffAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargingProfilesAvailable(): Promise<string> {
+        return JSON.stringify(await this.interfaceOptions.chargingWorker.getChargingProfilesAvailable());
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetCurrentChargingProfile(): Promise<string> {
+        return await this.interfaceOptions.chargingWorker.getCurrentChargingProfile();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async SetChargingProfile(profileDescriptor: string): Promise<boolean> {
+        return await this.interfaceOptions.chargingWorker.applyChargingProfile(profileDescriptor);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargingPrioritiesAvailable(): Promise<string> {
+        return JSON.stringify(await this.interfaceOptions.chargingWorker.getChargingPrioritiesAvailable());
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetCurrentChargingPriority(): Promise<string> {
+        return await this.interfaceOptions.chargingWorker.getCurrentChargingPriority();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async SetChargingPriority(priorityDescriptor: string): Promise<boolean> {
+        return await this.interfaceOptions.chargingWorker.applyChargingPriority(priorityDescriptor);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargeStartAvailableThresholds(): Promise<string> {
+        return JSON.stringify(await this.interfaceOptions.chargingWorker.getChargeStartAvailableThresholds());
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargeEndAvailableThresholds(): Promise<string> {
+        return JSON.stringify(await this.interfaceOptions.chargingWorker.getChargeEndAvailableThresholds());
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargeStartThreshold(): Promise<number> {
+        return await this.interfaceOptions.chargingWorker.getChargeStartThreshold();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargeEndThreshold(): Promise<number> {
+        return await this.interfaceOptions.chargingWorker.getChargeEndThreshold();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async SetChargeStartThreshold(value: number): Promise<boolean> {
+        return await this.interfaceOptions.chargingWorker.setChargeStartThreshold(value);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async SetChargeEndThreshold(value: number): Promise<boolean> {
+        return await this.interfaceOptions.chargingWorker.setChargeEndThreshold(value);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async GetChargeType(): Promise<string> {
+        return await this.interfaceOptions.chargingWorker.getChargeType();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private async SetChargeType(type: ChargeType): Promise<boolean> {
+        return await this.interfaceOptions.chargingWorker.setChargeType(type);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetFnLockSupported(): boolean {
+        return this.fnLock.getFnLockSupported();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetFnLockStatus(): boolean {
+        return this.fnLock.getFnLockStatus();
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private SetFnLockStatus(status: boolean): void {
+        this.fnLock.setFnLockStatus(status);
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetNVIDIAPowerCTRLDefaultPowerLimit(): number {
+        return this.data.nvidiaPowerCTRLDefaultPowerLimit;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetNVIDIAPowerCTRLMaxPowerLimit(): number {
+        return this.data.nvidiaPowerCTRLMaxPowerLimit;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetNVIDIAPowerCTRLAvailable(): boolean {
+        return this.data.nvidiaPowerCTRLAvailable;
+    }
+
+    // biome-ignore lint: function is never read because of dbus
+    private GetIsUnsupportedConfigurableTGPDevice(): boolean {
+        return this.data.isUnsupportedConfigurableTGPDevice;
+    }
+
+    private dbusAvailable(): boolean {
+        return this.data.dbusAvailable;
+    }
+}
+
+TccDBusInterface.configureMembers({
+    properties: {},
+    methods: {
+        dbusAvailable: { outSignature: 'b' },
+        GetDeviceName: { outSignature: 's' },
+        DeviceHasAquaris: { outSignature: 'b' },
+        GetDisplayModesJSON: { outSignature: 's' },
+        GetIsX11: { outSignature: 'i' },
+        TuxedoWmiAvailable: { outSignature: 'b' },
+        FanHwmonAvailable: { outSignature: 'b' },
+        TccdVersion: { outSignature: 's' },
+        GetFanDataJSON: { outSignature: 's' },
+        WebcamSWAvailable: { outSignature: 'b' },
+        GetWebcamSWStatus: { outSignature: 'b' },
+        GetForceYUV420OutputSwitchAvailable: { outSignature: 'b' },
+        GetIGpuInfoValuesJSON: { outSignature: 's' },
+        GetDGpuInfoValuesJSON: { outSignature: 's' },
+        GetIGpuAvailable: { outSignature: 'i' },
+        GetDGpuAvailable: { outSignature: 'i' },
+        GetPrimeState: { outSignature: 's' },
+        GetCpuPowerValuesJSON: { outSignature: 's' },
+        ConsumeModeReapplyPending: { outSignature: 'b' },
+        GetActiveProfileJSON: { outSignature: 's' },
+        SetTempProfile: { inSignature: 's', outSignature: 'b' },
+        SetTempProfileById: { inSignature: 's', outSignature: 'b' },
+        GetProfilesJSON: { outSignature: 's' },
+        GetCustomProfilesJSON: { outSignature: 's' },
+        GetDefaultProfilesJSON: { outSignature: 's' },
+        GetDefaultValuesProfileJSON: { outSignature: 's' },
+        GetSettingsJSON: { outSignature: 's' },
+        ODMProfilesAvailable: { outSignature: 'as' },
+        ODMPowerLimitsJSON: { outSignature: 's' },
+        GetKeyboardBacklightCapabilitiesJSON: { outSignature: 's' },
+        GetKeyboardBacklightStatesJSON: { outSignature: 's' },
+        SetKeyboardBacklightStatesJSON: { inSignature: 's', outSignature: 'b' },
+        GetFansMinSpeed: { outSignature: 'i' },
+        GetFansOffAvailable: { outSignature: 'b' },
+        GetChargingProfilesAvailable: { outSignature: 's' },
+        GetCurrentChargingProfile: { outSignature: 's' },
+        SetChargingProfile: { inSignature: 's', outSignature: 'b' },
+        GetChargingPrioritiesAvailable: { outSignature: 's' },
+        GetCurrentChargingPriority: { outSignature: 's' },
+        SetChargingPriority: { inSignature: 's', outSignature: 'b' },
+        GetChargeStartAvailableThresholds: { outSignature: 's' },
+        GetChargeEndAvailableThresholds: { outSignature: 's' },
+        GetChargeStartThreshold: { outSignature: 'i' },
+        GetChargeEndThreshold: { outSignature: 'i' },
+        SetChargeStartThreshold: { inSignature: 'i', outSignature: 'b' },
+        SetChargeEndThreshold: { inSignature: 'i', outSignature: 'b' },
+        GetChargeType: { outSignature: 's' },
+        SetChargeType: { inSignature: 's', outSignature: 'b' },
+        GetFnLockSupported: { outSignature: 'b' },
+        GetFnLockStatus: { outSignature: 'b' },
+        SetFnLockStatus: { inSignature: 'b' },
+        SetSensorDataCollectionStatus: { inSignature: 'b' },
+        GetSensorDataCollectionStatus: { outSignature: 'b' },
+        SetDGpuD0Metrics: { inSignature: 'b' },
+        GetDGpuD0Metrics: { outSignature: 'b' },
+        GetNVIDIAPowerCTRLDefaultPowerLimit: { outSignature: 'i' },
+        GetNVIDIAPowerCTRLMaxPowerLimit: { outSignature: 'i' },
+        GetNVIDIAPowerCTRLAvailable: { outSignature: 'b' },
+        GetIsUnsupportedConfigurableTGPDevice: { outSignature: 'b' },
+    },
+    signals: {
+        ModeReapplyPendingChanged: { signature: 'b' },
+    },
+});

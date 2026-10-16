@@ -90,12 +90,20 @@
     "src/common/models/profiles/LegacyProfiles.ts": {
       "size": 5661,
       "sha256": "c4eb0a163b2e3b4a8033e03e56272d377bd13f0f5bc4d0b47d027a32fbd49668"
+    },
+    "src/ng-app/app/compatibility.service.ts": {
+      "size": 7044,
+      "sha256": "403c7bd0dfceed1b041a19628f193ca8953c805022f8e8af414833b2f9e5953e"
+    },
+    "src/service-app/classes/TccDBusInterface.ts": {
+      "size": 18945,
+      "sha256": "c3f88ec98bb61dfa864e50b474dcc0e6cf4049f25c6e3fd1820d4e5541b23771"
     }
   },
   "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
   "patched_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
-    "src/service-app/classes/FanControlWorker.ts": "d93a37a6560d69cb642f6183aab264fede6d521bebb934d9cbc59345350fe00e",
+    "src/service-app/classes/FanControlWorker.ts": "cc0e72e32ea5f99ff2c5b3420cf0c96bdb61dcbfa5dda30a8bf84f8a0ac7a3a2",
     "src/service-app/classes/TuxedoControlCenterDaemon.ts": "535a8b61e8161a8059c6a557aab8a438aaa6357ce201051b71f378e678ce4314",
     "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
     "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
@@ -106,7 +114,8 @@
     "caller_lifecycle_test.cjs": "346fdbabd069387cee9590e837559feb588b93dcacccd01e191cd70ff6feb150",
     "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76",
     "readback_errors_test.cjs": "7492f97feb610c8ff51b68afd369ad1cb5f028a97c31edb6b96acb345a727d4d",
-    "settings_contract_test.cjs": "f425fac7692c72b7d6faaaf04142494d67ad083d50793330f9e4406d0609dcc0"
+    "settings_contract_test.cjs": "f425fac7692c72b7d6faaaf04142494d67ad083d50793330f9e4406d0609dcc0",
+    "temperature_exception_test.cjs": "abe5d018b90302e7af4f4846c1f57714d5f4090469d1ea052d8755b314d0c1f7"
   },
   "patch12_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
@@ -131,5 +140,14 @@
   "patch4_settings_files_sha256": {
     "src/common/classes/ConfigHandler.ts": "0bcae3164fe719e69287063840e849eabc6328def1e1aa0339b89bd5339212e0",
     "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449"
-  }
+  },
+  "patch5_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
+    "src/service-app/classes/FanControlWorker.ts": "d93a37a6560d69cb642f6183aab264fede6d521bebb934d9cbc59345350fe00e",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "535a8b61e8161a8059c6a557aab8a438aaa6357ce201051b71f378e678ce4314",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
+    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
+  },
+  "patch6_sha256": "35935c2198aacaf9d1ac22c662355f80e637637a67dbed5176a4f253f9abff28",
+  "patch6_scope": "Temperature read exceptions settle all reads, invalidate every fan in the aborted round before any calculated speed write, retain original causes followed by invalidation failures. Does not alter normal control or add a hardware acceptance claim."
 }

@@ -15,6 +15,7 @@ PATCH2=PATCH.with_name('0002-fan-lifecycle.patch')
 PATCH3=PATCH.with_name('0003-fan-readback-diagnostics.patch')
 PATCH4=PATCH.with_name('0004-installed-resource-paths.patch')
 PATCH5=PATCH.with_name('0005-settings-read-failclosed.patch')
+PATCH6=PATCH.with_name('0006-temperature-exception-invalidates-feedback.patch')
 
 class TccFanContract(unittest.TestCase):
     @classmethod
@@ -45,6 +46,11 @@ class TccFanContract(unittest.TestCase):
         for patch in (PATCH4,PATCH5):
             subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(patch)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         assert hashlib.sha256(PATCH5.read_bytes()).hexdigest()==cls.manifest['patch5_sha256']
+        cls.patch5=cls.base/'patch5';shutil.copytree(cls.patched,cls.patch5)
+        for name,digest in cls.manifest['patch5_files_sha256'].items():
+            assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
+        subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH6)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert hashlib.sha256(PATCH6.read_bytes()).hexdigest()==cls.manifest['patch6_sha256']
         for name,digest in cls.manifest['patched_files_sha256'].items():
             assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
         cls.generated=None
@@ -94,14 +100,15 @@ class TccFanContract(unittest.TestCase):
         node,ts=self.service_tools()
         if self.__class__.generated is None:
             out=self.base/'generated-js'
-            code="const fs=require('fs'),path=require('path'),ts=require(process.argv[1]);for(const name of ['DaemonWorker','FanControlBaseClass','FanControlTuxedoIO','FanControlWorker','FanControlHwmon','TuxedoControlCenterDaemon','StateSwitcherWorker']){const source=fs.readFileSync(path.join(process.argv[2],'src/service-app/classes',name+'.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript transpile diagnostic: '+name);const dest=path.join(process.argv[3],'service-app/classes');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,name+'.js'),result.outputText);}const source=fs.readFileSync(path.join(process.argv[2],'src/common/models/IFanData.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript model diagnostic');const dest=path.join(process.argv[3],'common/models');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,'IFanData.js'),result.outputText);"
+            code="const fs=require('fs'),path=require('path'),ts=require(process.argv[1]);for(const name of ['DaemonWorker','FanControlBaseClass','FanControlTuxedoIO','FanControlWorker','FanControlHwmon','TuxedoControlCenterDaemon','StateSwitcherWorker']){const source=fs.readFileSync(path.join(process.argv[2],'src/service-app/classes',name+'.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript transpile diagnostic: '+name);const dest=path.join(process.argv[3],'service-app/classes');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,name+'.js'),result.outputText);}const source=fs.readFileSync(path.join(process.argv[2],'src/common/models/IFanData.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript model diagnostic');const dest=path.join(process.argv[3],'common/models');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,'IFanData.js'),result.outputText);const consumer=fs.readFileSync(path.join(process.argv[2],'src/ng-app/app/compatibility.service.ts'),'utf8');const emitted=ts.transpileModule(consumer,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,experimentalDecorators:true}}).outputText;const consumerDest=path.join(process.argv[3],'ng-app/app');fs.mkdirSync(consumerDest,{recursive:true});fs.writeFileSync(path.join(consumerDest,'compatibility.service.js'),emitted);"
             self.run_cmd([node,'-e',code,ts,self.patched,out])
             self.__class__.generated=out
         return self.__class__.generated
 
-    def negative_assertion(self,args):
+    def negative_assertion(self,args,expected=None):
         output=self.run_cmd(args,success=False)
         self.assertIn('AssertionError',output,output)
+        if expected is not None:self.assertIn(expected,output,output)
 
     def test_lifecycle_actual_ts_independent_js_and_patch1_negatives(self):
         node,ts=self.service_tools()
@@ -172,5 +179,21 @@ class TccFanContract(unittest.TestCase):
                 self.run_cmd([node,FIXTURE/'readback_errors_test.cjs',ts,source,'native-failure-readback',kind,patched_addon])
         original_addon=self.base/'readback-original.node';self.compile(self.legacy,original_addon,addon=True)
         self.negative_assertion([node,FIXTURE/'readback_errors_test.cjs',ts,self.legacy,'native-failure-readback','ts',original_addon])
+
+    def test_temperature_exception_invalidates_actual_feedback_consumer_ts_js_and_pkg5_negative(self):
+        node,ts=self.service_tools()
+        for group in ['single','double','both','undefined','settled','publish-failure','normal']:
+            for kind,source in [('ts',self.patched),('js',self.generated_classes())]:
+                with self.subTest(group=group,kind=kind):
+                    self.run_cmd([node,FIXTURE/'temperature_exception_test.cjs',ts,source,group,kind,self.patched])
+            with self.subTest(group=group,kind='pkg5'):
+                args=[node,FIXTURE/'temperature_exception_test.cjs',ts,self.patch5,group,'ts',self.patch5]
+                if group=='normal':self.run_cmd(args)
+                else:
+                    expected={
+                        'settled':'all round fan invalidations start after reads settle',
+                        'publish-failure':'actual GPU consumer must reject aborted round feedback',
+                    }.get(group,'actual consumer must not accept prior temperature after a failed round')
+                    self.negative_assertion(args,expected)
 
 if __name__=='__main__':unittest.main()

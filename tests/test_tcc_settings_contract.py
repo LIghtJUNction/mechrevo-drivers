@@ -16,8 +16,9 @@ class TccSettingsContract(unittest.TestCase):
         cls.fixture=packaging.TccPackaging();cls.fixture.setUp();cls.addClassCleanup(cls.fixture.tearDown)
         result=cls.fixture.invoke('prepare');assert result.returncode==0,result.stdout+result.stderr
         cls.prepared=cls.fixture.source;cls.pkg4=cls.fixture.base/'pkg4';shutil.copytree(cls.prepared,cls.pkg4)
-        result=subprocess.run(['patch','-R','-p1','--fuzz=0','--batch','-i',str(packaging.RECIPE/packaging.PATCHES[4])],cwd=cls.pkg4,capture_output=True,text=True)
-        assert result.returncode==0,result.stdout+result.stderr
+        for patch in reversed(packaging.PATCHES[4:]):
+            result=subprocess.run(['patch','-R','-p1','--fuzz=0','--batch','-i',str(packaging.RECIPE/patch)],cwd=cls.pkg4,capture_output=True,text=True)
+            assert result.returncode==0,result.stdout+result.stderr
         cls.generated=cls.fixture.base/'settings-generated-js';cls.generated.mkdir()
     def run_case(self,group,source=None,kind='ts',success=True):
         argv=[self.node,str(FIXTURE/'settings_contract_test.cjs'),self.ts,str(source or self.prepared),group,kind,str(self.generated)]
@@ -34,7 +35,7 @@ class TccSettingsContract(unittest.TestCase):
             for kind in ['ts','js']:
                 with self.subTest(group=group,kind=kind):self.run_case(group,kind=kind)
     def test_pkg4_independent_negatives_and_compatible_paths(self):
-        # Reverse only patch5 from real current recipe prepare, preserving patches1..4.
+        # Reverse patches6 and5 from real current recipe prepare, preserving patches1..4.
         for group in GROUPS:
             with self.subTest(group=group):self.run_case(group,source=self.pkg4,success=group not in NEGATIVE)
     def test_prepared_candidate_and_pkg4_reverse_have_exact_qualified_bytes(self):

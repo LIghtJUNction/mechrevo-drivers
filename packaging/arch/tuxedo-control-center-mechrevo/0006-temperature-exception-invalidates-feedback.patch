@@ -1,0 +1,43 @@
+--- a/src/service-app/classes/FanControlWorker.ts
++++ b/src/service-app/classes/FanControlWorker.ts
+@@ -348,7 +348,11 @@
+         let temp;
+         // Only get temp for fan when a corresponding sensor exists
+         if (fanNumber <= this.nrTempsAvailable) {
+-            temp = await this.getTemperature(fanIndex);
++            try {
++                temp = await this.getTemperature(fanIndex);
++            } catch (cause: unknown) {
++                return { fanLogic, fanIndex, temp: -1, temperatureReadError: { cause } };
++            }
+         } else {
+             temp = 0;
+         }
+@@ -390,11 +394,27 @@
+             fanLogic: FanControlLogic;
+             fanIndex: number;
+             temp: number;
++            temperatureReadError?: { cause: unknown };
+         }[] = await this.settleFanOperations(
+             fanNumbers.map(async (fanNumber: number) => {
+                 return await this.updateTempLogic(fans, fanNumber);
+             }),
+         );
++
++        const temperatureErrors = fanInformationArray
++            .filter(({ temperatureReadError }) => temperatureReadError !== undefined)
++            .map(({ temperatureReadError }) => temperatureReadError!.cause);
++        if (temperatureErrors.length > 0) {
++            // No calculated speed is written when this round lacks a temperature.
++            // Wait for every publication and retain failures after the original causes.
++            const invalidations = await Promise.allSettled(
++                fanNumbers.map((fanNumber: number) => this.setFanDbusData(fanNumber - 1, -1, -1)),
++            );
++            for (const result of invalidations) {
++                if (result.status === 'rejected') temperatureErrors.push(result.reason);
++            }
++            this.throwFanErrors(temperatureErrors);
++        }
+ 
+         const speedArray: number[] = fanInformationArray.map(({ fanLogic }) => fanLogic.getSpeedPercent());
+         const maxSpeed = Math.max(...speedArray);
