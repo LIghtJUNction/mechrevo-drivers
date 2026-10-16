@@ -88,6 +88,18 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
                                 timeout=10, preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_legacy_full_waits_for_running_worker_then_reclaims_fan_control(self):
+        self.check_case("legacy_worker_full")
+
+    def test_legacy_full_prevents_stale_worker_entry_from_rewriting_targets(self):
+        self.check_case("legacy_full_stale_worker")
+
+    def test_legacy_raw_full_serializes_with_suspend_without_resurrecting_manual_targets(self):
+        self.check_case("legacy_raw_full_suspend")
+
+    def test_legacy_mask_full_serializes_with_resume_and_drains_queued_restore(self):
+        self.check_case("legacy_mask_full_resume")
+
     def test_reprobe_releases_failed_remove_owner_or_fails_closed_without_losing_retry(self):
         self.check_case("universal_remove_reprobe")
 

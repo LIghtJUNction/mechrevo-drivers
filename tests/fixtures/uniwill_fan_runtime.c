@@ -19,6 +19,7 @@ static u8 direct_fan_control_current_value_fan0;
 static u8 direct_fan_control_current_value_fan1;
 static bool fans_initialized, direct_fan_control_started, direct_fan_control_restart_needed;
 static bool direct_fan_control_suspend, universal_fan_manual_active;
+static bool legacy_fan_mode_override_blocked;
 static int uw_restore_fan_state_locked(void);
 static u8 direct_fan_control_current_value_fan0_suspend_save;
 static u8 direct_fan_control_current_value_fan1_suspend_save;
@@ -55,7 +56,7 @@ static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
 static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
-static bool commit_verification_exhausted, recovery_clear_written;
+static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write;
 static u8 ec[UINT16_MAX + 1u];
 
 static bool fault(bool write)
@@ -98,8 +99,10 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     assert(event_count < 1024);
     events[event_count++] = (struct event){'w', address, value};
     ++writes;
-    if (fault(true))
+    if (fault(true)) {
+        if (address == 0x0751 && landed_failed_mode_write) ec[address] = value;
         return fault_status;
+    }
     if (address == 0x07c6 && !(value & 4) && commit_verification_exhausted) {
         if (recovery_write_failures) {
             --recovery_write_failures;
@@ -153,14 +156,14 @@ static void reset(bool universal)
     memset(events, 0, sizeof(events));
     event_count = reads = writes = sleeps = schedules = cancellations = errors = 0;
     failed_commit_readbacks = recovery_write_failures = recovery_mismatches = 0;
-    commit_verification_exhausted = recovery_clear_written = false;
+    commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = false;
     fail_after = -1;
     exact_fail_event = -1;
     fault_status = -ETIMEDOUT;
     read_failures = write_failures = mismatch_reads = last_error = 0;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
     uniwill_device_features.uniwill_custom_profile_mode_needed = false;
-    universal_fan_manual_active = false;
+    universal_fan_manual_active = legacy_fan_mode_override_blocked = false;
     fans_initialized = direct_fan_control_started = false;
     direct_fan_control_restart_needed = false;
     direct_fan_control_suspend = false;
@@ -266,6 +269,26 @@ static void prepare_suspended(void)
     assert(direct_fan_control_suspend && !direct_fan_control_started);
     assert_saved(83, 97); assert_cached(0, 0);
     assert(!direct_fan_control_restart_delayed_work.pending && backlight_enabled == 0);
+}
+
+static int legacy_override(int api)
+{
+    switch (api) {
+    case 0: return set_full_fan_mode(true);
+    case 1: return set_full_fan_mode(false);
+    case 2: return uw_set_mode(0x51);
+    case 3: return uw_set_mode(0x11);
+    case 4: return uw_update_mode(0, 0x40);
+    case 5: return uw_update_mode(0x40, 0);
+    default: assert(0); return -EINVAL;
+    }
+}
+static void prepare_legacy_failed_resume(void)
+{
+    prepare_suspended(); backlight_failures = 1;
+    assert(uniwill_keyboard_resume(NULL) == -EIO && direct_fan_control_suspend);
+    assert(!uniwill_pm_suspended && !direct_fan_control_restart_delayed_work.pending);
+    clear_trace();
 }
 
 int main(int argc, char **argv)
@@ -1004,6 +1027,112 @@ int main(int argc, char **argv)
             assert(!direct_fan_control_suspend && !universal_fan_manual_active);
             assert(!(ec[0x07c6] & 4) && ec[0x0751] == 0x51 && schedules == 0);
         }
+    } else if (strcmp(test, "legacy_override_success") == 0) {
+        for (int pending = 0; pending < 2; ++pending) {
+            for (int api = 0; api < 6; ++api) {
+                if (pending) prepare_legacy_failed_resume(); else { prepare_manual(); clear_trace(); }
+                assert(legacy_override(api) == 0);
+                u8 expected = api == 1 || api == 3 || api == 5 ? 0x11 : 0x51;
+                assert(ec[0x0751] == expected);
+                assert(!direct_fan_control_started && !direct_fan_control_restart_needed && !direct_fan_control_suspend);
+                assert(!legacy_fan_mode_override_blocked && !direct_fan_control_restart_delayed_work.pending);
+                assert_cached(0, 0); assert_saved(0, 0);
+                clear_trace();
+                restart_direct_fan_control_work_handler(&direct_fan_control_restart_delayed_work.work);
+                assert(event_count == 0 && schedules == 0);
+                assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+                assert(uniwill_keyboard_resume(NULL) == 0);
+                assert(event_count == 0 && ec[0x0751] == expected && schedules == 0);
+            }
+        }
+    } else if (strcmp(test, "legacy_override_failures") == 0) {
+        const int codes[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int code = 0; code < sizeof(codes)/sizeof(codes[0]); ++code) {
+            for (int api = 0; api < 6; ++api) {
+                for (int pending = 0; pending < 2; ++pending) {
+                  for (int phase = 0; phase < 3; ++phase) {
+                    if (phase == 0 && (api == 2 || api == 3)) continue;
+                    if (pending) prepare_legacy_failed_resume(); else { prepare_manual(); clear_trace(); }
+                    /* Force a write for true/set-mask APIs that otherwise are idempotent. */
+                    ec[0x0751] = api == 0 || api == 2 || api == 4 ? 0x11 : 0x51;
+                    fault_status = codes[code];
+                    if (phase == 0) read_failures = 1;
+                    else { write_failures = 1; landed_failed_mode_write = phase == 2; }
+                    assert(legacy_override(api) == codes[code]);
+                    assert(legacy_fan_mode_override_blocked && direct_fan_control_started);
+                    assert(direct_fan_control_restart_needed && !direct_fan_control_restart_delayed_work.pending);
+                    assert_cached(83, 97); if (pending) assert_saved(83, 97);
+                    u8 uncertain_mode = ec[0x0751];
+                    clear_trace();
+                    restart_direct_fan_control_work_handler(&direct_fan_control_restart_delayed_work.work);
+                    assert(event_count == 0 && schedules == 0);
+                    assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+                    assert(uniwill_keyboard_resume(NULL) == 0);
+                    assert(event_count == 0 && schedules == 0 && legacy_fan_mode_override_blocked);
+                    assert(ec[0x0751] == uncertain_mode);
+                    assert((int)uw_set_fan(2, 110) == -EINVAL && legacy_fan_mode_override_blocked);
+                    assert(uw_set_fan(0, 110) == 0 && !legacy_fan_mode_override_blocked);
+                    assert_cached(110, 97);
+                    run_worker(); assert(ec[0x0751] == 0x51 && ec[0x1804] == 110 && ec[0x1809] == 97);
+                }
+                  }
+            }
+        }
+    } else if (strcmp(test, "legacy_override_late_pm_and_auto") == 0) {
+        for (int pending = 0; pending < 2; ++pending) {
+            if (pending) prepare_legacy_failed_resume(); else { prepare_manual(); clear_trace(); }
+            write_failures = 1; landed_failed_mode_write = true;
+            assert(uw_set_mode(0x51) == -ETIMEDOUT && legacy_fan_mode_override_blocked);
+            clear_trace(); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            backlight_failures = 1;
+            assert(uniwill_keyboard_resume(NULL) == -EIO);
+            for (int i = 0; i < event_count; ++i)
+                assert(events[i].address != 0x0751 && events[i].address != 0x1804 && events[i].address != 0x1809);
+            assert(ec[0x0751] == 0x51 && schedules == 0 && legacy_fan_mode_override_blocked);
+            clear_trace(); read_failures = 1;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT && legacy_fan_mode_override_blocked);
+            assert_cached(83, 97);
+            clear_trace(); assert(uw_set_fan_auto() == 0);
+            assert(!legacy_fan_mode_override_blocked && !direct_fan_control_started && !direct_fan_control_suspend);
+            assert(ec[0x0751] == 0x11 && !direct_fan_control_restart_delayed_work.pending);
+        }
+        for (int stage = 0; stage < 2; ++stage) {
+            prepare_legacy_failed_resume(); write_failures = 1; landed_failed_mode_write = true;
+            assert(uw_set_mode(0x51) == -ETIMEDOUT);
+            clear_trace(); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            /* Resume's profile read/write occurs before any other EC access. */
+            exact_fail_event = stage;
+            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+            assert(legacy_fan_mode_override_blocked && schedules == 0);
+            for (int i = 0; i < event_count; ++i)
+                assert(events[i].address != 0x0751 && events[i].address != 0x1804 && events[i].address != 0x1809);
+            clear_trace(); assert(uw_set_fan(1, 120) == 0);
+            assert_cached(83, 120); run_worker();
+            assert(ec[0x1804] == 83 && ec[0x1809] == 120 && !legacy_fan_mode_override_blocked);
+        }
+    } else if (strcmp(test, "legacy_override_universal_unchanged") == 0) {
+        for (int api = 0; api < 6; ++api) {
+            prepare_universal(); assert(legacy_override(api) == 0);
+            assert(universal_fan_manual_active && !legacy_fan_mode_override_blocked);
+            assert_cached(83, 97);
+            for (int i = 0; i < event_count; ++i)
+                assert(events[i].address == 0x0751);
+            assert((ec[0x07c6] & 4) && schedules == 0);
+        }
+    } else if (strcmp(test, "legacy_override_profile_preserves_worker") == 0) {
+        const u8 profiles[] = {0xa0, 0, 0x10};
+        for (unsigned int i = 0; i < sizeof(profiles); ++i) {
+            prepare_manual(); clear_trace();
+            assert(uw_update_mode(0xb0, profiles[i]) == 0);
+            assert(direct_fan_control_started && !legacy_fan_mode_override_blocked && direct_fan_control_restart_delayed_work.pending);
+            assert_cached(83, 97);
+            run_worker(); assert(ec[0x1804] == 83 && ec[0x1809] == 97);
+        }
+        prepare_manual(); clear_trace();
+        uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+        assert(uw_write_tdp(0, 55) == 0);
+        assert(direct_fan_control_started && !legacy_fan_mode_override_blocked && direct_fan_control_restart_delayed_work.pending);
     } else if (strcmp(test, "mode_helpers_success") == 0) {
         const u8 profiles[] = {0xa0, 0x00, 0x10};
         for (int value = 0; value <= 255; ++value) {

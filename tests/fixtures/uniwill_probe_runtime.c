@@ -32,6 +32,7 @@ static struct uniwill_device_features_t features;
 static bool uw_lightbar_loaded, uw_charging_prio_loaded, uw_charging_profile_loaded;
 static bool uniwill_fan_removed, uniwill_fan_work_paused, fans_initialized;
 static bool universal_fan_manual_active;
+static bool legacy_fan_mode_override_blocked;
 #define uniwill_device_features features
 /* This probe-only fixture never starts RAM fan control. Complete production
  * AUTO and removal integration is exercised by uniwill_fan_concurrency.c. */

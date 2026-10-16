@@ -47,7 +47,8 @@ class UniwillFanRuntime(unittest.TestCase):
                 raise AssertionError("Missing driver constant: " + name)
             constants.append(match.group())
         names = ("uniwill_set_custom_profile_mode", "uniwill_write_ec_ram_with_retry", "uw_fan_quiesce_locked", "uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active",
-                 "uw_set_mode", "uw_update_mode",
+                 "uw_legacy_fan_override_begin_locked", "uw_legacy_fan_override_finish_locked",
+                 "uw_set_mode", "uw_update_mode", "uw_write_tdp",
                  "set_full_fan_mode_locked", "set_full_fan_mode", "uw_init_fan_locked", "uw_init_fan",
                  "restart_direct_fan_control_work_handler", "direct_fan_control",
                  "uw_set_fan_locked", "uw_set_fan", "uw_set_fan_auto_locked", "uw_set_fan_auto",
@@ -71,6 +72,21 @@ class UniwillFanRuntime(unittest.TestCase):
         result = subprocess.run([str(self.binary), case], text=True, capture_output=True, timeout=10,
                                 preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_legacy_ambiguous_override_late_pm_errors_never_reauthorize_old_worker_and_auto_can_cancel(self):
+        self.check_case("legacy_override_late_pm_and_auto")
+
+    def test_universal_explicit_full_mode_retains_owned_table_without_added_ec_operations(self):
+        self.check_case("legacy_override_universal_unchanged")
+
+    def test_legacy_explicit_mode_override_drains_old_worker_and_cancels_saved_pm_intent(self):
+        self.check_case("legacy_override_success")
+
+    def test_legacy_failed_mode_override_preserves_targets_but_blocks_automatic_pm_and_worker_retry(self):
+        self.check_case("legacy_override_failures")
+
+    def test_legacy_profile_and_tdp_updates_preserving_full_bit_keep_manual_worker(self):
+        self.check_case("legacy_override_profile_preserves_worker")
 
     def test_universal_pm_rebuilds_tables_and_both_targets_without_legacy_worker(self):
         self.check_case("universal_pm_roundtrip")

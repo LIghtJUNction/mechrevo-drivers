@@ -176,7 +176,7 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
 /* Baseline lacks the two serialized mode exports and reprobe helper. */
 /* @BASELINE_COMPAT@ */
 
-enum operation { MANUAL, AUTO, INIT, FULL, WORKER, SUSPEND, RESUME, REMOVE, UPDATE };
+enum operation { MANUAL, AUTO, INIT, FULL, WORKER, SUSPEND, RESUME, REMOVE, UPDATE, STALE_WORKER, RAW_FULL, MASK_FULL };
 static enum operation operations[4];
 static void *run(void *arg)
 {
@@ -186,6 +186,11 @@ static void *run(void *arg)
     case AUTO: result[actor] = (int)uw_set_fan_auto(); break;
     case INIT: result[actor] = uw_init_fan(); break;
     case FULL: result[actor] = set_full_fan_mode(true); break;
+    case RAW_FULL: result[actor] = uw_set_mode(0x51); break;
+    case MASK_FULL: result[actor] = uw_update_mode(0, 0x40); break;
+    case STALE_WORKER:
+        restart_direct_fan_control_work_handler(&direct_fan_control_restart_delayed_work.work);
+        result[actor] = 0; break;
     case UPDATE: result[actor] = uw_update_mode(0xb0, 0xa0); break;
     case SUSPEND: result[actor] = uniwill_keyboard_suspend(NULL, 0); break;
     case RESUME: result[actor] = uniwill_keyboard_resume(NULL); break;
@@ -494,6 +499,40 @@ int main(int argc, char **argv)
         assert(pthread_join(one, NULL) == 0 && pthread_join(two, NULL) == 0);
         assert(result[2] == -ENODEV && !universal_fan_manual_active && !(ec[0x07c6] & 4));
         assert_remove_order();
+    } else if (strcmp(test, "legacy_worker_full") == 0) {
+        prepare_manual(); pause_address = 0x1804;
+        interleave(WORKER, FULL);
+        assert(!direct_fan_control_started && !direct_fan_control_suspend && !legacy_fan_mode_override_blocked);
+        assert(!direct_fan_control_restart_delayed_work.pending && (ec[0x0751] & 0x40));
+        int last_worker_target = -1, first_full_mode = -1;
+        for (int i = 0; i < event_count; ++i) {
+            if (events[i].actor == 1 && events[i].kind == 'w' &&
+                (events[i].address == 0x1804 || events[i].address == 0x1809)) last_worker_target = i;
+            if (events[i].actor == 2 && events[i].address == 0x0751 && first_full_mode == -1) first_full_mode = i;
+        }
+        assert(last_worker_target >= 0 && first_full_mode > last_worker_target);
+        int before = event_count;
+        restart_direct_fan_control_work_handler(&direct_fan_control_restart_delayed_work.work);
+        assert(event_count == before && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "legacy_full_stale_worker") == 0) {
+        prepare_manual(); pause_address = 0x0751; pause_kind = 'r';
+        interleave(FULL, STALE_WORKER);
+        assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+        for (int i = 0; i < event_count; ++i) assert(events[i].actor != 2);
+        assert((ec[0x0751] & 0x40) && ec[0x1804] == 83 && ec[0x1809] == 97);
+    } else if (strcmp(test, "legacy_raw_full_suspend") == 0) {
+        prepare_manual(); pause_address = 0x0751;
+        interleave(RAW_FULL, SUSPEND);
+        assert(uniwill_pm_suspended && !direct_fan_control_suspend && !direct_fan_control_started);
+        assert(ec[0x0751] == 0x51 && !direct_fan_control_restart_delayed_work.pending);
+        int before = event_count; assert(uniwill_keyboard_resume(NULL) == 0 && event_count == before);
+    } else if (strcmp(test, "legacy_mask_full_resume") == 0) {
+        prepare_manual(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        assert(uniwill_keyboard_resume(NULL) == 0); /* legacy worker now queued */
+        pause_address = 0x0751; pause_kind = 'r';
+        interleave(MASK_FULL, RESUME);
+        assert(!direct_fan_control_started && !direct_fan_control_suspend);
+        assert((ec[0x0751] & 0x40) && !direct_fan_control_restart_delayed_work.pending);
     } else if (strcmp(test, "mode_update") == 0) {
         ec[0x0751] = 0x15; pause_address = 0x0751; pause_kind = 'r';
         interleave(FULL, UPDATE);

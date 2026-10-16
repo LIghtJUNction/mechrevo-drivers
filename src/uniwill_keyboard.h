@@ -2039,6 +2039,10 @@ static bool universal_fan_manual_active;
 static bool direct_fan_control_started = false;
 static bool direct_fan_control_restart_needed = false;
 static bool direct_fan_control_suspend = false;
+/* A failed explicit mode override may have reached firmware. Keep the old
+ * targets for an explicit retry, but never let background work or PM silently
+ * reapply them over that uncertain request. */
+static bool legacy_fan_mode_override_blocked;
 /* The fan-restore flag above is false in AUTO. It cannot describe device PM. */
 static bool uniwill_pm_ready;
 static bool uniwill_pm_suspended;
@@ -2102,12 +2106,41 @@ static int uw_fan_lock_active(bool cancel_work)
 	return 0;
 }
 
+static void uw_legacy_fan_override_begin_locked(void)
+{
+	if (uniwill_device_features.uniwill_has_universal_ec_fan_control)
+		return;
+	if (direct_fan_control_started || direct_fan_control_suspend ||
+	    legacy_fan_mode_override_blocked) {
+		legacy_fan_mode_override_blocked = true;
+		uw_fan_quiesce_locked();
+		/* No automatic requeue after an ambiguous read/write failure. */
+		direct_fan_control_restart_needed = direct_fan_control_started;
+	}
+}
+
+static void uw_legacy_fan_override_finish_locked(int status)
+{
+	if (status || uniwill_device_features.uniwill_has_universal_ec_fan_control)
+		return;
+	direct_fan_control_started = false;
+	direct_fan_control_restart_needed = false;
+	direct_fan_control_suspend = false;
+	legacy_fan_mode_override_blocked = false;
+	direct_fan_control_current_value_fan0 = 0;
+	direct_fan_control_current_value_fan1 = 0;
+	direct_fan_control_current_value_fan0_suspend_save = 0;
+	direct_fan_control_current_value_fan1_suspend_save = 0;
+}
+
 int uw_set_mode(u8 value)
 {
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	uw_legacy_fan_override_begin_locked();
 	status = uniwill_write_ec_ram(0x0751, value);
+	uw_legacy_fan_override_finish_locked(status);
 	uw_fan_unlock();
 	return status;
 }
@@ -2119,9 +2152,14 @@ int uw_update_mode(u8 clear_mask, u8 set_mask)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	/* Profile/TDP updates preserve bit 6 and retain manual ownership. */
+	if ((clear_mask | set_mask) & 0x40)
+		uw_legacy_fan_override_begin_locked();
 	status = uniwill_read_ec_ram(0x0751, &value);
 	if (!status)
 		status = uniwill_write_ec_ram(0x0751, (value & ~clear_mask) | set_mask);
+	if ((clear_mask | set_mask) & 0x40)
+		uw_legacy_fan_override_finish_locked(status);
 	uw_fan_unlock();
 	return status;
 }
@@ -2177,7 +2215,9 @@ int set_full_fan_mode(bool enable)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	uw_legacy_fan_override_begin_locked();
 	status = set_full_fan_mode_locked(enable);
+	uw_legacy_fan_override_finish_locked(status);
 	uw_fan_unlock();
 	return status;
 }
@@ -2320,7 +2360,7 @@ static void restart_direct_fan_control_work_handler(struct work_struct *work)
 	u16 addr_fan1 = 0x1809;
 
 	mutex_lock(&uniwill_fan_state_lock);
-	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started)
+	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started || legacy_fan_mode_override_blocked)
 		goto unlock;
 	pr_debug("restart fan control\n");
 
@@ -2456,6 +2496,8 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 			direct_fan_control_current_value_fan1 = direct_fan_control_current_value_fan1_suspend_save;
 		}
 		status = direct_fan_control(fan_index, fan_speed, true);
+		if (!status)
+			legacy_fan_mode_override_blocked = false;
 		if (!status && direct_fan_control_suspend) {
 			if (fan_index == 0)
 				direct_fan_control_current_value_fan0_suspend_save = fan_speed;
@@ -2542,6 +2584,7 @@ static u32 uw_set_fan_auto_locked(void)
 	}
 
 	universal_fan_manual_active = false;
+	legacy_fan_mode_override_blocked = false;
 	direct_fan_control_started = false;
 	direct_fan_control_restart_needed = false;
 	direct_fan_control_suspend = false;
@@ -2587,6 +2630,7 @@ static int uw_fan_control_start(void)
 	uniwill_pm_suspended = false;
 	fans_initialized = false;
 	universal_fan_manual_active = false;
+	legacy_fan_mode_override_blocked = false;
 	direct_fan_control_started = false;
 	direct_fan_control_restart_needed = false;
 	direct_fan_control_suspend = false;
@@ -2863,7 +2907,7 @@ static int uw_restore_fan_state_locked(void)
 	int result, status, recovery_status;
 	bool universal = uniwill_device_features.uniwill_has_universal_ec_fan_control;
 
-	if (!direct_fan_control_suspend)
+	if (!direct_fan_control_suspend || (!universal && legacy_fan_mode_override_blocked))
 		return 0;
 
 	if (universal) {
@@ -2934,7 +2978,8 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 				goto failed;
 		}
 	}
-	if (direct_fan_control_started || universal_fan_manual_active || direct_fan_control_suspend) {
+	if ((direct_fan_control_started || universal_fan_manual_active || direct_fan_control_suspend) &&
+	    (uw_feats->uniwill_has_universal_ec_fan_control || !legacy_fan_mode_override_blocked)) {
 		if (!direct_fan_control_suspend) {
 			direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
 			direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
