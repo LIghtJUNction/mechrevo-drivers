@@ -20,6 +20,12 @@ import gpu_pm_trial as PM
 sys.path.pop(0)
 
 
+def scratch_directory():
+    parent = Path(os.environ.get("MECHREVO_TEST_TMPDIR", ROOT / ".local-tests"))
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent
+
+
 class Fake:
     def __init__(self):
         self.boot = "a"*32
@@ -212,7 +218,7 @@ module.os.open=opened;module.os.fstat=fstat
 raise SystemExit(module.main(['--apply','--seconds','60','--output',str(base/'receipt.json')]))
 '''
         for signum in (signal.SIGTERM,signal.SIGHUP,signal.SIGKILL):
-            with self.subTest(signal=signum), tempfile.TemporaryDirectory(dir=ROOT/"tests",prefix=".gpu-pm-signal-") as directory:
+            with self.subTest(signal=signum), tempfile.TemporaryDirectory(dir=scratch_directory(),prefix=".gpu-pm-signal-") as directory:
                 base = Path(directory)
                 process = subprocess.Popen([sys.executable,"-B","-c",child,__file__,directory],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 try:
@@ -238,7 +244,7 @@ raise SystemExit(module.main(['--apply','--seconds','60','--output',str(base/'re
                     process.communicate(timeout=5)
 
     def test_signal_between_checkpoint_replace_and_identity_update_allows_final_save(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/"tests",prefix=".gpu-pm-checkpoint-") as directory:
+        with tempfile.TemporaryDirectory(dir=scratch_directory(),prefix=".gpu-pm-checkpoint-") as directory:
             path = Path(directory)/"receipt.json"
             output = PM.CheckpointFile(path)
             original = os.replace
@@ -256,7 +262,7 @@ raise SystemExit(module.main(['--apply','--seconds','60','--output',str(base/'re
                 signal.signal(signal.SIGTERM,previous)
 
     def test_checkpoint_preserves_existing_signal_mask_and_failed_replace_is_retryable(self):
-        with tempfile.TemporaryDirectory(dir=ROOT/"tests",prefix=".gpu-pm-mask-") as directory:
+        with tempfile.TemporaryDirectory(dir=scratch_directory(),prefix=".gpu-pm-mask-") as directory:
             path = Path(directory)/"receipt.json"
             output = PM.CheckpointFile(path)
             previous = signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGTERM})
@@ -273,7 +279,7 @@ raise SystemExit(module.main(['--apply','--seconds','60','--output',str(base/'re
 
 class Adapter(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir=ROOT/"tests",prefix=".gpu-pm-fixture-")
+        self.temp = tempfile.TemporaryDirectory(dir=scratch_directory(),prefix=".gpu-pm-fixture-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for k,v in PM.IDENTITY.items(): self.write("/sys/class/dmi/id/"+k,v)
