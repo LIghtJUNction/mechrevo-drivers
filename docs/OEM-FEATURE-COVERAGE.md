@@ -117,8 +117,12 @@ Runtime 2.2.27328.0 组合中，已追到的 AC Setting/Control 请求经编码�
 即 [Microsoft 定义的 US-ASCII](https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers)；
 不是根据 `Publish_ByUTF8` 名称猜测编码。六条篡改负例均拒绝，205 个原包分块散列及 44 个旧冻结文件复核通过。
 冻结证据保留在私有 `mapping/aot-ac-publish-followup` 与 `mapping/aot-ac-identity-followup`。
-这是原包依赖限定的静态结论，未执行原厂代码；Windows 实际选择的依赖版本、非 ASCII 字符回退、
-枚举 42/43 名称、具体序列化器/JSON 字段、XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合。
+原始主客户端的 `SettingAciton` 枚举（保留原拼写）已静态确认
+`42 = ACRECOVERY_TOGGLE_ON`、`43 = ACRECOVERY_TOGGLE_OFF`，依据字段及默认常量元数据，
+并非相邻字符串猜测；83 个字段交叉检查及 12 条篡改负例通过。
+新证据在私有 `mapping/aot-ac-enum-followup`。这些是原包依赖限定的静态结论，未执行原厂代码；
+Windows 实际选择的依赖版本、非 ASCII 字符回退、运行时枚举名称查找、具体序列化器/最终 JSON 字段、
+XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合，不能假定最终 JSON 输出名称或十进制数字。
 
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，
