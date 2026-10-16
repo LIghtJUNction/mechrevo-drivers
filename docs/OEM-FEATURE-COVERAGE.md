@@ -110,9 +110,15 @@ USB 供电/接电开机的源码存在，也不表示本机已经暴露接口。
 服务发布异常和托盘解析/渲染异常会记录日志，不能把软件配置状态当作 EC/GPU/曲线事务的成功回读。
 这是静态失败边界，不是已复现的 Windows 运行故障。
 
-另在 native AOT 的 AC payload 发布链确认 QoS 2、retain=false 及离线 enqueue 路径，
-冻结证据保留在私有 `mapping/aot-ac-publish-followup`。这只闭合发布行为；
-枚举 42/43 的名称、JSON 字段、编码及服务端应用 ACK 仍未闭合，不证明 AC 功能已支持或应用成功。
+另在 native AOT 的 AC payload 发布链确认 QoS 2、retain=false 及离线 enqueue 路径。
+原包附带、符合 app manifest 最低版本的 x64 .NET Native Framework 2.2.27912.0 /
+Runtime 2.2.27328.0 组合中，已追到的 AC Setting/Control 请求经编码对象再进入 MQTT Publish。
+实际 resolver、导出表、初始化/构造及 GetBytes 虚调用链确认 code page 20127，
+即 [Microsoft 定义的 US-ASCII](https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers)；
+不是根据 `Publish_ByUTF8` 名称猜测编码。六条篡改负例均拒绝，205 个原包分块散列及 44 个旧冻结文件复核通过。
+冻结证据保留在私有 `mapping/aot-ac-publish-followup` 与 `mapping/aot-ac-identity-followup`。
+这是原包依赖限定的静态结论，未执行原厂代码；Windows 实际选择的依赖版本、非 ASCII 字符回退、
+枚举 42/43 名称、具体序列化器/JSON 字段、XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合。
 
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，

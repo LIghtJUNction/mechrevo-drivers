@@ -4,7 +4,45 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
-## 2026-10-16 r87 错误处理与 CPU 快速只读观察（最新）
+## 2026-10-16 r14 安装与阈值变化失败现场（最新）
+
+`mechrevo-power-control 0.1.0-14` 已安装，源码固定
+`ff2add6f2ec24766a76b6cab88c43e85e31248b2`，配方固定
+`72ce81633d43ccdf0413936120209a7634fa1a11`。
+包为 60,976 字节，SHA-256：
+`00ebf4d9b948eb4e0d959f53dabc1ebb74afb6af93765eed564e096d21225e32`。
+root 独立核验 10 个 payload 的源码/权限一致，`pacman -Qkk` 为 22 个文件、零改动。
+新增可选 CPU0 温度参考诊断，失败不影响 PL1 判断；公开观测工具遇到受管功耗状态
+缺字段或类型错误会拒绝观测，修复原先可能放过残缺状态的问题。
+安装后正式 `status` 的 Tjmax 为 100°C、偏移 15°C、TCC 参考 85°C，诊断可用且 diagnostic_errors=[]；
+holding=true、errors=[]，55 W/90°C/每秒轮询/零 RAPL 防抖保持。
+本轮另一次只读检查读到 95°C，说明参考动态变化；未确认修改者，不归因 thermald。
+
+5 份配置、6 个运行模块 build ID、3 个服务 PID（97821/397302/1003）、传感器 inode 与 RGB 保持。
+磁盘驱动仍为 r87，运行 keyboard/IO/NVIDIA/compatibility r37、WMI r60、传感器 r76；
+TCC 实验包 pkgrel 2 未安装，未激活新核心，未新增硬件策略写入或物理 PM 验收，AUR 未发布。
+安装会话 `0c38725b` 的命令退出 0，跟踪为 partial，0 个 gap、10 个未决事件；
+构建另有 1 个权限 gap。独立文件核验不能补造缺失的跟踪历史，两者分别记录。
+
+最新唯一一次私有只读观测完成 124 组读取、13.6102 秒后因温度参考变化终止；
+保留的是末 16 组及全程统计，不是全部读取 trace：
+CPU0 目标寄存器从 `0x05640000` 变为 `0x0f640000`，Tjmax 保持 100°C、偏移 5→15°C，
+即 TCC 95→85°C；本次变化仅涉及已知偏移位，未见未知位变化。
+exit=1、footer/receipt 无效，现场已保留，不重跑或伪造有效尾部。
+原始 API 标准输出为 5 行、45,537 字节；包含元数据的收据 JSON 保存在
+`.local-tests/postboot-20261016/thermal-iterate/cpu-thread-fan/product-diagnostic/root-stdout-reference-capture.json`。
+收据 JSON 文件 SHA-256（不是上述原始标准输出的 SHA）：
+`fce9e49dc0e9ae205e8b38589c432a67097d9e355631528e8192a7456cbc0c3d`。
+这只闭合本次失败瞬间的变化类型，旧第二轮失败现场仍不能据此补判。
+有效首轮 99°C、散热根因和修改者仍未解决；这些结果不构成散热改善或完整迁移验收。
+已核验冻结材料、首次现场及恢复备份继续保留。
+本轮统一恢复材料位于 `~/Backups/projects/mechrevo-drivers/light/` 下：
+`power-control-r14-20261016/` 保存新包、固定源码及安装证据，
+`power-control-r13-before-r14-20261016/` 保留旧包恢复材料，
+`thermal-reference-stdout-20261016/` 与 `thermal-reference-stdout-firstlive-20261016/`
+分别保存冻结观察器及其后首次实机失败现场。均已独立逐文件回读内容、散列、权限和归属。
+
+## 2026-10-16 r87 错误处理与 CPU 快速只读观察（前轮）
 
 驱动源码 `92aaebd523f5c9bb5760ffdc382d58951c2b34d8` 已提交并推送，包含
 `cca5a42` 的充电保留编码检查、`66c8f92` 的直通 EC 握手/清理错误传播，以及
