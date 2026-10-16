@@ -132,6 +132,122 @@ class Environment:
         except OSError as exc:
             raise PowerError(f"Cannot read {logical}: {exc}") from exc
 
+    def read_temperature_target(self):
+        """Read the qualified CPU0 reference; never load MSR support or write it.
+
+        Alder Lake's offset is six bits and only present with PLATFORM_INFO[30].
+        Linux v6.12 turbostat documents both the capability and field decoding:
+        https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c
+        """
+        if {key: self.read_control("/sys/class/dmi/id/" + key) for key in IDENTITY} != IDENTITY:
+            raise PowerError("Temperature target: unqualified machine or BIOS")
+        cpu0 = []
+        for block in self.read_control("/proc/cpuinfo").split("\n\n"):
+            row = {}
+            for line in block.splitlines():
+                key, separator, value = line.partition(":")
+                if separator:
+                    key = key.strip()
+                    if key in row:
+                        raise PowerError("Temperature target: ambiguous CPU capability record")
+                    row[key] = value.strip()
+            if row.get("processor") == "0":
+                cpu0.append(row)
+        if len(cpu0) != 1:
+            raise PowerError("Temperature target: cannot identify CPU0 capabilities")
+        row = cpu0[0]
+        if (row.get("vendor_id") != "GenuineIntel" or row.get("cpu family") != "6"
+                or row.get("model") != "151" or row.get("model name") != CPU_MODEL
+                or int(row.get("cpuid level", "0")) < 6
+                or not {"msr", "dtherm", "pts", "pln"} <= set(row.get("flags", "").split())):
+            raise PowerError("Temperature target: CPU0 thermal MSR capabilities are not qualified")
+
+        def support_identity():
+            # A loaded-only module can disappear before open(), allowing the
+            # kernel character-device autoloader to run. Accept proven built-in
+            # MSR support only; an unknown identity is an unavailable diagnostic.
+            module = self.path("/sys/module/msr").lstat()
+            if not stat.S_ISDIR(module.st_mode):
+                raise PowerError("Temperature target: existing MSR support is not a directory")
+            if self.path("/sys/module/msr/initstate").exists() or self.path("/sys/module/msr/initstate").is_symlink():
+                raise PowerError("Temperature target: loaded MSR module is not qualified; refusing possible autoload")
+            release = self.read_control("/proc/sys/kernel/osrelease")
+            if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{1,100}", release):
+                raise PowerError("Temperature target: invalid running kernel release")
+            builtin = self.regular("/usr/lib/modules/" + release + "/modules.builtin")
+            if b"kernel/arch/x86/kernel/msr.ko" not in builtin.splitlines():
+                raise PowerError("Temperature target: MSR support is not proven built-in; refusing possible autoload")
+            notes = self.path("/sys/kernel/notes").read_bytes()
+            if not notes:
+                raise PowerError("Temperature target: missing kernel identity")
+            boot = self.read_control("/proc/sys/kernel/random/boot_id")
+            if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot):
+                raise PowerError("Temperature target: invalid boot identity")
+            return (boot, release, digest(builtin), digest(notes), module.st_dev, module.st_ino)
+
+        baseline = support_identity()
+        descriptors, directories = [], []
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            # Walk /dev/cpu/0 by dirfd so O_NOFOLLOW also protects parents.
+            parent = None
+            for name, logical in ((str(self.path("/dev")), "/dev"), ("cpu", "/dev/cpu"), ("0", "/dev/cpu/0")):
+                fd = os.open(name, directory_flags, dir_fd=parent)
+                descriptors.append(fd)
+                info = os.fstat(fd)
+                directories.append((logical, info.st_dev, info.st_ino))
+                parent = fd
+            before = os.stat("msr", dir_fd=parent, follow_symlinks=False)
+            def valid_node(info):
+                return stat.S_ISCHR(info.st_mode) and (os.major(info.st_rdev), os.minor(info.st_rdev)) == (202, 0)
+            def identity(info):
+                return (info.st_dev, info.st_ino, info.st_rdev)
+            if not valid_node(before):
+                raise PowerError("Temperature target: expected existing CPU0 MSR character device 202:0")
+            fd = os.open("msr", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=parent)
+            descriptors.append(fd)
+            opened = os.fstat(fd)
+            if not valid_node(opened) or identity(opened) != identity(before):
+                raise PowerError("Temperature target: MSR device changed during open")
+            def read(offset):
+                raw = os.pread(fd, 8, offset)
+                if len(raw) != 8:
+                    raise PowerError(f"Temperature target: short MSR read at {offset:#x}")
+                return int.from_bytes(raw, "little")
+            platform = read(0xce)
+            if not platform & (1 << 30):
+                raise PowerError("Temperature target: PLATFORM_INFO does not advertise TCC offset support")
+            target = read(0x1a2)
+            tjmax, offset = (target >> 16) & 0xff, (target >> 24) & 0x3f
+            # This exact host has a verified 100 C reference. Other TjMax
+            # values remain unqualified, rather than guessed invalid hardware.
+            if tjmax != 100 or offset >= tjmax:
+                raise PowerError("Temperature target: unqualified TjMax or activation reference")
+            if (support_identity() != baseline or not valid_node(os.fstat(fd))
+                    or identity(os.fstat(fd)) != identity(before)
+                    or identity(os.stat("msr", dir_fd=parent, follow_symlinks=False)) != identity(before)):
+                raise PowerError("Temperature target: boot, support or MSR device identity changed")
+            for logical, device, inode in directories:
+                info = self.path(logical).lstat()
+                if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (device, inode):
+                    raise PowerError("Temperature target: MSR parent directory changed")
+            return {"platform_info_raw": platform, "temperature_target_raw": target,
+                    "tjmax_celsius": tjmax, "tcc_offset_celsius": offset,
+                    "tcc_activation_celsius": tjmax - offset}
+        finally:
+            prior_error = sys.exc_info()[1]
+            close_errors = []
+            for fd in reversed(descriptors):
+                try:
+                    os.close(fd)
+                except OSError as exc:
+                    close_errors.append(str(exc))
+            if close_errors:
+                detail = "Temperature target: descriptor close failed: " + "; ".join(close_errors)
+                if prior_error is not None:
+                    detail += "; preceding read/check failure: " + str(prior_error)
+                raise PowerError(detail) from prior_error
+
     def write_control(self, logical, value):
         try:
             path = self.path(logical)
@@ -1062,6 +1178,21 @@ class PowerController:
             except (PowerError, OSError) as exc:
                 result["errors"].append(str(exc))
         result["rapl_constraints"], result["diagnostic_errors"] = self.rapl_constraints()
+        result["temperature_target"] = {
+            "available": False, "cpu": 0, "scope": "cpu0_temperature_target_reference",
+            "platform_info_raw": None, "temperature_target_raw": None,
+            "tjmax_celsius": None, "tcc_offset_celsius": None, "tcc_activation_celsius": None,
+            "software_target_celsius": result["desired_temperature_celsius"],
+            "software_precedes_hardware": None,
+            "meaning": "Hardware activation reference and configured software passive target; neither is a hard temperature ceiling"}
+        try:
+            target = self.env.read_temperature_target()
+            result["temperature_target"].update(target, available=True)
+            software = result["desired_temperature_celsius"]
+            if software is not None:
+                result["temperature_target"]["software_precedes_hardware"] = software < target["tcc_activation_celsius"]
+        except (PowerError, OSError, ValueError) as exc:
+            result["diagnostic_errors"].append(str(exc))
         return result
 
 

@@ -54,12 +54,26 @@ sudo mechrevo-power clear
 
 ## 提前软件降温
 
-本机实测温度目标寄存器对应 TjMAX 100°C、TCC offset 5°C，硬件热保护从 95°C 开始。
+本机经过 CPU 型号、偏移位宽与能力位确认的只读探测显示 TjMAX 为 100°C。
+本轮不同只读检查分别读到 TCC offset 5°C 和 15°C，对应触发阈值 95°C 和 85°C。
+阈值会变化，修改者尚未确认，不能据此归因 thermald 或推断实体散热原因。
 寄存器语义参考 [Intel Adaptive Thermal Monitor](https://edc.intel.com/content/www/us/en/design/ipla/software-development-platforms/client/platforms/alder-lake-desktop/12th-generation-intel-core-processors-datasheet-volume-1-of-2/011/adaptive-thermal-monitor/)
-及 [Linux Intel TCC 实现](https://github.com/torvalds/linux/blob/master/drivers/thermal/intel/intel_tcc.c)。
-已冻结 thermald 2.5.13 的默认 CPU PASSIVE 阈值也计算为 95°C，缺少提前控制的余量。
-`--target-celsius 90` 是显式的 Linux 用户策略，给该硬件保护点留出 5°C 余量；
-不是原厂档位、额定温度或保证永不超过 90°C 的硬上限。
+及固定版本 [Linux v6.12 turbostat 解码](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L6766-L6777)，
+Alder Lake 的 6 位偏移见该版本 [adl_features](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L688-L700)。
+这些链接是本诊断的固定解码依据，不表示当前最新内核实现。
+此前冻结的 thermald 2.5.13 默认 CPU PASSIVE 计算曾得到 95°C，不能当作当前硬件阈值。
+`--target-celsius 90` 是显式的 Linux 软件策略；只有硬件阈值为 95°C 时，数值上才低 5°C。
+读到硬件阈值 85°C 时，90°C 软件目标并不早于该保护点。
+它不是原厂档位、额定温度或保证永不超过 90°C 的硬上限。
+新增源码中的 `status.temperature_target` 是可选的 CPU0 瞬时参考诊断，不调整 TCC。
+`available` 为真时，`tjmax_celsius`、`tcc_offset_celsius`、`tcc_activation_celsius`
+分别给出参考最高温、偏移及相减得到的硬件触发参考；不保证该阈值之后保持不变。
+`software_target_celsius` 是受管软件目标；`software_precedes_hardware` 只比较两者数值，
+不是响应速度或散热效果证明。未设置软件目标时比较值为 null。
+仅在精确硬件与能力检查通过、已有内建 MSR 支持和 CPU0 设备可只读访问时提供硬件值；
+不加载模块、不提权重试。权限不足或资格/读取检查失败时 `available=false`，硬件值为 null，
+原因进入 `diagnostic_errors`，不改变 `holding_scope=cpu_package_pl1`、PL1 成功判断或命令退出码。
+这是新增源码接口，已安装包是否包含它须分别核验。
 
 当前只支持本机验证范围内的 90°C。此选项用有效的 `x86_pkg_temp` 传感器替换 CPU PASSIVE
 控制点，并按冻结源码保留完整默认降温手段及顺序：`rapl_controller`、`intel_pstate`、

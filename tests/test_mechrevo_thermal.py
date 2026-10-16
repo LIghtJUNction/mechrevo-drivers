@@ -239,6 +239,43 @@ class ThermalObservation(unittest.TestCase):
             self.assert_invalid(self.observe())
             self.assertFalse(self.system.opened)
 
+    def test_managed_status_requires_an_explicit_boolean_and_complete_cap(self):
+        missing = object()
+        cases = [("managed", value) for value in (missing, None, 0, 1, "false", [], {})]
+        cases += [("desired_limit_uw", value) for value in
+                  (missing, None, True, "55000000", 55_000_000.0, 0, -1, 34_999_999, 2_147_483_648)]
+        cases += [("holding_now", value) for value in (missing, None, False, 1, "true")]
+        cases += [("pending_transaction", missing)]
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                self.system = FakeSystem()
+                if value is missing:
+                    del self.system.power[key]
+                else:
+                    self.system.power[key] = value
+                self.assert_invalid(self.observe())
+                self.assertFalse(self.system.opened)
+                self.assertEqual(self.system.sample_count, 0)
+
+    def test_managed_cap_range_endpoints_remain_valid(self):
+        for cap in (35_000_000, 2_147_483_647):
+            with self.subTest(cap=cap):
+                self.system = FakeSystem()
+                self.system.cap = cap
+                self.system.power["desired_limit_uw"] = cap
+                result = self.observe()
+                self.assertTrue(result["valid"])
+                self.assertEqual(result["errors"], [])
+                self.assertEqual(len(result["samples"]), 3)
+
+    def test_unmanaged_status_without_optional_policy_fields_remains_valid(self):
+        self.system.power = {"managed": False, "errors": []}
+        result = self.observe()
+        self.assertTrue(result["valid"])
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["samples"]), 3)
+
     def test_transient_pl1_exceedance_invalidates_even_if_end_status_would_be_healthy(self):
         self.system.cap = 56_000_000
         self.assert_invalid(self.observe())

@@ -170,6 +170,13 @@ class PowerTransactions(unittest.TestCase):
     def setUp(self):
         self.host = FakeHost(self)
         self.controller = self.host.controller
+        # These transaction/RAPL tests isolate the optional hardware diagnostic.
+        # Its real adapter is exercised in test_power_temperature_target.py.
+        target = mock.patch.object(self.host.env, "read_temperature_target", return_value={
+            "platform_info_raw": 1 << 30, "temperature_target_raw": (100 << 16) | (15 << 24),
+            "tjmax_celsius": 100, "tcc_offset_celsius": 15, "tcc_activation_celsius": 85})
+        target.start()
+        self.addCleanup(target.stop)
 
     def assert_unconfigured(self):
         for path in (POWER.XML, POWER.DROPIN, POWER.STATE):

@@ -349,10 +349,16 @@ def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.s
         result["gpu_before"] = system.gpu_health()
         result["power_before"] = system.power_status()
         before = result["power_before"]
+        if type(before.get("managed")) is not bool:
+            raise ObservationError("Power status omitted a boolean managed state")
         if before.get("pending_transaction") is not None:
             raise ObservationError("Power configuration has a pending transaction")
         cap = before.get("desired_limit_uw") if before.get("managed") else None
-        if cap is not None and (type(cap) is not int or cap <= 0 or before.get("holding_now") is not True):
+        # Match the power tool's persisted-state range. A missing/null cap is
+        # not an unmanaged capture when the tool explicitly reports ownership.
+        if before["managed"] and (type(cap) is not int or not 35_000_000 <= cap <= 2_147_483_647
+                                  or "pending_transaction" not in before
+                                  or before.get("holding_now") is not True):
             raise ObservationError("Managed power ceiling is not confirmed")
         system.open_sensors()
 
