@@ -92,7 +92,24 @@ Linux 对等入口必须先验证完整 profile、串行执行并报告各阶段
 12 个旧恢复方法体与原始包/既有回执重新核对，50 个原始指令契约及其单点篡改负例通过；
 16 个独立标量模型用例只检查标签和条件索引，不是运行 OEM、CLR 或硬件。
 小证据在私有 `power-semantics/custom-mode-transaction-v2/`，没有重复恢复 5,183 个方法。
-Resume 重放、profile 编辑输入及固件实际接受仍未闭合，本轮没有新增 EC/模式写入。
+完整 Resume 硬件恢复、profile 编辑输入及固件实际接受仍待验证，本轮没有新增 EC/模式写入。
+
+## Resume 重新应用的真实入口与错误边界
+
+已限定的 ModernOn/Resume 调用链先设置 AP-exists，再分派到选中 RamFan1p5 的 `Resume`：
+`LoadProfileAll` 重新读取动态默认值，加载持久化 MainOption 和十一份 profile，再进入 `Init(false)`。
+未激活的 profile 可能被默认值刷新；这不是恢复单独保存的最后成功快照，也不能把最新持久化尝试当作硬件成功。
+`Init(false)` 仍请求模式、异步曲线和 Intel PL1/PL2/PL4/TCC，但跳过 CPU 电压、显式 GPU 参数块及内存 OC 块，
+不能与显式切档的 `SetUserProfile(mode,true)` 等同；其他条件式 GPU 调用仍可能执行。
+
+这条直调恢复链不经过上一节吞应用异常的 mode worker。若重载或应用异常向上传递，
+它进入外层 async-void 异常路径，后续设置及电池恢复被跳过；没有已证明的 PL/TCC 补偿或逐请求硬件 ACK。
+底层 void 传输吞错时仍可能继续，而曲线 Task 未等待，不能把同步 Resume 返回当作曲线提交完成。
+Linux 恢复入口需保存并验证最后成功 profile，串行恢复及排空旧曲线任务，并明确各阶段部分失败和独立设置恢复结果。
+
+12 个旧恢复方法体重新核对，38 个原始指令检查及篡改负例、2 个原始 PE delegate 错目标负例通过；
+14 个独立顺序/失败模型用例不代表 OEM、CLR 或实机运行。私有证据为 `power-semantics/resume-transaction/`。
+这只闭合所查恢复入口的静态契约，不保证所有通知路线、OS 睡眠状态或固件接受；未执行 OEM 或新增硬件写入。
 
 ## 本机布局分支已经闭合
 
