@@ -157,129 +157,168 @@ static int uw_ec_write_addr_wmi(u8 addr_low, u8 addr_high, u8 data_low, u8 data_
  */
 static int uw_ec_read_addr_direct(u8 addr_low, u8 addr_high, union uw_ec_read_return *output)
 {
-	int result;
-	int count;
+	union uw_ec_read_return staged = { .dword = 0 };
+	int result, cleanup_result, count = 0, polls = 0;
 	u8 tmp, flags;
-	bool ready;
-	bool bflag = false;
+	bool ready = false, bflag = false;
 
+	if (IS_ERR_OR_NULL(output))
+		return -EINVAL;
 	mutex_lock(&uniwill_ec_lock);
-
-	ec_read(UNIWILL_EC_REG_FLAGS, &flags);
-	if ((flags & (1 << UNIWILL_EC_BIT_BFLG)) > 0) {
+	result = ec_read(UNIWILL_EC_REG_FLAGS, &flags);
+	if (result)
+		goto unlock;
+	if (flags & (1 << UNIWILL_EC_BIT_BFLG)) {
 		pr_debug("read: BFLG set\n");
 		bflag = true;
 	}
 
 	flags |= (1 << UNIWILL_EC_BIT_BFLG);
-	ec_write(UNIWILL_EC_REG_FLAGS, flags);
-
-	ec_write(UNIWILL_EC_REG_LDAT, addr_low);
-	ec_write(UNIWILL_EC_REG_HDAT, addr_high);
+	/* Even an unsuccessful write may have reached the EC. From this
+	 * attempt onward, always try the existing handshake release. */
+	result = ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_LDAT, addr_low);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_HDAT, addr_high);
+	if (result)
+		goto cleanup;
 
 	flags &= ~(1 << UNIWILL_EC_BIT_DRDY);
 	flags |= (1 << UNIWILL_EC_BIT_RFLG);
-	ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	result = ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	if (result)
+		goto cleanup;
 
-	// Wait for ready flag
-	count = UW_EC_BUSY_WAIT_CYCLES;
-	ready = false;
-	while (!ready && count != 0) {
+	for (count = 0; count < UW_EC_BUSY_WAIT_CYCLES; ++count) {
 		msleep(UW_EC_BUSY_WAIT_DELAY);
-		ec_read(UNIWILL_EC_REG_FLAGS, &tmp);
-		ready = (tmp & (1 << UNIWILL_EC_BIT_DRDY)) != 0;
-		count -= 1;
+		++polls;
+		result = ec_read(UNIWILL_EC_REG_FLAGS, &tmp);
+		if (result)
+			goto cleanup;
+		ready = !!(tmp & (1 << UNIWILL_EC_BIT_DRDY));
+		if (ready)
+			break;
 	}
-
-	if (count != 0) {
-		output->dword = 0;
-		ec_read(UNIWILL_EC_REG_CMDL, &tmp);
-		output->bytes.data_low = tmp;
-		ec_read(UNIWILL_EC_REG_CMDH, &tmp);
-		output->bytes.data_high = tmp;
-		result = 0;
-	} else {
+	/* The final allowed poll is still a successful response. */
+	if (!ready) {
 		pr_err("uw ec read timeout, addr: 0x%02x%02x\n", addr_high, addr_low);
-		output->dword = 0xfefefefe;
 		result = -EIO;
+		goto cleanup;
 	}
+	result = ec_read(UNIWILL_EC_REG_CMDL, &staged.bytes.data_low);
+	if (result)
+		goto cleanup;
+	result = ec_read(UNIWILL_EC_REG_CMDH, &staged.bytes.data_high);
+	if (result)
+		goto cleanup;
 
-	ec_write(UNIWILL_EC_REG_FLAGS, 0x00);
-
+cleanup:
+	cleanup_result = ec_write(UNIWILL_EC_REG_FLAGS, 0x00);
+	if (cleanup_result) {
+		pr_err("Could not release direct EC read handshake: %d\n", cleanup_result);
+		if (!result)
+			result = cleanup_result;
+	}
+	/* Neither a partial response nor an unverified release is success. */
+	if (!result)
+		*output = staged;
+	if (bflag) {
+		if (!result)
+			pr_debug("addr: 0x%02x%02x value: %0#4x (high: %0#4x) result: %d\n", addr_high, addr_low, staged.bytes.data_low, staged.bytes.data_high, result);
+		else
+			pr_debug("addr: 0x%02x%02x result: %d\n", addr_high, addr_low, result);
+	}
+	if (polls > 1)
+		pr_debug("read wait count: %i\n", polls);
+unlock:
 	mutex_unlock(&uniwill_ec_lock);
-
-	if (bflag)
-		pr_debug("addr: 0x%02x%02x value: %0#4x result: %d\n", addr_high, addr_low, output->bytes.data_low, result);
-
-	if ((UW_EC_BUSY_WAIT_CYCLES - count) > 1)
-		pr_debug("read wait count: %i", (UW_EC_BUSY_WAIT_CYCLES - count));
-
-	// pr_debug("addr: 0x%02x%02x value: %0#4x result: %d\n", addr_high, addr_low, output->bytes.data_low, result);
-
 	return result;
 }
 
+/** Direct EC address write; same bounded handshake and error rules. */
 static int uw_ec_write_addr_direct(u8 addr_low, u8 addr_high, u8 data_low, u8 data_high, union uw_ec_write_return *output)
 {
-	int result = 0;
-	int count;
+	union uw_ec_write_return staged = { .dword = 0 };
+	int result, cleanup_result, count = 0, polls = 0;
 	u8 tmp, flags;
-	bool ready;
-	bool bflag = false;
+	bool ready = false, bflag = false;
 
+	if (IS_ERR_OR_NULL(output))
+		return -EINVAL;
 	mutex_lock(&uniwill_ec_lock);
-
-	ec_read(UNIWILL_EC_REG_FLAGS, &flags);
-	if ((flags & (1 << UNIWILL_EC_BIT_BFLG)) > 0) {
+	result = ec_read(UNIWILL_EC_REG_FLAGS, &flags);
+	if (result)
+		goto unlock;
+	if (flags & (1 << UNIWILL_EC_BIT_BFLG)) {
 		pr_debug("write: BFLG set\n");
 		bflag = true;
 	}
 
 	flags |= (1 << UNIWILL_EC_BIT_BFLG);
-	ec_write(UNIWILL_EC_REG_FLAGS, flags);
-
-	ec_write(UNIWILL_EC_REG_LDAT, addr_low);
-	ec_write(UNIWILL_EC_REG_HDAT, addr_high);
-	ec_write(UNIWILL_EC_REG_CMDL, data_low);
-	ec_write(UNIWILL_EC_REG_CMDH, data_high);
+	/* Even an unsuccessful write may have reached the EC. From this
+	 * attempt onward, always try the existing handshake release. */
+	result = ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_LDAT, addr_low);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_HDAT, addr_high);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_CMDL, data_low);
+	if (result)
+		goto cleanup;
+	result = ec_write(UNIWILL_EC_REG_CMDH, data_high);
+	if (result)
+		goto cleanup;
 
 	flags &= ~(1 << UNIWILL_EC_BIT_DRDY);
 	flags |= (1 << UNIWILL_EC_BIT_WFLG);
-	ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	result = ec_write(UNIWILL_EC_REG_FLAGS, flags);
+	if (result)
+		goto cleanup;
 
-	// Wait for ready flag
-	count = UW_EC_BUSY_WAIT_CYCLES;
-	ready = false;
-	while (!ready && count != 0) {
+	for (count = 0; count < UW_EC_BUSY_WAIT_CYCLES; ++count) {
 		msleep(UW_EC_BUSY_WAIT_DELAY);
-		ec_read(UNIWILL_EC_REG_FLAGS, &tmp);
-		ready = (tmp & (1 << UNIWILL_EC_BIT_DRDY)) != 0;
-		count -= 1;
+		++polls;
+		result = ec_read(UNIWILL_EC_REG_FLAGS, &tmp);
+		if (result)
+			goto cleanup;
+		ready = !!(tmp & (1 << UNIWILL_EC_BIT_DRDY));
+		if (ready)
+			break;
 	}
-
-	// Replicate wmi output depending on success
-	if (count != 0) {
-		output->bytes.addr_low = addr_low;
-		output->bytes.addr_high = addr_high;
-		output->bytes.data_low = data_low;
-		output->bytes.data_high = data_high;
-		result = 0;
-	} else {
+	/* The final allowed poll is still a successful response. */
+	if (!ready) {
 		pr_err("uw ec write timeout, addr: 0x%02x%02x, value: %0#4x\n", addr_high, addr_low, data_low);
-		output->dword = 0xfefefefe;
 		result = -EIO;
+		goto cleanup;
 	}
+	staged.bytes.addr_low = addr_low;
+	staged.bytes.addr_high = addr_high;
+	staged.bytes.data_low = data_low;
+	staged.bytes.data_high = data_high;
 
-	ec_write(UNIWILL_EC_REG_FLAGS, 0x00);
-
+cleanup:
+	cleanup_result = ec_write(UNIWILL_EC_REG_FLAGS, 0x00);
+	if (cleanup_result) {
+		pr_err("Could not release direct EC write handshake: %d\n", cleanup_result);
+		if (!result)
+			result = cleanup_result;
+	}
+	/* Neither a partial response nor an unverified release is success. */
+	if (!result)
+		*output = staged;
 	if (bflag)
 		pr_debug("addr: 0x%02x%02x value: %0#4x result: %d\n", addr_high, addr_low, data_low, result);
-
-	if ((UW_EC_BUSY_WAIT_CYCLES - count) > 1)
-		pr_debug("write wait count: %i", (UW_EC_BUSY_WAIT_CYCLES - count));
-
+	if (polls > 1)
+		pr_debug("write wait count: %i\n", polls);
+unlock:
 	mutex_unlock(&uniwill_ec_lock);
-
 	return result;
 }
 

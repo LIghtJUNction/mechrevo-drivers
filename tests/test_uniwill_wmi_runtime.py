@@ -1,11 +1,17 @@
 """Exercise real WMI functions with bounded, hardware-free userspace mocks."""
 from pathlib import Path
 import re
+import os
+import resource
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def disable_core_dumps():
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def function(source, name):
@@ -28,15 +34,16 @@ def function(source, name):
 class UniwillWmiRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
-        wmi = (ROOT / "src/uniwill_wmi.c").read_text()
+        wmi = Path(os.environ.get("UNIWILL_WMI_SOURCE", ROOT / "src/uniwill_wmi.c")).read_text()
         interfaces = (ROOT / "src/uniwill_interfaces.h").read_text()
         declarations = []
         for name, source in (
+             *((name, wmi) for name in ("UNIWILL_EC_REG_LDAT", "UNIWILL_EC_REG_HDAT", "UNIWILL_EC_REG_FLAGS", "UNIWILL_EC_REG_CMDL", "UNIWILL_EC_REG_CMDH", "UNIWILL_EC_BIT_RFLG", "UNIWILL_EC_BIT_WFLG", "UNIWILL_EC_BIT_BFLG", "UNIWILL_EC_BIT_DRDY", "UW_EC_BUSY_WAIT_CYCLES", "UW_EC_BUSY_WAIT_DELAY")),
             ("UW_WMI_EC_INPUT_SIZE", wmi), ("UW_WMI_EC_RESPONSE_WORDS", wmi),
             ("UNIWILL_WMI_MGMT_GUID_BC", interfaces),
             ("UNIWILL_WMI_FUNCTION_READ", interfaces),
@@ -53,6 +60,7 @@ class UniwillWmiRuntime(unittest.TestCase):
             declarations.append(match.group())
         functions = [function(wmi, name) for name in (
             "uw_wmi_ec_evaluate", "uw_ec_read_addr_wmi", "uw_ec_write_addr_wmi",
+            "uw_ec_read_addr_direct", "uw_ec_write_addr_direct",
             "uw_wmi_read_ec_ram", "uw_wmi_write_ec_ram",
         )]
         fixture = (ROOT / "tests/fixtures/uniwill_wmi_runtime.c").read_text()
@@ -70,7 +78,7 @@ class UniwillWmiRuntime(unittest.TestCase):
             raise AssertionError(result.stdout + result.stderr)
 
     def check_case(self, case):
-        result = subprocess.run([str(self.binary), case], text=True, capture_output=True)
+        result = subprocess.run([str(self.binary), case], text=True, capture_output=True, timeout=10, preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_allocation_failure_never_calls_wmi(self):
@@ -126,6 +134,24 @@ class UniwillWmiRuntime(unittest.TestCase):
 
     def test_ram_write_returns_wmi_and_direct_errors(self):
         self.check_case("ram_write_error")
+
+    def test_direct_success_preserves_exact_handshake_order_and_payload(self):
+        self.check_case("direct_success")
+
+    def test_direct_each_access_failure_and_landed_write_preserve_errno_and_output(self):
+        self.check_case("direct_each_error")
+
+    def test_direct_primary_errno_survives_independently_logged_cleanup_failure(self):
+        self.check_case("direct_cleanup_errors")
+
+    def test_direct_final_allowed_ready_poll_succeeds_and_timeout_is_bounded(self):
+        self.check_case("direct_last_poll_and_timeout")
+
+    def test_direct_each_poll_error_is_not_misreported_as_timeout(self):
+        self.check_case("direct_poll_errors")
+
+    def test_direct_caller_output_stays_unchanged_until_cleanup_success(self):
+        self.check_case("direct_caller_guard")
 
 
 if __name__ == "__main__":
