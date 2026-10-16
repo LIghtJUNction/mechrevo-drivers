@@ -133,6 +133,14 @@ XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合，不能假�
 仍未闭合；找到 `DefaultContractResolver` 构造路径不能排除全局默认设置被覆盖。
 因此可以确认请求对象和序列化链类型，仍不能直接宣称最终线上的 JSON 为某个固定字节串。
 
+私有 `mapping/aot-ac-contract-dispatch` 又按原包 runtime 的实际算法闭合了一个条件分派：
+在构造器默认解析器 receiver 上，`IContractResolver` 的 slot 0 指向 `16bf8f0`，
+再进入 `f03c80` 缓存；命中返回已有 contract，未命中调用绑定工厂 `110db80`。
+14 条语义负例（含不支持的 receiver）均拒绝，92 份旧冻结文件未变。
+这没有证明工厂实际产生的成员、属性命名和筛选结果，也不能推广到被全局设置替换后的
+解析器；自定义 converter 仍可能优先处理，最终 JSON 仍待闭合。
+
+
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，
 不能用它宣布这两项客户端支持判定已闭合。
