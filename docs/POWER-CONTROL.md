@@ -57,6 +57,17 @@ sudo mechrevo-power clear
 本机经过 CPU 型号、偏移位宽与能力位确认的只读探测显示 TjMAX 为 100°C。
 本轮不同只读检查分别读到 TCC offset 5°C 和 15°C，对应触发阈值 95°C 和 85°C。
 阈值会变化，修改者尚未确认，不能据此归因 thermald 或推断实体散热原因。
+本轮源码与安装实例复核进一步缩小了候选范围：当前 thermald 命令没有
+`--adaptive` 或 `--workaround-enabled`，本机相关 TCC sysfs 节点也不存在，
+因此已检查的两条显式 TCC 设置路径不满足当前执行条件；这不排除间接固件行为。
+TCC 的两个 ODM worker 虽有定时周期，`onWork` 为空，不能据周期推断它们不断抢写；
+电源状态、所选 profile 或配置刷新仍可能触发 `onStart` 重新应用。
+已核对的安装 ASAR 与部分构建 JS 一致，但守护进程内嵌的 V8 字节码尚未证明源码等价。
+
+运行中的 nvidia-powerd 持有可读写 MSR 文件描述符，静态 ELF 也存在通用 MSR 写入函数，
+但这些只证明能力。已识别的目标寄存器读取和遥测路径不是写入证据，
+尚未闭合它实际写入 `0x1a2` 的调用链，不能将它认定为阈值修改者。
+
 寄存器语义参考 [Intel Adaptive Thermal Monitor](https://edc.intel.com/content/www/us/en/design/ipla/software-development-platforms/client/platforms/alder-lake-desktop/12th-generation-intel-core-processors-datasheet-volume-1-of-2/011/adaptive-thermal-monitor/)
 及固定版本 [Linux v6.12 turbostat 解码](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L6766-L6777)，
 Alder Lake 的 6 位偏移见该版本 [adl_features](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L688-L700)。
