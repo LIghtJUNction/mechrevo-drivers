@@ -214,13 +214,30 @@ class PeakTrial:
             except (Exception, KeyboardInterrupt) as exc:
                 result["errors"].append(str(exc) or type(exc).__name__)
             finally:
-                self.system.close()
-                if len(result["zones"]) == len(power.ZONES):
-                    self.restore(result, save)
-                else:
-                    result["restored"] = True  # No hardware write has occurred.
+                # Sensor teardown must not bypass conditional PL2 recovery or
+                # hide a prior observation failure. Each stage remains best effort.
+                try:
+                    self.system.close()
+                except (Exception, KeyboardInterrupt) as exc:
+                    result["errors"].append("Sensor close: " + (str(exc) or type(exc).__name__))
+                try:
+                    if len(result["zones"]) == len(power.ZONES):
+                        self.restore(result, save)
+                    else:
+                        result["restored"] = True  # No hardware write has occurred.
+                except (Exception, KeyboardInterrupt) as exc:
+                    # A failed recovery cannot establish aggregate restoration,
+                    # even if it updated some zone records before raising.
+                    result["restored"] = False
+                    result["errors"].append("Recovery: " + (str(exc) or type(exc).__name__))
                 result["valid"] = result["complete"] and result["restored"] and not result["errors"]
-                save(result)
+                try:
+                    save(result)
+                except (Exception, KeyboardInterrupt) as exc:
+                    # Only the returned result/CLI can report this last failure;
+                    # do not claim that these errors were durably checkpointed.
+                    result["valid"] = False
+                    result["errors"].append("Final checkpoint: " + (str(exc) or type(exc).__name__))
         return result
 
     def read_recovery(self, path):

@@ -114,6 +114,105 @@ class PeakLimitTests(unittest.TestCase):
         self.assertTrue(any(v["zones"][first]["attempted"] for v in self.saved))
         self.assertTrue(self.system.closed)
 
+    def test_close_failure_still_restores_and_saves_failure(self):
+        with mock.patch.object(self.system, "close", side_effect=PEAK.thermal.ObservationError("close fixture")):
+            result = self.run_trial()
+        self.assertFalse(result["valid"])
+        self.assertTrue(result["restored"])
+        self.assertEqual(self.before, self.controls())
+        self.assertIn("Sensor close: close fixture", result["errors"])
+        self.assertEqual(self.saved[-1], result)
+
+    def test_close_interrupt_still_restores_and_saves_failure(self):
+        with mock.patch.object(self.system, "close", side_effect=KeyboardInterrupt("close signal fixture")):
+            result = self.run_trial()
+        self.assertFalse(result["valid"])
+        self.assertTrue(result["restored"])
+        self.assertEqual(self.before, self.controls())
+        self.assertIn("Sensor close: close signal fixture", result["errors"])
+        self.assertEqual(self.saved[-1], result)
+
+    def test_main_close_and_unexpected_restore_errors_all_survive_final_save(self):
+        self.system.callback = mock.Mock(side_effect=OSError("sample fixture"))
+        with mock.patch.object(self.system, "close", side_effect=OSError("close fixture")), \
+                mock.patch.object(self.trial, "restore", side_effect=OSError("restore fixture")):
+            result = self.run_trial()
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["restored"])
+        self.assertEqual(result["errors"], ["sample fixture", "Sensor close: close fixture",
+                                            "Recovery: restore fixture"])
+        self.assertEqual(self.saved[-1], result)
+        self.assertTrue(all(int(self.host.read(z + PEAK.LIMIT)) == 55_000_000
+                            for z in FIXTURE.POWER.ZONES))
+
+    def test_close_failure_does_not_hide_conditional_restore_write_failure(self):
+        second = FIXTURE.POWER.ZONES[1]
+        def write(path, value):
+            if path == second + PEAK.LIMIT and value == 140_000_000:
+                raise OSError("restore write fixture")
+            self.original_write(path, value)
+        self.host.env.write_control = write
+        with mock.patch.object(self.system, "close", side_effect=OSError("close fixture")):
+            result = self.run_trial()
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["restored"])
+        self.assertTrue(result["zones"][FIXTURE.POWER.ZONES[0]]["restored"])
+        self.assertFalse(result["zones"][second]["restored"])
+        self.assertIn("Sensor close: close fixture", result["errors"])
+        self.assertIn("restore write fixture", result["errors"])
+        self.assertEqual(self.saved[-1], result)
+
+    def test_all_four_stage_failures_keep_originals_and_report_in_memory(self):
+        self.system.callback = mock.Mock(side_effect=OSError("sample fixture"))
+        def save(value):
+            if "Recovery: restore fixture" in value["errors"]:
+                raise OSError("final save fixture")
+            self.save(value)
+        with mock.patch.object(self.system, "close", side_effect=OSError("close fixture")), \
+                mock.patch.object(self.trial, "restore", side_effect=OSError("restore fixture")):
+            result = self.trial.run(55, 2, save)
+        self.assertEqual(result["errors"], ["sample fixture", "Sensor close: close fixture",
+                                            "Recovery: restore fixture", "Final checkpoint: final save fixture"])
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["restored"])
+        for zone, record in self.saved[-1]["zones"].items():
+            self.assertTrue(record["attempted"])
+            self.assertEqual(record["original_uw"], 140_000_000)
+            self.assertEqual(int(self.host.read(zone + PEAK.LIMIT)), 55_000_000)
+        self.assertEqual(self.saved[-1]["errors"], [])
+
+    def test_unexpected_restore_error_cannot_leave_successful_aggregate(self):
+        def restore(result, save):
+            result["restored"] = True
+            raise OSError("restore after partial bookkeeping")
+        with mock.patch.object(self.trial, "restore", side_effect=restore):
+            result = self.run_trial()
+        self.assertFalse(result["restored"])
+        self.assertFalse(result["valid"])
+        self.assertEqual(self.saved[-1], result)
+
+    def test_final_save_failure_reports_cli_failure_after_hardware_restoration(self):
+        def save(value):
+            if value["valid"]:
+                raise OSError("final save fixture")
+            self.save(value)
+        output = mock.Mock(save=save)
+        import io
+        stdout = io.StringIO()
+        with mock.patch.object(PEAK, "PeakTrial", return_value=self.trial), \
+                mock.patch.object(PEAK.thermal, "CheckpointFile", return_value=output), \
+                mock.patch("sys.stdout", stdout):
+            code = PEAK.main(["--peak-watts", "55", "--seconds", "2", "--output", str(self.root / "final.json")])
+        self.assertEqual(code, 1)
+        result = json.loads(stdout.getvalue())
+        self.assertFalse(result["valid"])
+        self.assertTrue(result["restored"])
+        self.assertIn("Final checkpoint: final save fixture", result["errors"])
+        self.assertEqual(self.before, self.controls())
+        # The failed final save cannot manufacture durable success/error evidence.
+        self.assertFalse(self.saved[-1]["valid"])
+        self.assertNotIn("Final checkpoint: final save fixture", self.saved[-1]["errors"])
+
     def test_first_write_failure_restores_and_does_not_touch_second(self):
         def failure(path, value):
             raise OSError("injected write failure")
