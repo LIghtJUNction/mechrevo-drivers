@@ -683,6 +683,55 @@ int main(int argc, char **argv)
             assert(uw_set_fan(0, 100) == 0 && fans_initialized);
             assert_cached(100, 97);
         }
+    } else if (strcmp(test, "legacy_explicit_auto_failure_pm") == 0) {
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int pending = 0; pending < 2; ++pending)
+        for (int failure = 0; failure < 2; ++failure)
+        for (int landed = 0; landed < 2; ++landed)
+        for (unsigned int status = 0; status < sizeof(statuses)/sizeof(statuses[0]); ++status) {
+            if (pending) prepare_legacy_failed_resume(); else { prepare_manual(); clear_trace(); }
+            fault_status = statuses[status]; exact_fail_event = failure;
+            landed_failed_mode_write = landed;
+            assert((int)uw_set_fan_auto() == statuses[status]);
+            assert(!direct_fan_control_restart_delayed_work.pending);
+            u8 mode_after_auto = ec[0x0751];
+            clear_trace();
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            assert(uniwill_keyboard_resume(NULL) == 0);
+            for (int i = 0; i < event_count; ++i)
+                assert(events[i].address != 0x0751 && events[i].address != 0x1804 && events[i].address != 0x1809);
+            assert(ec[0x0751] == mode_after_auto && schedules == 0);
+            assert(legacy_fan_mode_override_blocked);
+            clear_trace(); restart_direct_fan_control_work_handler(NULL);
+            assert(event_count == 0 && schedules == 0);
+            assert((int)uw_set_fan(2, 120) == -EINVAL && legacy_fan_mode_override_blocked);
+            assert(uw_set_fan(1, 120) == 0);
+            assert_cached(83, 120);
+            assert(ec[0x1804] == 83 && ec[0x1809] == 120 && !legacy_fan_mode_override_blocked);
+            assert(direct_fan_control_restart_delayed_work.pending);
+            assert(uw_set_fan_auto() == 0 && !direct_fan_control_suspend);
+            assert(!direct_fan_control_started && !legacy_fan_mode_override_blocked);
+        }
+    } else if (strcmp(test, "legacy_explicit_auto_failure_late_pm") == 0) {
+        for (int pending = 0; pending < 2; ++pending)
+        for (int stage = 0; stage < 3; ++stage) {
+            if (pending) prepare_legacy_failed_resume(); else { prepare_manual(); clear_trace(); }
+            write_failures = 1; landed_failed_mode_write = true;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT);
+            clear_trace();
+            uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            clear_trace();
+            if (stage < 2) exact_fail_event = stage; else backlight_failures = 1;
+            assert(uniwill_keyboard_resume(NULL) == (stage < 2 ? -ETIMEDOUT : -EIO));
+            for (int i = 0; i < event_count; ++i)
+                assert(events[i].address != 0x0751 && events[i].address != 0x1804 && events[i].address != 0x1809);
+            assert(legacy_fan_mode_override_blocked && schedules == 0);
+            clear_trace();
+            assert(uw_set_fan_auto() == 0);
+            assert(!direct_fan_control_suspend && !direct_fan_control_started && !legacy_fan_mode_override_blocked);
+            assert(ec[0x0751] == 0x11 && !direct_fan_control_restart_delayed_work.pending);
+        }
     } else if (strcmp(test, "legacy_auto_errors") == 0) {
         for (int failure = 0; failure < 2; ++failure) {
             reset(false); direct_fan_control_started = true;

@@ -202,6 +202,12 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_auto_each_ec_failure_is_reported_and_does_not_claim_cache_reset(self):
         self.check_case("auto_failures")
 
+    def test_legacy_explicit_auto_failure_never_replays_old_manual_through_pm(self):
+        self.check_case("legacy_explicit_auto_failure_pm")
+
+    def test_legacy_explicit_auto_failure_late_pm_errors_keep_auto_retry_available(self):
+        self.check_case("legacy_explicit_auto_failure_late_pm")
+
     def test_legacy_auto_failure_stops_worker_but_keeps_speed_cache(self):
         self.check_case("legacy_auto_errors")
 

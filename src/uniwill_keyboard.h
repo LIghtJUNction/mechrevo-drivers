@@ -2631,6 +2631,12 @@ u32 uw_set_fan_auto(void)
 	int status = uw_fan_lock_active(true);
 	if (status)
 		return status;
+	/* An explicit AUTO may reach firmware even when transport fails. Do not
+	 * let PM replay old legacy targets until a new explicit manual request.
+	 * PM's temporary AUTO uses the locked helper and retains its rollback. */
+	if (!uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+	    (direct_fan_control_started || direct_fan_control_suspend || legacy_fan_mode_override_blocked))
+		legacy_fan_mode_override_blocked = true;
 	status = (int)uw_set_fan_auto_locked();
 	uw_fan_unlock();
 	return status;
