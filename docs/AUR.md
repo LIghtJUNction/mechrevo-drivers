@@ -1,5 +1,10 @@
 # Arch Linux / AUR 打包
 
+2026-10-16 最新本地磁盘安装为 `4.24.0.r106.gaaf6b36-1`，两套内核各 28 个签名模块核验通过。
+本轮尚未更新 AUR；当前运行模块及旧 UKI 保持，启动同步和硬件验收仍待完成。
+具体版本和证据见[本机记录](hardware/GM6PX0X.md)。下文发布记录按各节时间理解。
+
+
 - 包名：[`mechrevo-drivers-dkms-git`](https://aur.archlinux.org/packages/mechrevo-drivers-dkms-git)
 - 源码：本仓库的 `main`，不是 GitLab 开发分支，也不是第三方包下载后再打补丁。
 - 打包定义：`packaging/aur/mechrevo-drivers-dkms-git/PKGBUILD` 与同目录的 `dkms.conf`。

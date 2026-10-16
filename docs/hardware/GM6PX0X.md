@@ -4,7 +4,33 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
-## 2026-10-16 r14 安装与阈值变化失败现场（最新）
+## 2026-10-16 r106 磁盘安装（最新）
+
+`mechrevo-drivers-dkms-git 4.24.0.r106.gaaf6b36-1` 已安装，固定源码
+`aaf6b3622758552cc4902760741abdc6d0544e2c`；包 SHA-256：
+`c01256efdbc4e3ac7b79059e3c937fb2241c9f0347435e9c7f6a7b1f366788e4`。
+87 个安装载荷逐项核对字节、权限和 root 归属，`pacman -Qkk` 为 114 个文件、零改动。
+系统 DKMS 在 `7.2.7-arch1-1`、`7.2.9-arch1-1` 各安装 28 个签名模块，实际 make 为 `-j2`。
+56 个签名密钥标识逐项与经散列核验的 r87 恢复模块一致；不等于启动信任或硬件功能验收。
+完整源码回归 799 项、无跳过；实际风扇、PM 和散热效果仍待验收。
+
+单次受控 pacman 事务使用独立配置和最后优先的 hook 目录，局部屏蔽全局 udev change、
+UKI 重建和 PackageKit refresh，系统 pacman 配置及全局 hooks 未改。
+实际四个前置 hooks、三个后置 hooks 包含旧 DKMS 移除、新 DKMS 安装、depmod 和 hwdb 更新。
+安装后五份配置、六个运行 build ID、三个服务 PID（97821/397302/1003）、
+传感器/RGB inode、五个启动文件完整身份及 EFI mount 与安装前一致，PackageKit inactive/PID 0。
+当前核心 r37、WMI r60、传感器 r76；启动 UKI 未更新，不能把磁盘安装或一次重启当作新核心已激活。
+功耗工具仍为 r14，TCC 仍为上游 3.0.10-1；pkgrel 3 候选未安装，AUR 未更新。
+高温尖峰和动态 TCC offset 修改来源仍未解决，硬件验收保持 9/20。
+
+安装/核验回执位于 `.local-tests/fan-port-iteration/driver-install/evidence/`。
+恢复及证据归档位于统一 Backups 的 `driver-r106-preinstall-20261016/`、
+`driver-r106-preinstall-tools-20261016/`、`driver-r106-installed-20261016/`；旧 r87 签名模块另行保留。
+安装会话 `d62f49c2`、安装后验证 `ba10f2fa` 均退出 0，所选根目录跟踪 complete、零 gap/未决事件。
+安装使用轮询回退，不能证明全部瞬时历史；`/usr` 父目录时间戳不在选定跟踪范围。
+构包和完整测试的历史 partial 仍单独保留，后续归档不修复这些历史缺失。
+
+## 2026-10-16 r14 安装与阈值变化失败现场（前轮）
 
 `mechrevo-power-control 0.1.0-14` 已安装，源码固定
 `ff2add6f2ec24766a76b6cab88c43e85e31248b2`，配方固定
