@@ -2033,6 +2033,9 @@ static u8 direct_fan_control_current_value_fan1 = 0;
 static u8 direct_fan_control_current_value_fan0_suspend_save = 0;
 static u8 direct_fan_control_current_value_fan1_suspend_save = 0;
 static bool fans_initialized = false;
+/* A committed RAM table owns manual cooling even if a later target write
+ * fails. This must never enable the legacy periodic restart worker. */
+static bool universal_fan_manual_active;
 static bool direct_fan_control_started = false;
 static bool direct_fan_control_restart_needed = false;
 static bool direct_fan_control_suspend = false;
@@ -2047,6 +2050,7 @@ static DEFINE_MUTEX(uniwill_fan_state_lock);
 static bool uniwill_fan_work_paused;
 static bool uniwill_fan_removed;
 static void restart_direct_fan_control_work_handler(struct work_struct *work);
+static int uw_restore_fan_state_locked(void);
 static DECLARE_DELAYED_WORK(direct_fan_control_restart_delayed_work, restart_direct_fan_control_work_handler);
 
 static void uw_fan_quiesce_locked(void)
@@ -2270,6 +2274,9 @@ static int uw_init_fan_locked(void) {
 		if (status)
 			return status;
 		if (!((value_use_custom_fan_table_1 >> offset_use_custom_fan_table_1) & 1)) {
+			/* The commit may land even if transport verification fails. Keep
+			 * conservative ownership until disabling is itself verified. */
+			universal_fan_manual_active = true;
 			status = uniwill_write_ec_ram_with_retry(addr_use_custom_fan_table_1, value_use_custom_fan_table_1 + (1 << offset_use_custom_fan_table_1), 3);
 			if (status) {
 				/* A write may have reached firmware even when verification
@@ -2282,9 +2289,12 @@ static int uw_init_fan_locked(void) {
 						value_use_custom_fan_table_1 & ~(1 << offset_use_custom_fan_table_1), 3);
 				if (recovery_status)
 					pr_err("Could not disable fan table after failed commit: %d\n", recovery_status);
+				else
+					universal_fan_manual_active = false;
 				return status;
 			}
 		}
+		universal_fan_manual_active = true;
 	}
 
 	fans_initialized = true;
@@ -2470,6 +2480,15 @@ u32 uw_set_fan(u32 fan_index, u8 fan_speed)
 	}
 	if (direct_fan_control_restart_needed)
 		uw_fan_quiesce_locked();
+	/* Failed PM restoration retains both saved targets. Retry that complete
+	 * operation before accepting a new per-fan request. */
+	if (uniwill_device_features.uniwill_has_universal_ec_fan_control && direct_fan_control_suspend) {
+		status = uw_restore_fan_state_locked();
+		if (status) {
+			uw_fan_unlock();
+			return status;
+		}
+	}
 	status = (int)uw_set_fan_locked(fan_index, fan_speed);
 	uw_fan_unlock();
 	return status;
@@ -2522,6 +2541,7 @@ static u32 uw_set_fan_auto_locked(void)
 			return status;
 	}
 
+	universal_fan_manual_active = false;
 	direct_fan_control_started = false;
 	direct_fan_control_restart_needed = false;
 	direct_fan_control_suspend = false;
@@ -2552,6 +2572,7 @@ static int uw_fan_control_start(void)
 	uniwill_pm_ready = false;
 	uniwill_pm_suspended = false;
 	fans_initialized = false;
+	universal_fan_manual_active = false;
 	direct_fan_control_started = false;
 	direct_fan_control_restart_needed = false;
 	direct_fan_control_suspend = false;
@@ -2812,21 +2833,45 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 
 static int uw_restore_fan_state_locked(void)
 {
-	int result, status;
+	int result, status, recovery_status;
+	bool universal = uniwill_device_features.uniwill_has_universal_ec_fan_control;
 
 	if (!direct_fan_control_suspend)
 		return 0;
+
+	if (universal) {
+		u8 mode;
+		result = uniwill_read_ec_ram(0x0751, &mode);
+		if (result)
+			return result;
+		/* FULL can supersede a failed resume through either mode API. */
+		if (mode & 0x40) {
+			/* FULL overrides the target, but clearing FULL later must not
+			 * revive an unowned RAM table. AUTO preserves 0x0751. */
+			return (int)uw_set_fan_auto_locked();
+		}
+	}
 
 	/* The first request can queue a worker immediately. Restore both
 	 * targets first so it cannot write a zero left by automatic mode. */
 	direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan0_suspend_save;
 	direct_fan_control_current_value_fan1 = direct_fan_control_current_value_fan1_suspend_save;
 	result = (int)uw_set_fan_locked(0, direct_fan_control_current_value_fan0_suspend_save);
-	status = (int)uw_set_fan_locked(1, direct_fan_control_current_value_fan1_suspend_save);
+	/* A failed universal initialization must not be retried implicitly for
+	 * the second fan in the same callback. */
+	status = result && universal ? 0 : (int)uw_set_fan_locked(1, direct_fan_control_current_value_fan1_suspend_save);
 	if (status && !result)
 		result = status;
-	if (!result)
+	if (!result) {
 		direct_fan_control_suspend = false;
+	} else if (universal && result != -EBUSY) {
+		/* Do not leave a partially restored manual table active. Desired
+		 * targets survive AUTO so a later callback/request can retry. */
+		recovery_status = (int)uw_set_fan_auto_locked();
+		direct_fan_control_suspend = true;
+		if (recovery_status)
+			pr_err("Could not restore automatic fan control after failed PM restore: %d\n", recovery_status);
+	}
 
 	return result;
 }
@@ -2849,9 +2894,24 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 		uw_fan_unlock();
 		return 0;
 	}
-	if (direct_fan_control_started) {
-		direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
-		direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+	if (uw_feats->uniwill_has_universal_ec_fan_control &&
+	    (universal_fan_manual_active || direct_fan_control_suspend)) {
+		status = uniwill_read_ec_ram(0x0751, &data);
+		if (status)
+			goto failed;
+		/* An explicit FULL override supersedes pending manual restoration.
+		 * Observe the actual mode, including raw mode API changes. */
+		if (data & 0x40) {
+			status = (int)uw_set_fan_auto_locked();
+			if (status)
+				goto failed;
+		}
+	}
+	if (direct_fan_control_started || universal_fan_manual_active || direct_fan_control_suspend) {
+		if (!direct_fan_control_suspend) {
+			direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+			direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+		}
 		direct_fan_control_suspend = true;
 		status = (int)uw_set_fan_auto_locked();
 		/* An explicit auto request cancels restoration; suspend must keep it. */
@@ -2911,10 +2971,27 @@ static int uniwill_keyboard_resume(struct platform_device *dev)
 	}
 	/* Keep queued fan work out until this complete callback releases state. */
 	uniwill_pm_suspended = true;
+	/* Firmware may lose RAM tables while asleep, even when live registers
+	 * happen to survive on another model. Never trust a pre-sleep cache. */
+	if (uw_feats->uniwill_has_universal_ec_fan_control) {
+		/* Repeated resume callbacks must not invalidate a live manual table
+		 * without also restoring the other fan's target. */
+		if (universal_fan_manual_active && !direct_fan_control_suspend) {
+			direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+			direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+			direct_fan_control_suspend = true;
+		}
+		fans_initialized = false;
+	}
 	restore_fans = direct_fan_control_suspend;
 	if (direct_fan_control_restart_needed)
 		uw_fan_quiesce_locked();
 	result = uw_restore_fan_state_locked();
+	/* FULL may have successfully cancelled the previous manual intent.
+	 * A later unrelated resume error must not resurrect that old target. */
+	if (uw_feats->uniwill_has_universal_ec_fan_control &&
+	    !universal_fan_manual_active && !direct_fan_control_suspend)
+		restore_fans = false;
 
 	if (uw_feats->uniwill_custom_profile_mode_needed) {
 		// Re-set "customer mode light" on resume

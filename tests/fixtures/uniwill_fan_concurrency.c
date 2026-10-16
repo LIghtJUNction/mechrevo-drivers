@@ -241,6 +241,15 @@ static void prepare_manual(void)
     ec[0x0751] = 0x51;
     ec[0x1804] = 83; ec[0x1809] = 97;
 }
+static void prepare_universal(void)
+{
+    uniwill_device_features.uniwill_has_universal_ec_fan_control = true;
+    ec[0x0751] = 0x11;
+    assert(uw_set_fan(0, 83) == 0 && uw_set_fan(1, 97) == 0);
+    assert(universal_fan_manual_active && !direct_fan_control_started);
+    assert(!direct_fan_control_restart_delayed_work.pending);
+    event_count = table_writes = 0;
+}
 static void assert_auto(void)
 {
     assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
@@ -320,6 +329,28 @@ int main(int argc, char **argv)
         assert(set_full_fan_mode(true) == -ENODEV);
         assert(uw_set_mode(0x55) == -ENODEV && uw_update_mode(0xb0, 0xa0) == -ENODEV);
         assert(event_count == before);
+    } else if (strcmp(test, "universal_suspend_manual") == 0) {
+        prepare_universal(); pause_address = 0x07c6; pause_kind = 'r';
+        interleave(SUSPEND, MANUAL);
+        assert(uniwill_pm_suspended && direct_fan_control_suspend && !universal_fan_manual_active);
+        assert(direct_fan_control_current_value_fan0_suspend_save == 83);
+        assert(direct_fan_control_current_value_fan1_suspend_save == 97);
+        assert(!(ec[0x07c6] & 4) && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "universal_resume_auto") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        memset(ec + 0x0f00, 0, 0x60);
+        pause_address = 0x0f20; pause_kind = 'w';
+        interleave(RESUME, AUTO);
+        assert_auto(); assert(!universal_fan_manual_active && !(ec[0x07c6] & 4));
+    } else if (strcmp(test, "universal_resume_remove") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        memset(ec + 0x0f00, 0, 0x60);
+        pause_address = 0x0f20; pause_kind = 'w';
+        interleave(RESUME, REMOVE);
+        assert(uniwill_fan_removed && !direct_fan_control_restart_delayed_work.pending);
+        int before = event_count;
+        assert((int)uw_set_fan(0, 110) == -ENODEV && (int)uw_set_fan_auto() == -ENODEV);
+        assert(uniwill_keyboard_resume(NULL) == -ENODEV && event_count == before);
     } else if (strcmp(test, "mode_update") == 0) {
         ec[0x0751] = 0x15; pause_address = 0x0751; pause_kind = 'r';
         interleave(FULL, UPDATE);

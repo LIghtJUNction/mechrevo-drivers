@@ -31,6 +31,7 @@ static struct platform_device platform;
 static struct uniwill_device_features_t features;
 static bool uw_lightbar_loaded, uw_charging_prio_loaded, uw_charging_profile_loaded;
 static bool uniwill_fan_removed, uniwill_fan_work_paused, fans_initialized;
+static bool universal_fan_manual_active;
 static bool direct_fan_control_started, direct_fan_control_restart_needed, direct_fan_control_suspend;
 static u8 direct_fan_control_current_value_fan0, direct_fan_control_current_value_fan1;
 static u8 direct_fan_control_current_value_fan0_suspend_save, direct_fan_control_current_value_fan1_suspend_save;

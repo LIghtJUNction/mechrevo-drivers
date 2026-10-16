@@ -41,6 +41,7 @@ static void mutex_unlock(struct mutex *m) { assert(m->held); m->held = false; }
 #define lockdep_assert_held(m) assert((m)->held)
 static bool uniwill_fan_work_paused, uniwill_fan_removed, fans_initialized;
 static bool uniwill_pm_ready, uniwill_pm_suspended;
+static bool universal_fan_manual_active;
 static bool direct_fan_control_started, direct_fan_control_restart_needed, direct_fan_control_suspend;
 static u8 direct_fan_control_current_value_fan0, direct_fan_control_current_value_fan1;
 static u8 direct_fan_control_current_value_fan0_suspend_save, direct_fan_control_current_value_fan1_suspend_save;

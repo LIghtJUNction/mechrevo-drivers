@@ -18,7 +18,8 @@ static struct uniwill_device_features_t *uniwill_get_device_features(void) { ret
 static u8 direct_fan_control_current_value_fan0;
 static u8 direct_fan_control_current_value_fan1;
 static bool fans_initialized, direct_fan_control_started, direct_fan_control_restart_needed;
-static bool direct_fan_control_suspend;
+static bool direct_fan_control_suspend, universal_fan_manual_active;
+static int uw_restore_fan_state_locked(void);
 static u8 direct_fan_control_current_value_fan0_suspend_save;
 static u8 direct_fan_control_current_value_fan1_suspend_save;
 struct mutex { pthread_mutex_t native; };
@@ -33,7 +34,12 @@ static void mutex_unlock(struct mutex *lock) { assert(pthread_mutex_unlock(&lock
 struct platform_device { int unused; };
 typedef int pm_message_t;
 static int backlight_calls, backlight_enabled, leds_calls, priority_calls, profile_calls;
-static int uniwill_write_kbd_bl_enable(u8 enabled) { ++backlight_calls; backlight_enabled = enabled; return 0; }
+static int backlight_failures;
+static int uniwill_write_kbd_bl_enable(u8 enabled) {
+    ++backlight_calls;
+    if (backlight_failures) { --backlight_failures; return -EIO; }
+    backlight_enabled = enabled; return 0;
+}
 static void uniwill_leds_restore_state_extern(void) { ++leds_calls; }
 static void uw_charging_priority_write_state(void) { ++priority_calls; }
 static void uw_charging_profile_write_state(void) { ++profile_calls; }
@@ -154,6 +160,7 @@ static void reset(bool universal)
     read_failures = write_failures = mismatch_reads = last_error = 0;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
     uniwill_device_features.uniwill_custom_profile_mode_needed = false;
+    universal_fan_manual_active = false;
     fans_initialized = direct_fan_control_started = false;
     direct_fan_control_restart_needed = false;
     direct_fan_control_suspend = false;
@@ -163,6 +170,7 @@ static void reset(bool universal)
     uniwill_pm_suspended = false;
     direct_fan_control_current_value_fan0_suspend_save = 0;
     direct_fan_control_current_value_fan1_suspend_save = 0;
+    backlight_failures = 0;
     backlight_calls = leds_calls = priority_calls = profile_calls = 0;
     backlight_enabled = 1;
     direct_fan_control_restart_delayed_work.pending = false;
@@ -215,6 +223,34 @@ static void assert_saved(u8 fan0, u8 fan1)
 {
     assert(direct_fan_control_current_value_fan0_suspend_save == fan0);
     assert(direct_fan_control_current_value_fan1_suspend_save == fan1);
+}
+static void clear_trace(void)
+{
+    event_count = reads = writes = sleeps = schedules = errors = last_error = 0;
+    fail_after = exact_fail_event = -1;
+}
+static void prepare_universal(void)
+{
+    reset(true); ec[0x0751] = 0x11;
+    assert(uw_set_fan(0, 83) == 0 && uw_set_fan(1, 97) == 0);
+    assert(universal_fan_manual_active && fans_initialized);
+    assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending && schedules == 0);
+    clear_trace();
+}
+static void lose_universal_firmware_state(void)
+{
+    memset(ec + 0x0f00, 0, 0x60);
+    ec[0x07c5] &= 0x7f; ec[0x07c6] &= 0xfb;
+    ec[0x1804] = ec[0x1809] = 0;
+}
+static void assert_universal_targets(u8 cpu, u8 gpu)
+{
+    assert(ec[0x0f20] == cpu && ec[0x1804] == cpu);
+    assert(ec[0x0f50] == gpu && ec[0x1809] == gpu);
+    assert((ec[0x07c5] & 0x80) && (ec[0x07c6] & 4));
+    assert(universal_fan_manual_active && fans_initialized && !direct_fan_control_suspend);
+    assert(!direct_fan_control_started && !direct_fan_control_restart_needed);
+    assert(schedules == 0 && !direct_fan_control_restart_delayed_work.pending);
 }
 static void prepare_manual(void)
 {
@@ -752,6 +788,222 @@ int main(int argc, char **argv)
         assert(uniwill_keyboard_suspend(NULL, 0) == 0 && uniwill_keyboard_resume(NULL) == 0);
         assert(event_count == count && schedules == queued && ec[0x0751] == 0x11);
         assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "universal_pm_roundtrip") == 0) {
+        prepare_universal();
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        assert(direct_fan_control_suspend && !universal_fan_manual_active && !fans_initialized);
+        assert_saved(83, 97); assert_cached(0, 0);
+        assert(!(ec[0x07c6] & 4) && !(ec[0x07c5] & 0x80));
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0);
+        assert_universal_targets(83, 97);
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0); /* repeat cannot overwrite saved */
+        assert_saved(83, 97);
+        assert(uniwill_keyboard_resume(NULL) == 0);
+        assert_universal_targets(83, 97);
+        clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0);
+        assert_universal_targets(83, 97);
+        assert(uw_set_fan(0, 110) == 0); assert_universal_targets(110, 97);
+    } else if (strcmp(test, "universal_pm_init_partial") == 0) {
+        reset(true); ec[0x0751] = 0x11;
+        direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan1 = 0;
+        assert(uw_init_fan() == 0 && universal_fan_manual_active);
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0);
+        assert_universal_targets(1, 1);
+        for (int failure = 1; failure <= 2; ++failure) {
+            prepare_universal();
+            fail_after = failure; /* target-table write or direct-target write */
+            assert((int)uw_set_fan(0, 110) == -ETIMEDOUT);
+            assert(universal_fan_manual_active); assert_cached(83, 97);
+            clear_trace(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            assert_saved(83, 97); lose_universal_firmware_state(); clear_trace();
+            assert(uniwill_keyboard_resume(NULL) == 0);
+            assert_universal_targets(83, 97);
+        }
+    } else if (strcmp(test, "universal_pm_uncertain_commit") == 0) {
+        reset(true); ec[0x0751] = 0x11;
+        direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan1 = 0;
+        failed_commit_readbacks = recovery_write_failures = 3;
+        assert(uw_init_fan() == -ETIMEDOUT && !fans_initialized);
+        assert(universal_fan_manual_active && (ec[0x07c6] & 4));
+        clear_trace(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        assert(!(ec[0x07c6] & 4) && !universal_fan_manual_active);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0); assert_universal_targets(1, 1);
+    } else if (strcmp(test, "universal_pm_restore_failures") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0);
+        int count = event_count;
+        for (int failure = 0; failure < count; ++failure) {
+            prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            lose_universal_firmware_state(); clear_trace(); fail_after = failure;
+            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+            assert(direct_fan_control_suspend && !uniwill_pm_suspended);
+            assert_saved(83, 97);
+            assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending && schedules == 0);
+            clear_trace(); assert(uw_set_fan(0, 110) == 0);
+            assert_universal_targets(110, 97);
+        }
+    } else if (strcmp(test, "universal_pm_partial_auto_retry") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0);
+        int final_gpu_write = -1;
+        for (int i = 0; i < event_count; ++i)
+            if (events[i].kind == 'w' && events[i].address == 0x1809) final_gpu_write = i;
+        assert(final_gpu_write >= 0);
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace(); exact_fail_event = final_gpu_write;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+        assert(direct_fan_control_suspend && !universal_fan_manual_active && !fans_initialized);
+        assert(!(ec[0x07c6] & 4) && errors == 0); assert_saved(83, 97);
+        clear_trace();
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0); /* pending survives AUTO cache0 */
+        assert_saved(83, 97);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0); assert_universal_targets(83, 97);
+        clear_trace(); assert(uw_set_fan_auto() == 0);
+        assert(!universal_fan_manual_active && !direct_fan_control_suspend && !fans_initialized);
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace();
+        assert(uniwill_keyboard_resume(NULL) == 0 && !universal_fan_manual_active);
+        assert(writes == 0 && schedules == 0);
+    } else if (strcmp(test, "universal_pm_suspend_failures") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        int count = event_count;
+        for (int failure = 0; failure < count; ++failure) {
+            prepare_universal(); fail_after = failure;
+            assert(uniwill_keyboard_suspend(NULL, 0) == -ETIMEDOUT && !uniwill_pm_suspended);
+            if (failure) { assert(direct_fan_control_suspend); assert_saved(83, 97); }
+            else { assert(universal_fan_manual_active); assert_cached(83, 97); }
+            assert(schedules == 0 && !direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+            clear_trace(); assert(uw_set_fan(0, 110) == 0);
+            assert_universal_targets(110, 97);
+        }
+        for (int stage = 0; stage < 3; ++stage) {
+            prepare_universal();
+            if (stage < 2) {
+                uniwill_device_features.uniwill_custom_profile_mode_needed = true; ec[0x0727] = 0x40;
+                assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+                int profile_event = -1;
+                for (int i = 0; i < event_count; ++i)
+                    if (events[i].address == 0x0727 && events[i].kind == (stage ? 'w' : 'r')) profile_event = i;
+                assert(profile_event >= 0);
+                prepare_universal(); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+                ec[0x0727] = 0x40; exact_fail_event = profile_event;
+                assert(uniwill_keyboard_suspend(NULL, 0) == -ETIMEDOUT);
+            } else {
+                backlight_failures = 1;
+                assert(uniwill_keyboard_suspend(NULL, 0) == -EIO);
+            }
+            assert(!uniwill_pm_suspended); assert_universal_targets(83, 97);
+            assert_saved(83, 97); assert(errors == 0);
+        }
+    } else if (strcmp(test, "universal_pm_late_resume_failure") == 0) {
+        for (int stage = 0; stage < 3; ++stage) {
+            prepare_universal();
+            uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            lose_universal_firmware_state(); clear_trace();
+            assert(uniwill_keyboard_resume(NULL) == 0);
+            int profile_event = -1;
+            for (int i = 0; i < event_count; ++i)
+                if (events[i].address == 0x0727 && events[i].kind == (stage ? 'w' : 'r')) profile_event = i;
+            assert(profile_event >= 0);
+            prepare_universal(); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            lose_universal_firmware_state(); clear_trace();
+            if (stage < 2) exact_fail_event = profile_event;
+            else backlight_failures = 1;
+            assert(uniwill_keyboard_resume(NULL) == (stage < 2 ? -ETIMEDOUT : -EIO));
+            assert(direct_fan_control_suspend && !uniwill_pm_suspended); assert_saved(83, 97);
+            clear_trace(); assert(uw_set_fan(0, 110) == 0);
+            assert_universal_targets(110, 97);
+        }
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace(); fail_after = 0;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
+        clear_trace(); fail_after = 0;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT && direct_fan_control_suspend);
+        assert_saved(83, 97);
+        clear_trace(); assert(uw_set_fan_auto() == 0);
+        assert(!direct_fan_control_suspend && !universal_fan_manual_active);
+        clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0 && writes == 0);
+    } else if (strcmp(test, "universal_pm_full_override") == 0) {
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        lose_universal_firmware_state(); clear_trace(); fail_after = 0;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
+        clear_trace(); assert(uw_set_mode(0x51) == 0);
+        clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0);
+        assert(!direct_fan_control_suspend && !universal_fan_manual_active && !(ec[0x07c6] & 4) && schedules == 0);
+        for (int raw = 0; raw < 2; ++raw) {
+            prepare_universal();
+            if (raw) assert(uw_set_mode(0x51) == 0);
+            else assert(set_full_fan_mode(true) == 0);
+            clear_trace(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            assert(!direct_fan_control_suspend && !universal_fan_manual_active);
+            assert(!(ec[0x07c6] & 4) && !(ec[0x07c5] & 0x80));
+            assert(ec[0x0751] == 0x51);
+            clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0);
+            assert(writes == 0 && ec[0x0751] == 0x51 && schedules == 0);
+            assert((int)uw_set_fan(0, 110) == -EBUSY);
+            assert(uw_set_mode(0x11) == 0); /* raw FULL clear cannot revive old table */
+            assert(!(ec[0x07c6] & 4));
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0 && !direct_fan_control_suspend);
+            clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0 && writes == 0);
+            clear_trace(); assert(uw_set_fan(0, 110) == 0 && universal_fan_manual_active);
+            assert(ec[0x0f20] == 110 && ec[0x1804] == 110 && schedules == 0);
+        }
+    } else if (strcmp(test, "universal_pm_full_failures") == 0) {
+        prepare_universal(); assert(set_full_fan_mode(true) == 0);
+        clear_trace(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        int count = event_count;
+        for (int failure = 0; failure < count; ++failure) {
+            prepare_universal(); assert(set_full_fan_mode(true) == 0);
+            clear_trace(); fail_after = failure;
+            assert(uniwill_keyboard_suspend(NULL, 0) == -ETIMEDOUT);
+            assert(universal_fan_manual_active && !uniwill_pm_suspended && ec[0x0751] == 0x51);
+            clear_trace(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            assert(!universal_fan_manual_active && !(ec[0x07c6] & 4) && ec[0x0751] == 0x51);
+        }
+        /* FULL cancellation during resume must not be undone by a later
+         * backlight failure using the callback's earlier pending snapshot. */
+        prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+        clear_trace(); fail_after = 0;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
+        clear_trace(); assert(uw_set_mode(0x51) == 0);
+        backlight_failures = 1;
+        assert(uniwill_keyboard_resume(NULL) == -EIO);
+        assert(!direct_fan_control_suspend && !universal_fan_manual_active && !(ec[0x07c6] & 4));
+        assert(ec[0x0751] == 0x51 && schedules == 0);
+        clear_trace(); assert(uw_set_mode(0x11) == 0);
+        assert(uniwill_keyboard_resume(NULL) == 0 && !(ec[0x07c6] & 4));
+        assert(!universal_fan_manual_active && !direct_fan_control_suspend);
+        for (int stage = 0; stage < 2; ++stage) {
+            prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            clear_trace(); fail_after = 0;
+            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+            clear_trace(); assert(uw_set_mode(0x51) == 0);
+            uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0);
+            int profile_event = -1;
+            for (int i = 0; i < event_count; ++i)
+                if (events[i].address == 0x0727 && events[i].kind == (stage ? 'w' : 'r')) profile_event = i;
+            assert(profile_event >= 0);
+            prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            clear_trace(); fail_after = 0;
+            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+            clear_trace(); assert(uw_set_mode(0x51) == 0);
+            uniwill_device_features.uniwill_custom_profile_mode_needed = true;
+            clear_trace(); exact_fail_event = profile_event;
+            assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT);
+            assert(!direct_fan_control_suspend && !universal_fan_manual_active);
+            assert(!(ec[0x07c6] & 4) && ec[0x0751] == 0x51 && schedules == 0);
+        }
     } else if (strcmp(test, "mode_helpers_success") == 0) {
         const u8 profiles[] = {0xa0, 0x00, 0x10};
         for (int value = 0; value <= 255; ++value) {

@@ -88,6 +88,15 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
                                 timeout=10, preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_universal_suspend_serializes_and_blocks_new_manual_request(self):
+        self.check_case("universal_suspend_manual")
+
+    def test_universal_resume_serializes_with_explicit_auto(self):
+        self.check_case("universal_resume_auto")
+
+    def test_universal_resume_drains_before_remove_and_rejects_later_calls(self):
+        self.check_case("universal_resume_remove")
+
     def test_manual_after_auto_does_not_get_lost(self):
         self.check_case("auto_manual")
 

@@ -72,6 +72,33 @@ class UniwillFanRuntime(unittest.TestCase):
                                 preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_universal_pm_rebuilds_tables_and_both_targets_without_legacy_worker(self):
+        self.check_case("universal_pm_roundtrip")
+
+    def test_universal_init_only_and_failed_target_writes_still_own_pm(self):
+        self.check_case("universal_pm_init_partial")
+
+    def test_universal_every_resume_transport_failure_preserves_retry_and_other_target(self):
+        self.check_case("universal_pm_restore_failures")
+
+    def test_universal_partial_restore_returns_auto_preserves_pending_and_explicit_auto_cancels(self):
+        self.check_case("universal_pm_partial_auto_retry")
+
+    def test_universal_full_override_supersedes_manual_pm_for_helper_and_raw_mode(self):
+        self.check_case("universal_pm_full_override")
+
+    def test_universal_unverified_commit_remains_owned_for_pm_disable(self):
+        self.check_case("universal_pm_uncertain_commit")
+
+    def test_universal_failed_suspend_restores_or_retains_both_targets_and_original_errno(self):
+        self.check_case("universal_pm_suspend_failures")
+
+    def test_universal_late_resume_errors_and_failed_auto_preserve_explicit_recovery(self):
+        self.check_case("universal_pm_late_resume_failure")
+
+    def test_universal_full_cleanup_errors_retain_ownership_and_late_error_cannot_revive_intent(self):
+        self.check_case("universal_pm_full_failures")
+
     def test_retry_requires_positive_attempt_count(self):
         self.check_case("retry_invalid")
 
