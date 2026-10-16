@@ -96,6 +96,12 @@ class FakeHost:
                 "constraint_2_power_limit_uw": "0",
             }.items():
                 self.write(f"{zone}/{name}", value + "\n")
+        self.write("/sys/devices/virtual/thermal/thermal_zone0/type", "x86_pkg_temp\n")
+        self.write("/sys/devices/virtual/thermal/thermal_zone0/temp", "65000\n")
+        sensor_class = self.path("/sys/class/thermal/thermal_zone0")
+        sensor_class.parent.mkdir(parents=True, exist_ok=True)
+        if not os.path.lexists(sensor_class):
+            sensor_class.symlink_to(self.path("/sys/devices/virtual/thermal/thermal_zone0"))
         self.env = POWER.Environment(root=self.root, runner=self.run,
                                      uid=0, owner_uid=os.geteuid())
         self.controller = POWER.PowerController(self.env)
@@ -164,6 +170,167 @@ class FakeHost:
                     signal.signal(signal.SIGALRM, previous)
             return subprocess.CompletedProcess(argv, 0, "", "")
         raise AssertionError(f"Unmocked service command: {argv!r}")
+
+
+class PackageTemperatureDiagnostics(unittest.TestCase):
+    def setUp(self):
+        self.host = FakeHost(self)
+        self.env = self.host.env
+        self.sensor = self.host.path("/sys/devices/virtual/thermal/thermal_zone0")
+        target = mock.patch.object(self.env, "read_temperature_target", return_value={
+            "platform_info_raw": 1 << 30, "temperature_target_raw": (100 << 16) | (5 << 24),
+            "tjmax_celsius": 100, "tcc_offset_celsius": 5, "tcc_activation_celsius": 95})
+        target.start()
+        self.addCleanup(target.stop)
+
+    def test_actual_package_sample_has_identity_and_monotonic_window(self):
+        with mock.patch.object(POWER.time, "monotonic_ns", side_effect=[123, 456]):
+            result = self.host.controller.status()
+        temp = result["package_temperature"]
+        self.assertTrue(temp["available"])
+        self.assertEqual(temp["millicelsius"], 65000)
+        self.assertEqual(temp["read_window_ns"], [123, 456])
+        self.assertEqual(temp["clock"], "CLOCK_MONOTONIC")
+        self.assertEqual(temp["sensor_identity"]["device_path"], "/sys/devices/virtual/thermal/thermal_zone0")
+        self.assertEqual(temp["sensor_identity"]["temp_file"]["inode"], (self.sensor / "temp").stat().st_ino)
+        self.assertEqual(result["temperature_target"]["tcc_activation_celsius"], 95)
+        self.assertFalse(result["managed"])
+        self.assertIn("not a temperature guarantee or hardware qualification", temp["meaning"])
+
+    def test_diagnostic_range_includes_zero_and_125000(self):
+        for value in (0, 125000):
+            (self.sensor / "temp").write_text(str(value))
+            self.assertEqual(self.env.read_package_temperature()["millicelsius"], value)
+
+    def test_invalid_missing_or_unbounded_value_is_unavailable(self):
+        for value in ("", "65.0", "nan", "-1", "125001", "+65000", "0" * 65):
+            with self.subTest(value=value):
+                (self.sensor / "temp").write_text(value)
+                result = self.host.controller.status()
+                self.assertFalse(result["package_temperature"]["available"])
+                self.assertIsNone(result["package_temperature"]["millicelsius"])
+                self.assertEqual(len(result["diagnostic_errors"]), 1)
+        (self.sensor / "temp").unlink()
+        self.assertFalse(self.host.controller.status()["package_temperature"]["available"])
+
+    def test_missing_multiple_or_wrong_sensor_type_rejected(self):
+        link = self.host.path("/sys/class/thermal/thermal_zone0")
+        (self.sensor / "type").write_text("other")
+        with self.assertRaisesRegex(POWER.PowerError, "Exactly one"):
+            self.env.read_package_temperature()
+        (self.sensor / "type").write_text("x86_pkg_temp")
+        self.host.write("/sys/devices/virtual/thermal/thermal_zone1/type", "x86_pkg_temp")
+        self.host.path("/sys/class/thermal/thermal_zone1").symlink_to(self.host.path("/sys/devices/virtual/thermal/thermal_zone1"))
+        with self.assertRaisesRegex(POWER.PowerError, "Exactly one"):
+            self.env.read_package_temperature()
+        self.host.path("/sys/class/thermal/thermal_zone1").unlink()
+        link.unlink()
+        with self.assertRaisesRegex(POWER.PowerError, "Exactly one"):
+            self.env.read_package_temperature()
+
+    def test_sensor_outside_devices_and_symlink_controls_rejected(self):
+        link = self.host.path("/sys/class/thermal/thermal_zone0")
+        link.unlink()
+        self.host.write("/outside/type", "x86_pkg_temp")
+        link.symlink_to(self.host.path("/outside"))
+        with self.assertRaisesRegex(POWER.PowerError, "/sys/devices"):
+            self.env.read_package_temperature()
+        link.unlink()
+        link.symlink_to(self.sensor)
+        for name in ("temp", "type"):
+            control = self.sensor / name
+            value = control.read_text()
+            control.unlink()
+            foreign = self.host.write("/foreign-" + name, value)
+            control.symlink_to(foreign)
+            with self.assertRaises(POWER.PowerError):
+                self.env.read_package_temperature()
+            control.unlink()
+            control.write_text(value)
+
+    def test_clock_failure_is_diagnostic_and_never_stale(self):
+        self.assertEqual(self.host.controller.status()["package_temperature"]["millicelsius"], 65000)
+        for clocks in ([20, 10], [True, 20]):
+            with mock.patch.object(POWER.time, "monotonic_ns", side_effect=clocks):
+                result = self.host.controller.status()
+            self.assertFalse(result["package_temperature"]["available"])
+            self.assertIsNone(result["package_temperature"]["millicelsius"])
+            self.assertIsNone(result["package_temperature"]["sensor_identity"])
+            self.assertEqual(result["errors"], [])
+
+    def test_replaced_temp_or_class_link_during_read_rejected(self):
+        original = POWER.os.read
+        for kind in ("temp", "class"):
+            replaced = []
+            def read(fd, size):
+                value = original(fd, size)
+                if value == b"65000\n" and not replaced:
+                    replaced.append(True)
+                    if kind == "temp":
+                        (self.sensor / "temp").unlink()
+                        (self.sensor / "temp").write_text("65000\n")
+                    else:
+                        link = self.host.path("/sys/class/thermal/thermal_zone0")
+                        link.unlink()
+                        link.symlink_to(self.sensor)
+                return value
+            with mock.patch.object(POWER.os, "read", side_effect=read), self.assertRaises(POWER.PowerError):
+                self.env.read_package_temperature()
+            self.assertTrue(replaced)
+
+    def test_replaced_physical_sensor_directory_rejected(self):
+        original = POWER.os.read
+        changed = []
+        def read(fd, size):
+            value = original(fd, size)
+            if value == b"65000\n" and not changed:
+                changed.append(True)
+                self.sensor.rename(self.sensor.with_name("old_sensor"))
+                self.host.write("/sys/devices/virtual/thermal/thermal_zone0/type", "x86_pkg_temp\n")
+                self.host.write("/sys/devices/virtual/thermal/thermal_zone0/temp", "65000\n")
+            return value
+        with mock.patch.object(POWER.os, "read", side_effect=read), self.assertRaises(POWER.PowerError):
+            self.env.read_package_temperature()
+        self.assertTrue(changed)
+
+    def test_package_diagnostic_failure_preserves_holding_and_is_readonly(self):
+        self.host.controller.set_limit(55)
+        before = self.host.controller.status()
+        files = {p: p.read_bytes() for p in self.host.root.rglob("*") if p.is_file()}
+        commands = len(self.host.commands)
+        (self.sensor / "temp").write_text("invalid")
+        files[self.sensor / "temp"] = b"invalid"
+        with mock.patch.object(self.env, "write_control", side_effect=AssertionError("status wrote a control")):
+            after = self.host.controller.status()
+        self.assertTrue(before["holding_now"])
+        self.assertTrue(after["holding_now"])
+        self.assertEqual(after["errors"], before["errors"])
+        self.assertFalse(after["package_temperature"]["available"])
+        self.assertTrue(after["diagnostic_errors"])
+        self.assertEqual({p: p.read_bytes() for p in files}, files)
+        self.assertTrue(all(command[:2] not in (["systemctl", "restart"], ["systemctl", "daemon-reload"])
+                            for command in self.host.commands[commands:]))
+
+    def test_sensor_adapter_opens_readonly_and_closes_on_io_failure(self):
+        original_open, original_close, original_read = POWER.os.open, POWER.os.close, POWER.os.read
+        opened, closed, flags = [], [], []
+        def open_file(*args, **kwargs):
+            fd = original_open(*args, **kwargs)
+            opened.append(fd)
+            flags.append(args[1])
+            return fd
+        def close_file(fd):
+            closed.append(fd)
+            return original_close(fd)
+        def read_file(fd, size):
+            value = original_read(fd, size)
+            if value == b"65000\n":
+                raise OSError("injected sensor read failure")
+            return value
+        with mock.patch.object(POWER.os, "open", side_effect=open_file), mock.patch.object(POWER.os, "close", side_effect=close_file), mock.patch.object(POWER.os, "read", side_effect=read_file), self.assertRaises(POWER.PowerError):
+            self.env.read_package_temperature()
+        self.assertEqual(len(opened), len(closed))
+        self.assertTrue(all(flag & os.O_ACCMODE == os.O_RDONLY and flag & os.O_NOFOLLOW for flag in flags))
 
 
 class PowerTransactions(unittest.TestCase):

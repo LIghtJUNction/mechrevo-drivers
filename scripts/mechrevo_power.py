@@ -132,6 +132,116 @@ class Environment:
         except OSError as exc:
             raise PowerError(f"Cannot read {logical}: {exc}") from exc
 
+    def read_package_temperature(self):
+        """One native package sensor sample; diagnostic only, never a cooling guarantee."""
+        start = time.monotonic_ns()
+        devices = self.path("/sys/devices")
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+
+        def identity(info):
+            return {"device": info.st_dev, "inode": info.st_ino,
+                    "mode": info.st_mode, "uid": info.st_uid, "gid": info.st_gid}
+
+        @contextmanager
+        def directory(path):
+            descriptors, parents = [], []
+            try:
+                parent = None
+                parts = path.relative_to(self.root).parts
+                for index, part in enumerate((str(self.root),) + parts):
+                    fd = os.open(part, directory_flags, dir_fd=parent)
+                    descriptors.append(fd)
+                    logical = self.root.joinpath(*parts[:index])
+                    parents.append((logical, identity(os.fstat(fd))))
+                    parent = fd
+                yield parent
+                for logical, expected in parents:
+                    if identity(logical.lstat()) != expected:
+                        raise PowerError("CPU package sensor parent identity changed")
+            finally:
+                errors = []
+                for fd in reversed(descriptors):
+                    try:
+                        os.close(fd)
+                    except OSError as exc:
+                        errors.append(str(exc))
+                if errors:
+                    raise PowerError("CPU package sensor directory close failed: " + "; ".join(errors))
+
+        def read(parent, name):
+            fd = os.open(name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=parent)
+            try:
+                before = os.fstat(fd)
+                if not stat.S_ISREG(before.st_mode):
+                    raise PowerError("CPU package sensor control is not a regular file")
+                raw = bytearray()
+                while len(raw) <= 64:
+                    chunk = os.read(fd, 65 - len(raw))
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+                if len(raw) > 64:
+                    raise PowerError("CPU package sensor control exceeds read bound")
+                expected = identity(before)
+                if (identity(os.fstat(fd)) != expected
+                        or identity(os.stat(name, dir_fd=parent, follow_symlinks=False)) != expected):
+                    raise PowerError("CPU package sensor control identity changed")
+                return bytes(raw).decode("ascii").strip(), expected
+            finally:
+                os.close(fd)
+
+        def discover():
+            sensors = []
+            candidates = list(self.path("/sys/class/thermal").glob("thermal_zone*"))
+            if len(candidates) > 64:
+                raise PowerError("CPU package sensor discovery exceeds bound")
+            for candidate in candidates:
+                if not re.fullmatch(r"thermal_zone[0-9]+", candidate.name):
+                    raise PowerError("Unqualified CPU package sensor class path")
+                class_identity = identity(candidate.lstat())
+                physical = candidate.resolve(strict=True)
+                if not physical.is_relative_to(devices) or physical == devices:
+                    raise PowerError("CPU package sensor must resolve within /sys/devices")
+                with directory(physical) as parent:
+                    sensor_type, type_identity = read(parent, "type")
+                    if sensor_type == "x86_pkg_temp":
+                        sensors.append((candidate, physical, identity(os.fstat(parent)), type_identity, class_identity))
+                if identity(candidate.lstat()) != class_identity or candidate.resolve(strict=True) != physical:
+                    raise PowerError("CPU package sensor class identity changed")
+            if len(sensors) != 1:
+                raise PowerError("Exactly one diagnostic x86_pkg_temp sensor is required")
+            return sensors[0]
+
+        try:
+            selected = discover()
+            candidate, physical, directory_identity, type_identity, class_identity = selected
+            with directory(physical) as parent:
+                if identity(os.fstat(parent)) != directory_identity:
+                    raise PowerError("CPU package sensor directory identity changed")
+                sensor_type, current_type_identity = read(parent, "type")
+                if sensor_type != "x86_pkg_temp" or current_type_identity != type_identity:
+                    raise PowerError("CPU package sensor type identity changed")
+                value, temp_identity = read(parent, "temp")
+                if not re.fullmatch(r"[0-9]+", value) or not 0 <= int(value) <= 125_000:
+                    raise PowerError("CPU package temperature is outside its 0..125000 diagnostic range")
+                if discover() != selected:
+                    raise PowerError("CPU package sensor selection changed during read")
+                if identity(os.stat("temp", dir_fd=parent, follow_symlinks=False)) != temp_identity:
+                    raise PowerError("CPU package temperature control replaced during read")
+            end = time.monotonic_ns()
+            if type(start) is not int or type(end) is not int or not 0 <= start <= end:
+                raise PowerError("CPU package temperature monotonic read window is invalid")
+            return {"millicelsius": int(value), "read_window_ns": [start, end],
+                    "sensor_identity": {"type": "x86_pkg_temp",
+                        "class_path": "/" + str(candidate.relative_to(self.root)),
+                        "device_path": "/" + str(physical.relative_to(self.root)),
+                        "directory": directory_identity, "class_entry": class_identity, "type_file": type_identity,
+                        "temp_file": temp_identity}}
+        except (OSError, ValueError, UnicodeError, RuntimeError) as exc:
+            if isinstance(exc, PowerError):
+                raise
+            raise PowerError("CPU package temperature diagnostic failed: " + str(exc)) from exc
+
     def read_temperature_target(self):
         """Read the qualified CPU0 reference; never load MSR support or write it.
 
@@ -1178,6 +1288,14 @@ class PowerController:
             except (PowerError, OSError) as exc:
                 result["errors"].append(str(exc))
         result["rapl_constraints"], result["diagnostic_errors"] = self.rapl_constraints()
+        result["package_temperature"] = {
+            "available": False, "millicelsius": None, "sensor_identity": None,
+            "read_window_ns": None, "clock": "CLOCK_MONOTONIC",
+            "meaning": "One actual x86_pkg_temp sample in the 0..125000 millicelsius diagnostic range; not a temperature guarantee or hardware qualification"}
+        try:
+            result["package_temperature"].update(self.env.read_package_temperature(), available=True)
+        except (PowerError, OSError, ValueError) as exc:
+            result["diagnostic_errors"].append(str(exc))
         result["temperature_target"] = {
             "available": False, "cpu": 0, "scope": "cpu0_temperature_target_reference",
             "platform_info_raw": None, "temperature_target_raw": None,

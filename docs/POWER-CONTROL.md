@@ -30,6 +30,13 @@ sudo mechrevo-power clear
 `holding_scope=cpu_package_pl1` 明确 `holding_now` 只验证 PL1；`pl2_managed=false`，
 `rapl_constraints` 独立显示两套 PL1/PL2 和平均窗口。诊断缺失显示 `null` / `available=false`，
 记入 `diagnostic_errors`，不能把缺失解释成零或宣称 PL2 已受管。
+`package_temperature` 独立报告唯一 `x86_pkg_temp` 传感器的一次实际读数：
+`millicelsius` 是毫摄氏度（例如 `95000` 为 95°C），`sensor_identity` 保留解析到
+`/sys/devices` 内的传感器及文件身份，`read_window_ns` 是涵盖发现、读取和身份复核的
+`CLOCK_MONOTONIC` 窗口。允许的 `0..125000` 只是诊断值范围。它与
+`temperature_target` 的 TCC 激活参考、软件目标是不同字段，一次采样不能证明温度受控。
+传感器缺失、多重、数值无效或身份改变时，读数显示不可用，原因仅进入
+`diagnostic_errors`，不改变 PL1 的 `holding_now` 或退出码；未配置时的读数也不代表硬件已通过资格验证。
 状态检查发现错误（包括损坏的状态、未完成事务或上限未保持）时，仍输出 JSON，
 但退出码为 1；正常的未配置状态退出码为 0，`holding_now` 为 false。
 缺少状态文件但托管 XML 或服务 drop-in 仍存在时（包括断开的符号链接），也报告错误并返回 1，
