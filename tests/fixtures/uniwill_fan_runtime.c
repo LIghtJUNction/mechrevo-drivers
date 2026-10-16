@@ -56,7 +56,7 @@ static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
 static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
-static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write;
+static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write, landed_failed_fan_write;
 static u8 ec[UINT16_MAX + 1u];
 
 static bool fault(bool write)
@@ -100,7 +100,8 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     events[event_count++] = (struct event){'w', address, value};
     ++writes;
     if (fault(true)) {
-        if (address == 0x0751 && landed_failed_mode_write) ec[address] = value;
+        if ((address == 0x0751 && landed_failed_mode_write) ||
+            (landed_failed_fan_write && (address == 0x0751 || address == 0x1804 || address == 0x1809))) ec[address] = value;
         return fault_status;
     }
     if (address == 0x07c6 && !(value & 4) && commit_verification_exhausted) {
@@ -156,7 +157,7 @@ static void reset(bool universal)
     memset(events, 0, sizeof(events));
     event_count = reads = writes = sleeps = schedules = cancellations = errors = 0;
     failed_commit_readbacks = recovery_write_failures = recovery_mismatches = 0;
-    commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = false;
+    commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = landed_failed_fan_write = false;
     fail_after = -1;
     exact_fail_event = -1;
     fault_status = -ETIMEDOUT;
@@ -343,8 +344,8 @@ int main(int argc, char **argv)
             reset(false); fault_status = errnos[i]; fail_after = 0;
             assert((int)uw_set_fan_auto() == errnos[i]);
             reset(false); fault_status = errnos[i]; fail_after = 0;
-            assert(uw_set_fan(0, 100) == 0); run_worker();
-            assert(errors == 1 && last_error == errnos[i]);
+            assert((int)uw_set_fan(0, 100) == errnos[i]);
+            assert(errors == 0 && direct_fan_control_restart_needed && schedules == 0);
         }
     } else if (strcmp(test, "mode_success") == 0) {
         for (int enabled = 0; enabled <= 1; ++enabled) {
@@ -565,14 +566,66 @@ int main(int argc, char **argv)
         assert(direct_fan_control(2, 100, false) == -EINVAL && event_count == 0);
     } else if (strcmp(test, "worker_queue") == 0) {
         reset(false);
-        assert(uw_set_fan(0, 100) == 0 && event_count == 0 && schedules == 1);
-        assert(schedule_values[0] == 0 && direct_fan_control_started);
-        assert(!direct_fan_control_restart_needed);
+        assert(uw_set_fan(0, 100) == 0 && event_count == 24 && schedules == 1);
+        assert(schedule_values[0] == 50 * 60 * 1000 && direct_fan_control_started);
+        assert(!direct_fan_control_restart_needed && ec[0x1804] == 100 && ec[0x1809] == 97);
         assert(direct_fan_control_restart_delayed_work.pending); assert_cached(100, 97);
-        assert(uw_set_fan(1, 120) == 0 && writes == 1 && schedules == 1);
+        assert(uw_set_fan(1, 120) == 0 && writes == 23 && schedules == 1);
         assert_cached(100, 120);
+    } else if (strcmp(test, "legacy_sync_initial_failures") == 0) {
+        const int codes[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int code = 0; code < sizeof(codes)/sizeof(codes[0]); ++code) {
+            for (int landed = 0; landed < 2; ++landed) {
+                for (int failure = 0; failure < 24; ++failure) {
+                    reset(false); fault_status = codes[code]; fail_after = failure; landed_failed_fan_write = landed;
+                    assert((int)uw_set_fan(0, 100) == codes[code]);
+                    assert(event_count == failure+1 && errors == 0);
+                    assert(direct_fan_control_started && direct_fan_control_restart_needed);
+                    assert(!direct_fan_control_restart_delayed_work.pending && schedules == 0);
+                    assert_cached(100, 97); /* desired pair, not applied receipt */
+                    fail_after = -1; int before = event_count;
+                    assert(uw_set_fan(1, 120) == 0 && event_count > before);
+                    assert_cached(100, 120);
+                    assert(ec[0x0751] == 0x51 && ec[0x1804] == 100 && ec[0x1809] == 120);
+                    assert(!direct_fan_control_restart_needed && schedules == 1);
+                    assert(schedule_values[0] == 50 * 60 * 1000);
+                    assert(uw_set_fan_auto() == 0 && !direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+                }
+            }
+        }
+    } else if (strcmp(test, "legacy_sync_resume_failures") == 0) {
+        prepare_suspended(); clear_trace(); assert(uniwill_keyboard_resume(NULL) == 0);
+        int count = event_count; assert(count == 24);
+        const int codes[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (unsigned int code = 0; code < sizeof(codes)/sizeof(codes[0]); ++code) {
+            for (int failure = 0; failure < count; ++failure) {
+                prepare_suspended(); clear_trace(); fault_status = codes[code]; fail_after = failure;
+                assert(uniwill_keyboard_resume(NULL) == codes[code]);
+                assert(event_count == failure+1); /* no implicit second-fan retry */
+                assert(direct_fan_control_suspend && direct_fan_control_restart_needed && direct_fan_control_started);
+                assert_saved(83, 97); assert_cached(83, 97);
+                assert(!uniwill_pm_suspended && !direct_fan_control_restart_delayed_work.pending);
+                if (failure < count-1) assert(schedules == 0);
+                fail_after = -1; assert(uw_set_fan(0, 110) == 0);
+                assert(ec[0x1804] == 110 && ec[0x1809] == 97); assert_saved(110, 97);
+                assert(uniwill_keyboard_resume(NULL) == 0 && !direct_fan_control_suspend);
+            }
+        }
+    } else if (strcmp(test, "legacy_sync_pending_pair") == 0) {
+        prepare_suspended(); write_failures = 1;
+        assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
+        clear_trace(); fail_after = 5;
+        assert((int)uw_set_fan(0, 110) == -ETIMEDOUT);
+        assert_cached(110, 97); assert_saved(83, 97);
+        assert(direct_fan_control_restart_needed && !direct_fan_control_restart_delayed_work.pending);
+        clear_trace(); assert(uw_set_fan(1, 120) == 0);
+        assert(ec[0x1804] == 110 && ec[0x1809] == 120);
+        assert_cached(110, 120); assert_saved(110, 120);
+        assert(uniwill_keyboard_suspend(NULL, 0) == 0); assert_saved(110, 120);
+        assert(uniwill_keyboard_resume(NULL) == 0 && !direct_fan_control_suspend);
+        assert(ec[0x1804] == 110 && ec[0x1809] == 120);
     } else if (strcmp(test, "worker_success") == 0) {
-        reset(false); assert(uw_set_fan(0, 100) == 0); run_worker();
+        reset(false); assert(uw_set_fan(0, 100) == 0); clear_trace(); run_worker();
         assert(reads == 2 && writes == 22 && sleeps == 11 && errors == 0);
         const u16 prefix_addresses[] = {0x0751, 0x0751};
         assert(events[1].address == prefix_addresses[0] && events[1].value == 0x11);
@@ -583,27 +636,22 @@ int main(int argc, char **argv)
             assert(events[4 + i].value == (i % 2 ? 97 : 100));
         }
         for (int i = 0; i < sleeps; ++i) assert(sleep_values[i] == 10);
-        assert(schedules == 2 && schedule_values[1] == 50 * 60 * 1000);
+        assert(schedules == 1 && schedule_values[0] == 50 * 60 * 1000);
         assert(direct_fan_control_started && direct_fan_control_restart_delayed_work.pending);
     } else if (strcmp(test, "worker_failures") == 0) {
         for (int failure = 0; failure < 24; ++failure) {
-            reset(false); assert(uw_set_fan(0, 100) == 0); fail_after = failure; run_worker();
+            reset(false); assert(uw_set_fan(0, 100) == 0); clear_trace(); fail_after = failure; run_worker();
             assert(event_count == failure + 1 && errors == 1 && last_error == -ETIMEDOUT);
-            assert(schedules == 2 && direct_fan_control_started);
-            assert(direct_fan_control_restart_needed);
-            assert(schedule_values[1] == 50 * 60 * 1000);
-            assert(direct_fan_control_restart_delayed_work.pending);
-            /* It may still be in manual mode; retain the suspend/auto recovery signal. */
-            fail_after = -1;
-            int count = event_count;
-            assert(uw_set_fan(0, 110) == 0 && schedules == 3 && direct_fan_control_started);
-            assert(event_count == count && schedule_values[2] == 0 && !direct_fan_control_restart_needed);
-            run_worker();
+            assert(schedules == 1 && direct_fan_control_started && direct_fan_control_restart_needed);
+            assert(schedule_values[0] == 50 * 60 * 1000 && direct_fan_control_restart_delayed_work.pending);
+            fail_after = -1; int count = event_count;
+            assert(uw_set_fan(0, 110) == 0 && schedules == 2 && direct_fan_control_started);
+            assert(event_count > count && schedule_values[1] == 50 * 60 * 1000 && !direct_fan_control_restart_needed);
             assert(ec[0x0751] == 0x51 && ec[0x1804] == 110 && ec[0x1809] == 97);
             assert(uw_set_fan_auto() == 0 && !direct_fan_control_started);
         }
     } else if (strcmp(test, "worker_periodic_recovery") == 0) {
-        reset(false); assert(uw_set_fan(0, 100) == 0);
+        reset(false); assert(uw_set_fan(0, 100) == 0); clear_trace();
         fail_after = 2; run_worker();
         assert(direct_fan_control_restart_needed && ec[0x0751] == 0x11);
         fail_after = -1; run_worker();
@@ -646,8 +694,8 @@ int main(int argc, char **argv)
             assert_cached(83, 97);
             fail_after = -1;
             int count = event_count;
-            assert(uw_set_fan(1, 110) == 0 && schedules == 1 && schedule_values[0] == 0);
-            assert(event_count == count && direct_fan_control_restart_delayed_work.pending);
+            assert(uw_set_fan(1, 110) == 0 && schedules == 1 && schedule_values[0] == 50 * 60 * 1000);
+            assert(event_count > count && ec[0x1804] == 83 && ec[0x1809] == 110 && direct_fan_control_restart_delayed_work.pending);
             assert(direct_fan_control_started && !direct_fan_control_restart_needed);
             assert_cached(83, 110);
             assert(uw_set_fan_auto() == 0 && !direct_fan_control_started);
@@ -656,20 +704,18 @@ int main(int argc, char **argv)
         }
     } else if (strcmp(test, "legacy_auto_queue_recovery") == 0) {
         for (int failure = 0; failure < 2; ++failure) {
-            reset(false); ec[0x0751] = 0x11;
-            assert(uw_set_fan(0, 100) == 0 && schedules == 1 && event_count == 0);
-            fail_after = failure;
+            reset(false);
+            assert(uw_set_fan(0, 100) == 0 && ec[0x0751] == 0x51 && schedules == 1);
+            clear_trace(); fail_after = failure;
             assert((int)uw_set_fan_auto() == -ETIMEDOUT);
             assert(direct_fan_control_started && direct_fan_control_restart_needed);
-            assert(!direct_fan_control_restart_delayed_work.pending && ec[0x0751] == 0x11);
+            assert(!direct_fan_control_restart_delayed_work.pending && ec[0x0751] == 0x51);
             assert_cached(100, 97);
             int count = event_count; fail_after = -1;
-            assert(uw_set_fan(0, 110) == 0 && schedules == 2 && schedule_values[1] == 0);
-            assert(event_count == count && direct_fan_control_restart_delayed_work.pending);
-            assert(!direct_fan_control_restart_needed && ec[0x0751] == 0x11);
-            run_worker();
-            assert(ec[0x0751] == 0x51 && ec[0x1804] == 110 && ec[0x1809] == 97);
-            assert(schedules == 3 && schedule_values[2] == 50 * 60 * 1000);
+            assert(uw_set_fan(0, 110) == 0 && schedules == 1 && schedule_values[0] == 50 * 60 * 1000);
+            assert(event_count > count && direct_fan_control_restart_delayed_work.pending);
+            assert(!direct_fan_control_restart_needed && ec[0x0751] == 0x51);
+            assert(ec[0x1804] == 110 && ec[0x1809] == 97);
             assert(uw_set_fan_auto() == 0 && !direct_fan_control_started);
             assert(!direct_fan_control_restart_needed && !direct_fan_control_restart_delayed_work.pending);
             assert_cached(0, 0);
@@ -689,12 +735,12 @@ int main(int argc, char **argv)
         write_failures = 1;
         assert(uniwill_keyboard_resume(NULL) == -ETIMEDOUT && direct_fan_control_suspend);
         assert_cached(83, 97); assert_saved(83, 97);
-        assert(queued_fan0[queue_index] == 83 && queued_fan1[queue_index] == 97);
+        assert(schedules == queue_index);
         assert(backlight_enabled == 1 && leds_calls == 1 && priority_calls == 1 && profile_calls == 1);
         assert(!uniwill_pm_suspended && !direct_fan_control_restart_delayed_work.pending);
         assert(direct_fan_control_restart_needed);
         /* Resume is allowed to fail without a second PM callback. A new manual
-         * request must queue recovery with both saved targets intact. */
+         * request must synchronously recover with both saved targets intact. */
         assert(uw_set_fan(0, 83) == 0);
         run_worker();
         for (int i = begin; i < event_count; ++i) {
@@ -712,9 +758,9 @@ int main(int argc, char **argv)
                 assert(uniwill_keyboard_suspend(NULL, 0) == errnos[error]);
                 assert(direct_fan_control_suspend && direct_fan_control_started);
                 assert_cached(83, 97); assert_saved(83, 97);
-                assert(direct_fan_control_restart_delayed_work.pending && backlight_enabled == 1);
+                assert(!direct_fan_control_restart_delayed_work.pending && backlight_enabled == 1);
                 assert(backlight_calls == 0 && errors == 1);
-                fail_after = -1; run_worker();
+                fail_after = -1; assert(uw_set_fan(0, 83) == 0);
                 assert(ec[0x0751] == 0x51 && ec[0x1804] == 83 && ec[0x1809] == 97);
                 assert(uniwill_keyboard_resume(NULL) == 0 && !direct_fan_control_suspend);
             }

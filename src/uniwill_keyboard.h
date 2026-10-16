@@ -2360,37 +2360,53 @@ int uw_init_fan(void)
 }
 EXPORT_SYMBOL(uw_init_fan);
 
-static void restart_direct_fan_control_work_handler(struct work_struct *work)
+/* State is already held by both public commands and the maintenance worker.
+ * This is a bounded sequence of transport calls, not an atomic transaction or
+ * a mechanical-speed guarantee; transport latency is not bounded here. */
+static int uw_restart_direct_fan_control_locked(u8 fan0, u8 fan1)
 {
 	int i, status;
 	u16 addr_fan0 = 0x1804;
 	u16 addr_fan1 = 0x1809;
+
+	lockdep_assert_held(&uniwill_fan_state_lock);
+	status = set_full_fan_mode_locked(false);
+	if (status)
+		return status;
+	msleep(10);
+	status = set_full_fan_mode_locked(true);
+	if (status)
+		return status;
+
+	// Attempt to write both fans as quick as possible before complete ramp-up
+	pr_debug("prevent ramp-up start\n");
+	for (i = 0; i < 10; ++i) {
+		status = uniwill_write_ec_ram(addr_fan0, fan0);
+		if (status)
+			return status;
+		status = uniwill_write_ec_ram(addr_fan1, fan1);
+		if (status)
+			return status;
+		msleep(10);
+	}
+	pr_debug("prevent ramp-up done\n");
+	return 0;
+}
+
+static void restart_direct_fan_control_work_handler(struct work_struct *work)
+{
+	int status;
 
 	mutex_lock(&uniwill_fan_state_lock);
 	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started || legacy_fan_mode_override_blocked)
 		goto unlock;
 	pr_debug("restart fan control\n");
 
-	status = set_full_fan_mode_locked(false);
-	if (status)
-		goto failed;
-	msleep(10);
-	status = set_full_fan_mode_locked(true);
+	status = uw_restart_direct_fan_control_locked(direct_fan_control_current_value_fan0,
+						    direct_fan_control_current_value_fan1);
 	if (status)
 		goto failed;
 
-	// Attempt to write both fans as quick as possible before complete ramp-up
-	pr_debug("prevent ramp-up start\n");
-	for (i = 0; i < 10; ++i) {
-		status = uniwill_write_ec_ram(addr_fan0, direct_fan_control_current_value_fan0 & 0xff);
-		if (status)
-			goto failed;
-		status = uniwill_write_ec_ram(addr_fan1, direct_fan_control_current_value_fan1 & 0xff);
-		if (status)
-			goto failed;
-		msleep(10);
-	}
-	pr_debug("prevent ramp-up done\n");
 	direct_fan_control_restart_needed = false;
 	goto reschedule;
 
@@ -2421,14 +2437,23 @@ static int direct_fan_control(u32 fan_index, u8 fan_speed, bool prevent_rampup)
 	}
 
 	if (prevent_rampup && (!direct_fan_control_started || direct_fan_control_restart_needed)) {
-		/* The worker needs the requested speed before it is queued. */
+		/* These are desired targets, not proof of applied mechanical speed.
+		 * Keep them and conservative ownership if a transport call fails. */
 		if (fan_index == 0)
 			direct_fan_control_current_value_fan0 = fan_speed;
 		else
 			direct_fan_control_current_value_fan1 = fan_speed;
 		direct_fan_control_started = true;
+		direct_fan_control_restart_needed = true;
+		status = uw_restart_direct_fan_control_locked(direct_fan_control_current_value_fan0,
+							    direct_fan_control_current_value_fan1);
+		if (status)
+			return status;
 		direct_fan_control_restart_needed = false;
-		schedule_delayed_work(&direct_fan_control_restart_delayed_work, 0);
+		/* Only periodic maintenance remains asynchronous. The initial or
+		 * recovery command reports every required transport error itself. */
+		schedule_delayed_work(&direct_fan_control_restart_delayed_work,
+				      msecs_to_jiffies(50 * 60 * 1000));
 	} else {
 		status = uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
 		if (status)
@@ -2506,10 +2531,10 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 		if (!status)
 			legacy_fan_mode_override_blocked = false;
 		if (!status && direct_fan_control_suspend) {
-			if (fan_index == 0)
-				direct_fan_control_current_value_fan0_suspend_save = fan_speed;
-			else
-				direct_fan_control_current_value_fan1_suspend_save = fan_speed;
+			/* A recovery restart applies the complete desired pair, including
+			 * a target retained from an earlier failed per-fan request. */
+			direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+			direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
 		}
 		return status;
 	}
@@ -2930,14 +2955,14 @@ static int uw_restore_fan_state_locked(void)
 		}
 	}
 
-	/* The first request can queue a worker immediately. Restore both
-	 * targets first so it cannot write a zero left by automatic mode. */
+	/* The first legacy request synchronously writes both fans. Restore both
+	 * desired targets first so it cannot write a zero left by AUTO. */
 	direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan0_suspend_save;
 	direct_fan_control_current_value_fan1 = direct_fan_control_current_value_fan1_suspend_save;
 	result = (int)uw_set_fan_locked(0, direct_fan_control_current_value_fan0_suspend_save);
-	/* A failed universal initialization must not be retried implicitly for
-	 * the second fan in the same callback. */
-	status = result && universal ? 0 : (int)uw_set_fan_locked(1, direct_fan_control_current_value_fan1_suspend_save);
+	/* Never hide a failed first restore behind an implicit retry while
+	 * applying the second fan in this same callback. */
+	status = result ? 0 : (int)uw_set_fan_locked(1, direct_fan_control_current_value_fan1_suspend_save);
 	if (status && !result)
 		result = status;
 	if (!result) {

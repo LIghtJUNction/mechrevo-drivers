@@ -533,6 +533,39 @@ int main(int argc, char **argv)
         interleave(MASK_FULL, RESUME);
         assert(!direct_fan_control_started && !direct_fan_control_suspend);
         assert((ec[0x0751] & 0x40) && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strncmp(test, "legacy_initial_", 15) == 0) {
+        /* Actual public initial command: no pre-set legacy ownership/worker. */
+        direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan1 = 0;
+        ec[0x0751] = 0x11; pause_address = 0x1804;
+        enum operation second;
+        if (strcmp(test, "legacy_initial_full") == 0) second = FULL;
+        else if (strcmp(test, "legacy_initial_auto") == 0) second = AUTO;
+        else if (strcmp(test, "legacy_initial_remove") == 0) second = REMOVE;
+        else if (strcmp(test, "legacy_initial_suspend") == 0) second = SUSPEND;
+        else return 2;
+        interleave(MANUAL, second);
+        int last_target = -1, first_contender = -1, targets = 0;
+        for (int i = 0; i < event_count; ++i) {
+            if (events[i].actor == 1 && events[i].kind == 'w' &&
+                (events[i].address == 0x1804 || events[i].address == 0x1809)) {
+                last_target = i; ++targets;
+            }
+            if (events[i].actor == 2 && first_contender == -1) first_contender = i;
+        }
+        assert(targets == 20 && last_target >= 0 && first_contender > last_target);
+        if (second == FULL) {
+            assert(!direct_fan_control_started && (ec[0x0751] & 0x40));
+            assert(!direct_fan_control_restart_delayed_work.pending);
+        } else if (second == AUTO) assert_auto();
+        else if (second == REMOVE) {
+            assert(uniwill_fan_removed && !direct_fan_control_restart_delayed_work.pending);
+            int before = event_count; assert((int)uw_set_fan(1, 120) == -ENODEV && event_count == before);
+        } else {
+            assert(uniwill_pm_suspended && direct_fan_control_suspend && !direct_fan_control_restart_delayed_work.pending);
+            assert(direct_fan_control_current_value_fan0_suspend_save == 110);
+            assert(direct_fan_control_current_value_fan1_suspend_save == 0);
+            assert(uniwill_keyboard_resume(NULL) == 0 && ec[0x1804] == 110 && ec[0x1809] == 0);
+        }
     } else if (strcmp(test, "mode_update") == 0) {
         ec[0x0751] = 0x15; pause_address = 0x0751; pause_kind = 'r';
         interleave(FULL, UPDATE);

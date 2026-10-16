@@ -50,7 +50,7 @@ class UniwillFanRuntime(unittest.TestCase):
                  "uw_legacy_fan_override_begin_locked", "uw_legacy_fan_override_finish_locked",
                  "uw_set_mode", "uw_update_mode", "uw_write_tdp",
                  "set_full_fan_mode_locked", "set_full_fan_mode", "uw_init_fan_locked", "uw_init_fan",
-                 "restart_direct_fan_control_work_handler", "direct_fan_control",
+                 "uw_restart_direct_fan_control_locked", "restart_direct_fan_control_work_handler", "direct_fan_control",
                  "uw_set_fan_locked", "uw_set_fan", "uw_set_fan_auto_locked", "uw_set_fan_auto",
                  "uw_fan_control_start",
                  "uw_restore_fan_state_locked", "uniwill_keyboard_suspend",
@@ -72,6 +72,15 @@ class UniwillFanRuntime(unittest.TestCase):
         result = subprocess.run([str(self.binary), case], text=True, capture_output=True, timeout=10,
                                 preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_legacy_successful_pair_recovery_updates_both_pending_pm_targets(self):
+        self.check_case("legacy_sync_pending_pair")
+
+    def test_legacy_initial_restart_each_transport_failure_reaches_caller_without_queued_apply(self):
+        self.check_case("legacy_sync_initial_failures")
+
+    def test_legacy_pm_restart_failure_stops_before_second_fan_and_retains_explicit_retry_targets(self):
+        self.check_case("legacy_sync_resume_failures")
 
     def test_legacy_ambiguous_override_late_pm_errors_never_reauthorize_old_worker_and_auto_can_cancel(self):
         self.check_case("legacy_override_late_pm_and_auto")
@@ -175,7 +184,7 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_sync_write_failure_keeps_previous_speed_cache(self):
         self.check_case("direct_errors")
 
-    def test_legacy_first_request_queues_without_claiming_a_hardware_write(self):
+    def test_legacy_first_request_completes_required_transport_before_scheduling_maintenance(self):
         self.check_case("worker_queue")
 
     def test_worker_preserves_twenty_writes_and_fifty_minute_schedule(self):
@@ -196,7 +205,7 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_legacy_auto_failure_stops_worker_but_keeps_speed_cache(self):
         self.check_case("legacy_auto_errors")
 
-    def test_failed_auto_of_queued_request_is_recovered_by_next_manual_request(self):
+    def test_failed_auto_of_maintenance_request_is_synchronously_recovered_by_next_manual_request(self):
         self.check_case("legacy_auto_queue_recovery")
 
     def test_suspend_resume_preserves_both_nonzero_fan_targets(self):
