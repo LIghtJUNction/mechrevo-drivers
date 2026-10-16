@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import hashlib,json,os,pathlib,shutil,subprocess,unittest
 import test_tcc_packaging as packaging
+from tcc_test_log import write_command_log
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 FIXTURE=ROOT/'tests/fixtures/tcc_3_0_10'
 GROUPS=['valid','stringfalse','schema','ioerrors','malformed','reload','missingfile','missingfields','writeerrors','ports','compatibility','rollback','profiles','mainorder']
@@ -24,8 +25,9 @@ class TccSettingsContract(unittest.TestCase):
         argv=[self.node,str(FIXTURE/'settings_contract_test.cjs'),self.ts,str(source or self.prepared),group,kind,str(self.generated)]
         result=subprocess.run(argv,capture_output=True,text=True,timeout=30)
         if os.environ.get('TCC_TEST_LOG_DIR'):
-            self.__class__.command_count+=1;p=pathlib.Path(os.environ['TCC_TEST_LOG_DIR']);p.mkdir(parents=True,exist_ok=True)
-            (p/('settings-'+str(self.command_count).zfill(3)+'.json')).write_text(json.dumps({'argv':argv,'exit':result.returncode,'output':result.stdout+result.stderr},indent=2)+'\n')
+            self.__class__.command_count+=1
+            write_command_log(os.environ['TCC_TEST_LOG_DIR'], self.__class__.__name__,
+                              self.__class__.command_count, argv, result.returncode, result.stdout+result.stderr)
         if success:self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         else:self.assertNotEqual(result.returncode,0,result.stdout+result.stderr);self.assertIn('AssertionError',result.stderr)
         return result.stdout

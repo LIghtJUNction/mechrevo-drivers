@@ -8,6 +8,7 @@ Frozen original negative controls must fail. Production daemon is never started.
 """
 import hashlib,json,os,shutil,subprocess,tempfile,unittest
 from pathlib import Path
+from tcc_test_log import write_command_log
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURE=ROOT/'tests/fixtures/tcc_3_0_10'
 PATCH=ROOT/'packaging/arch/tuxedo-control-center-mechrevo/0001-fan-io-error-contract.patch'
@@ -61,8 +62,8 @@ class TccFanContract(unittest.TestCase):
         r=subprocess.run([str(x) for x in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=120)
         if os.environ.get('TCC_TEST_LOG_DIR'):
             self.__class__.command_count+=1
-            log=Path(os.environ['TCC_TEST_LOG_DIR']);log.mkdir(parents=True,exist_ok=True)
-            (log/(str(self.__class__.command_count).zfill(3)+'.json')).write_text(json.dumps({'args':[str(x) for x in args],'returncode':r.returncode,'output':r.stdout},indent=2)+'\n')
+            write_command_log(os.environ['TCC_TEST_LOG_DIR'], self.__class__.__name__,
+                              self.__class__.command_count, args, r.returncode, r.stdout)
         if success:self.assertEqual(r.returncode,0,r.stdout)
         else:self.assertNotEqual(r.returncode,0,r.stdout)
         return r.stdout
