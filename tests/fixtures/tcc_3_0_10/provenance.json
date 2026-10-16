@@ -42,12 +42,20 @@
     "src/service-app/classes/FanControlBaseClass.ts": {
       "size": 3658,
       "sha256": "39cb3f8b8f902a50bbf912523f633f7b35e58fb2552e7f2e2893620fc2545363"
+    },
+    "src/service-app/classes/FanControlHwmon.ts": {
+      "size": 16035,
+      "sha256": "0e03caba05396e1eee22ef3dfcee4832118634a69f7e8a4273ddaae7d3197b4b"
+    },
+    "src/common/models/IFanData.ts": {
+      "size": 1667,
+      "sha256": "53e5bc94bf6cc93ae72fdd769f35c787e0c72eb4a6958b8ffbef6c37e98d636b"
     }
   },
   "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
   "patched_files_sha256": {
-    "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
-    "src/service-app/classes/FanControlWorker.ts": "122b13ca97c19cc03a944018dc1b86d9ca4cd95440a1ec0c8efa7b0ad3c85c15",
+    "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
+    "src/service-app/classes/FanControlWorker.ts": "d93a37a6560d69cb642f6183aab264fede6d521bebb934d9cbc59345350fe00e",
     "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449",
     "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f"
   },
@@ -55,6 +63,19 @@
   "harness_sha256": {
     "lifecycle_test.cjs": "877aacd1f8e4ae3a42794f7e4be40a9de6730b39319b4d9dda601dd9d230e268",
     "caller_lifecycle_test.cjs": "346fdbabd069387cee9590e837559feb588b93dcacccd01e191cd70ff6feb150",
-    "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76"
-  }
+    "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76",
+    "readback_errors_test.cjs": "7492f97feb610c8ff51b68afd369ad1cb5f028a97c31edb6b96acb345a727d4d"
+  },
+  "patch12_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
+    "src/service-app/classes/FanControlWorker.ts": "122b13ca97c19cc03a944018dc1b86d9ca4cd95440a1ec0c8efa7b0ad3c85c15",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f"
+  },
+  "additional_original_urls": {
+    "src/service-app/classes/FanControlHwmon.ts": "https://raw.githubusercontent.com/tuxedocomputers/tuxedo-control-center/v3.0.10/src/service-app/classes/FanControlHwmon.ts",
+    "src/common/models/IFanData.ts": "https://raw.githubusercontent.com/tuxedocomputers/tuxedo-control-center/v3.0.10/src/common/models/IFanData.ts"
+  },
+  "patch3_sha256": "60353bd61a955dd3272e78df63906acc6279bbb85238f7a8ef3ee883a76e8120",
+  "patch3_scope": "Finite numeric0..100 fan readbacks (worker-1 unavailable); preserve valid readback after failed write; safe aggregation/onWork formatting retains original errors. No hardware write policy or new DBus API."
 }

@@ -1,0 +1,60 @@
+--- a/src/service-app/classes/FanControlTuxedoIO.ts
++++ b/src/service-app/classes/FanControlTuxedoIO.ts
+@@ -141,7 +141,11 @@
+             return -1;
+         }
+ 
+-        return currentSpeedPercent.value;
++        const readback = currentSpeedPercent.value;
++        if (typeof readback !== 'number' || !Number.isFinite(readback) || readback < 0 || readback > 100) {
++            throw new Error(`FanControlTuxedoIO: Invalid fan speed readback with IO API index ${fanIndex}`);
++        }
++        return readback;
+     }
+ 
+     public async getFanTemperature(fanIndex: number, logging?: boolean): Promise<number> {
+--- a/src/service-app/classes/FanControlWorker.ts
++++ b/src/service-app/classes/FanControlWorker.ts
+@@ -235,7 +235,7 @@
+                 this.fanCheckCounter += 1;
+             }
+         } catch (err: unknown) {
+-            console.log(`FanControlWorker: onWork failed => ${err}`);
++            console.log(`FanControlWorker: onWork failed => ${this.formatFanError(err)}`);
+         }
+     }
+ 
+@@ -356,10 +356,18 @@
+         return { fanLogic, fanIndex, temp };
+     }
+ 
++    private formatFanError(error: unknown): string {
++        try {
++            return String(error);
++        } catch {
++            return '[unprintable error]';
++        }
++    }
++
+     private throwFanErrors(errors: unknown[]): void {
+         if (errors.length === 1) throw errors[0];
+         if (errors.length > 1) {
+-            throw new AggregateError(errors, `FanControlWorker: Fan operations failed: ${errors.map(String).join('; ')}`);
++            throw new AggregateError(errors, `FanControlWorker: Fan operations failed: ${errors.map((error: unknown) => this.formatFanError(error)).join('; ')}`);
+         }
+     }
+ 
+@@ -444,7 +452,12 @@
+             let currentSpeedPercent = -1;
+             if (this.tccd.dbusData.sensorDataCollectionStatus) {
+                 try {
+-                    currentSpeedPercent = await this.fanApi.getFanSpeedPercent(fanIndex);
++                    const readback = await this.fanApi.getFanSpeedPercent(fanIndex);
++                    if (typeof readback !== 'number' || !Number.isFinite(readback) ||
++                        (readback !== -1 && (readback < 0 || readback > 100))) {
++                        throw new Error(`FanControlWorker: Invalid fan speed readback for index ${fanIndex}`);
++                    }
++                    currentSpeedPercent = readback;
+                 } catch (error: unknown) {
+                     errors.push(error);
+                 }

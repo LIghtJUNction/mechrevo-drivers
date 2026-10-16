@@ -12,6 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 FIXTURE=ROOT/'tests/fixtures/tcc_3_0_10'
 PATCH=ROOT/'packaging/arch/tuxedo-control-center-mechrevo/0001-fan-io-error-contract.patch'
 PATCH2=PATCH.with_name('0002-fan-lifecycle.patch')
+PATCH3=PATCH.with_name('0003-fan-readback-diagnostics.patch')
 
 class TccFanContract(unittest.TestCase):
     @classmethod
@@ -22,6 +23,7 @@ class TccFanContract(unittest.TestCase):
             assert len(data)==record['size'] and hashlib.sha256(data).hexdigest()==record['sha256']
         assert hashlib.sha256(PATCH.read_bytes()).hexdigest()==cls.manifest['patch_sha256']
         assert hashlib.sha256(PATCH2.read_bytes()).hexdigest()==cls.manifest['patch2_sha256']
+        assert hashlib.sha256(PATCH3.read_bytes()).hexdigest()==cls.manifest['patch3_sha256']
         for name,digest in cls.manifest['harness_sha256'].items():
             assert hashlib.sha256((FIXTURE/name).read_bytes()).hexdigest()==digest
         cls.tmp=None if os.environ.get('TCC_KEEP_TEST_TMPDIR') else tempfile.TemporaryDirectory(prefix='tcc-contract-',dir=os.environ.get('MECHREVO_TEST_TMPDIR'))
@@ -32,6 +34,10 @@ class TccFanContract(unittest.TestCase):
         subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         cls.patch1=cls.base/'patch1';shutil.copytree(cls.patched,cls.patch1)
         subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH2)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        for name,digest in cls.manifest['patch12_files_sha256'].items():
+            assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
+        cls.patch2=cls.base/'patch2';shutil.copytree(cls.patched,cls.patch2)
+        subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH3)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         for name,digest in cls.manifest['patched_files_sha256'].items():
             assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
         cls.generated=None
@@ -81,7 +87,7 @@ class TccFanContract(unittest.TestCase):
         node,ts=self.service_tools()
         if self.__class__.generated is None:
             out=self.base/'generated-js'
-            code="const fs=require('fs'),path=require('path'),ts=require(process.argv[1]);for(const name of ['DaemonWorker','FanControlBaseClass','FanControlTuxedoIO','FanControlWorker','TuxedoControlCenterDaemon','StateSwitcherWorker']){const source=fs.readFileSync(path.join(process.argv[2],'src/service-app/classes',name+'.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript transpile diagnostic: '+name);const dest=path.join(process.argv[3],'service-app/classes');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,name+'.js'),result.outputText);}"
+            code="const fs=require('fs'),path=require('path'),ts=require(process.argv[1]);for(const name of ['DaemonWorker','FanControlBaseClass','FanControlTuxedoIO','FanControlWorker','FanControlHwmon','TuxedoControlCenterDaemon','StateSwitcherWorker']){const source=fs.readFileSync(path.join(process.argv[2],'src/service-app/classes',name+'.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript transpile diagnostic: '+name);const dest=path.join(process.argv[3],'service-app/classes');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,name+'.js'),result.outputText);}const source=fs.readFileSync(path.join(process.argv[2],'src/common/models/IFanData.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript model diagnostic');const dest=path.join(process.argv[3],'common/models');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,'IFanData.js'),result.outputText);"
             self.run_cmd([node,'-e',code,ts,self.patched,out])
             self.__class__.generated=out
         return self.__class__.generated
@@ -137,5 +143,27 @@ class TccFanContract(unittest.TestCase):
                     output=self.run_cmd(args,success=False)
                     expected={'exit-failure-retry':'Error: hostile primitive','hostile-start-error':'Error: hostile primitive','trigger-state-reject':'Error: state async failure'}.get(group,'AssertionError')
                     self.assertIn(expected,output,output)
+
+
+    def test_readback_contract_aggregate_errors_ts_js_and_patch2_negatives(self):
+        node,ts=self.service_tools()
+        groups=['aggregate-hostile','onwork-hostile','invalid-native','invalid-worker','hwmon-zero','settled-hostile']
+        for group in groups:
+            for kind,source in [('ts',self.patched),('js',self.generated_classes())]:
+                with self.subTest(group=group,kind=kind):
+                    self.run_cmd([node,FIXTURE/'readback_errors_test.cjs',ts,source,group,kind])
+            with self.subTest(group=group,kind='patch2-negative'):
+                self.negative_assertion([node,FIXTURE/'readback_errors_test.cjs',ts,self.patch2,group,'ts'])
+
+    def test_actual_native_failed_write_valid_readback_ts_js_original_negative(self):
+        node,ts=self.service_tools()
+        if not all(os.environ.get(k) for k in ('TCC_NODE_INCLUDE','TCC_NODE_ADDON_API')):
+            self.skipTest('explicit existing qualified Node/N-API headers required; no automatic install')
+        patched_addon=self.base/'readback-patched.node';self.compile(self.patched,patched_addon,addon=True)
+        for kind,source in [('ts',self.patched),('js',self.generated_classes())]:
+            with self.subTest(kind=kind):
+                self.run_cmd([node,FIXTURE/'readback_errors_test.cjs',ts,source,'native-failure-readback',kind,patched_addon])
+        original_addon=self.base/'readback-original.node';self.compile(self.legacy,original_addon,addon=True)
+        self.negative_assertion([node,FIXTURE/'readback_errors_test.cjs',ts,self.legacy,'native-failure-readback','ts',original_addon])
 
 if __name__=='__main__':unittest.main()
