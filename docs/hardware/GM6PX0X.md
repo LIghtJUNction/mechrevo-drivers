@@ -23,10 +23,14 @@
 核心模块、配置及三个服务 PID 保持，新核心没有加载。观测包仍为 `0.1.0-13`。
 直通 EC 参数 `ec_direct_io=N`；未新增实机手动风扇、legacy 硬件、充电效果或物理 PM 验收。
 universal 设速遇到 FULL 返回 `EBUSY`，不会清除 FULL 或表；PM 验证释放是独立路径。
-AUR 尚未更新。TCC 的 C++/NAPI、守护进程及界面源码修复已完成，
-4 项实际测试无跳过通过，完整生产构建与最终包校验通过；尚未安装或在运行守护进程中生效。
-模式初始化/退出忽略返回值、退出时正在执行的风扇任务竞态仍是源码确认的未解决问题；
-下一候选修复正在私有工作区准备，本轮不宣称 TCC 已完整修复。
+AUR 尚未更新。TCC 第二轮本地修复补齐调用方请求串行、profile 失败重试、
+守护进程终止状态、等待正在执行的风扇任务结束后交还自动控制，以及未知错误阶段格式化。
+此前初始化/退出返回值忽略和退出竞态已在源码与测试中修复；8 项实际测试无跳过通过，
+service TypeScript 和完整生产构建通过，pkgrel 2 最终包已核验。
+包为 36,421,440 字节，SHA-256：
+`3082b17d63d99f68e77f4ab9892f69e604e40f73ed0a4a5ef1dac288c7efcd5c`。
+26 项实际 asar 契约通过，8,692 个依赖文件 SHA 一致。源码已提交并推送 `da74739`；
+未安装、未启动新守护进程，不代表实体风扇或物理 PM 验收。没有本轮驱动、限值或性能策略改动。
 
 只读 CPU 快速观察完成 59.050324963 秒、567 个样本，完整记录和标准输出校验通过，
 无采集超限或错误。按固定 v6.12 turbostat 公式换算的核心/封装最高温度为 99°C；
@@ -40,9 +44,25 @@ MSR PL1 为 27.5/34.5/41.5 W，MMIO PL1 保持 55 W，两路 PL2 均保持 140 W
 本地证据在 `.local-tests/postboot-20261016/thermal-iterate/cpu-fast/capture.jsonl`，
 分析保存在同目录 `capture-analysis.json`。
 
+第二轮联合采集整体失败：CPU 205 个样本、22.4845 秒，因参考状态变化而无效；
+侧录 23 个传感器样本、38 次扫描、26.5285 秒，150 ms 时间上限最终达到 162.691 ms，也无效。
+有效前缀 DTS 最高 87°C、CPU RPM 3611–3970/GPU RPM 4939 只是失败实验的局部读取，
+不能当作散热改善或前后对照。约 26 秒窗口内 agcc 消耗约 25 CPU 秒，
+观测/跟踪负担显著，未通过空闲开销验收。
+
+另一次 root 只读能力探测退出成功，守护快照前后不变；CPU model 151 对应 ALDERLAKE，
+Turbostat 的 6 位偏移及 platform 0xce bit30 资格成立，Tjmax 为 100°C。
+首次合格值 `0x05640000` 对应 TCC 95°C，第二次/当前 `0x0f640000` 对应 85°C。
+早先未确认资格的原始值不能套用；没有修改者证据，也不能归因当前未启用 adaptive/workaround 的 thermald。
+记录在本地 `thermal-iterate/cpu-thread-fan/msr-target-capability.json`（位于同一 postboot 证据根）。
+这些读取不证明物理散热或调度原因，有效首轮 99°C 热尖峰仍未解决。
+
 r87 已核验恢复材料在 `~/Backups/projects/mechrevo-drivers/light/error-contract-r87-20261016/`，
 目录为 root/700，36 个文件共 333,901 字节。manifest SHA-256：
 `4607960d66dbe175fabc9fa276ee8cfc3c4f754c53f5aed53347ccf9b8af101a`。
+TCC 第二轮恢复归档保留在 `~/Backups/projects/mechrevo-drivers/light/tcc-lifecycle-v2-20261016/`，
+102 个文件共 39,510,669 字节，manifest SHA-256：
+`2431584f930d8e54f5f2fef5935cf801d10e4d04db4347d030cf9b28dcd83fdb`。
 这些源码、安装与只读结果不构成完整迁移或散热验收。以下保留前轮记录。
 
 ## 2026-10-16 r81 legacy 模式修复与 r13 读取时间窗（前轮）
