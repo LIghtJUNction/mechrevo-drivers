@@ -3089,10 +3089,11 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 			goto failed;
 		was_enabled = !!(data & (1 << 6));
 		data &= ~(1 << 6);
+		/* A failed transport write may still have reached the EC. */
+		profile_was_enabled = was_enabled;
 		status = uniwill_write_ec_ram(0x0727, data);
 		if (status)
 			goto failed;
-		profile_was_enabled = was_enabled;
 	}
 	status = uniwill_write_kbd_bl_enable(0);
 	if (status)

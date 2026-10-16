@@ -45,7 +45,7 @@ static void uw_charging_profile_write_state(void);
 #define KERNEL_VERSION(a, b, c) (((a) << 16) | ((b) << 8) | (c))
 #define EXPORT_SYMBOL(name)
 #define pr_debug(...) do {} while (0)
-#define pr_err(...) do { ++reported_errors; } while (0)
+#define pr_err(format, error) do { ++reported_errors; last_reported_error = (error); } while (0)
 #define pr_info(...) do {} while (0)
 #define lockdep_assert_held(lock) do {} while (0)
 
@@ -60,6 +60,8 @@ static bool chain_fault;
 static char chained_kind;
 static u16 chained_address;
 static int chained_errno;
+/* Only the next failing profile write lands; recovery has its own fault. */
+static bool land_profile_failure;
 static int result[4];
 struct mutex { pthread_mutex_t native; };
 #define DEFINE_MUTEX(name) struct mutex name = { PTHREAD_MUTEX_INITIALIZER }
@@ -158,7 +160,8 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     bool fail = faults && fault_kind == 'w' && fault_address == address;
     if (fail) --faults;
     int error = fail ? injected_errno : 0;
-    if (!fail) ec[address] = value;
+    if (!fail || (land_profile_failure && address == 0x0727)) ec[address] = value;
+    if (fail && address == 0x0727) land_profile_failure = false;
     if (address >= 0x0f00 && address <= 0x0f5f)
         ++table_writes;
     if (fail && chain_fault) {
@@ -205,7 +208,7 @@ static int __attribute__((unused)) uniwill_update_ec_ram(unsigned int address, u
 struct serio { int unused; };
 struct input_dev { int unused; };
 static struct { struct input_dev *input_device; } uniwill_keyboard_driver;
-static int reported_errors;
+static int reported_errors, last_reported_error;
 static int input_events;
 static void input_report_key(struct input_dev *dev, int key, int pressed)
 { (void)dev; (void)key; (void)pressed; ++input_events; }
@@ -303,7 +306,7 @@ static void clear_events(void)
 }
 static void begin(bool universal)
 {
-    actor = 0; faults = 0; chain_fault = false;
+    actor = 0; faults = 0; chain_fault = false; land_profile_failure = false;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
     uniwill_device_features.uniwill_custom_profile_mode_needed = true;
     ec[0x0727] = 0xe5; ec[0x078c] = 0x81;
@@ -350,6 +353,21 @@ static void assert_event_order(char first_kind, u16 first_address, char second_k
     int second = find_event(second_kind, second_address);
     assert(first >= 0 && second >= 0 && first < second);
 }
+static int profile_accesses(char kind)
+{
+    int count = 0;
+    for (int i = 0; i < event_count; ++i)
+        count += events[i].kind == kind && events[i].address == 0x0727;
+    return count;
+}
+static void assert_abort_fans(void)
+{
+    assert(!uniwill_pm_suspended);
+    assert(direct_fan_control_current_value_fan0 == 83);
+    assert(direct_fan_control_current_value_fan1 == 97);
+    assert(!direct_fan_control_suspend);
+    assert(ec[0x1804] == 83 && ec[0x1809] == 97);
+}
 int main(int argc, char **argv)
 {
     assert(argc == 2); const char *test = argv[1]; actor = 0;
@@ -373,7 +391,78 @@ int main(int argc, char **argv)
         return 0;
     }
     begin(false);
-    if (!strcmp(test, "adapter_suspend")) {
+    if (!strcmp(test, "profile_abort_matrix")) {
+        const int errors[] = {-EIO, -ETIMEDOUT, -ENODEV};
+        for (int universal = 0; universal < 2; ++universal)
+            for (int enabled = 0; enabled < 2; ++enabled)
+                for (int write = 0; write < 2; ++write)
+                    for (int landed = 0; landed <= write; ++landed)
+                        for (unsigned int e = 0; e < ARRAY_SIZE(errors); ++e) {
+                            begin(universal); manual(); ec[0x0727] = enabled ? 0xe5 : 0xa5;
+                            int before_errors = reported_errors;
+                            fault_once(write ? 'w' : 'r', 0x0727, errors[e]);
+                            land_profile_failure = landed;
+                            assert(uniwill_keyboard_suspend(&platform, 0) == errors[e]);
+                            assert(ec[0x0727] == (enabled ? 0xe5 : 0xa5));
+                            assert(profile_accesses('w') == (write ? 1 + enabled : 0));
+                            assert(profile_accesses('r') == 1 + (write && enabled));
+                            assert(reported_errors == before_errors);
+                            assert_abort_fans();
+                            /* No resume callback is needed for a later real PM cycle. */
+                            assert(uniwill_keyboard_suspend(&platform, 0) == 0);
+                            assert(uniwill_keyboard_resume(&platform) == 0);
+                            assert_abort_fans();
+                        }
+    } else if (!strcmp(test, "profile_abort_cleanup")) {
+        for (int universal = 0; universal < 2; ++universal)
+            for (int write = 0; write < 2; ++write) {
+                begin(universal); manual(); int before_errors = reported_errors;
+                fault_once('w', 0x0727, -ETIMEDOUT); land_profile_failure = true;
+                chain_fault = true; chained_kind = write ? 'w' : 'r';
+                chained_address = 0x0727; chained_errno = -ENOSPC;
+                assert(uniwill_keyboard_suspend(&platform, 0) == -ETIMEDOUT);
+                assert(reported_errors == before_errors + 1 && last_reported_error == -ENOSPC);
+                assert(ec[0x0727] == 0xa5);
+                assert(profile_accesses('w') == 1 + write);
+                assert_abort_fans();
+                uniwill_event_callb(UNIWILL_OSD_DC_ADAPTER_CHANGE);
+                assert(ec[0x0727] == 0xe5);
+                assert(uniwill_keyboard_suspend(&platform, 0) == 0);
+                assert(uniwill_keyboard_resume(&platform) == 0);
+                assert_abort_fans();
+            }
+    } else if (!strcmp(test, "profile_success_and_qualification")) {
+        for (int universal = 0; universal < 2; ++universal)
+            for (int needed = 0; needed < 2; ++needed)
+                for (int enabled = 0; enabled < 2; ++enabled) {
+                    begin(universal); manual();
+                    uniwill_device_features.uniwill_custom_profile_mode_needed = needed;
+                    ec[0x0727] = enabled ? 0xe5 : 0xa5;
+                    assert(uniwill_keyboard_suspend(&platform, 0) == 0);
+                    assert(ec[0x0727] == (needed ? 0xa5 : (enabled ? 0xe5 : 0xa5)));
+                    assert(profile_accesses('r') == needed && profile_accesses('w') == needed);
+                    assert(uniwill_keyboard_resume(&platform) == 0);
+                    assert_abort_fans();
+                }
+    } else if (!strcmp(test, "profile_abort_concurrency")) {
+        for (int universal = 0; universal < 2; ++universal) {
+            begin(universal); manual();
+            fault_once('w', 0x0727, -EIO); land_profile_failure = true;
+            /* Hold the rollback read, after the failed clear already landed. */
+            pause_actor = 1; pause_kind = 'r'; pause_address = 0x0727; pause_occurrence = 2;
+            pthread_t one = start(1, SUSPEND); wait_until(&paused);
+            assert(ec[0x0727] == 0xa5);
+            pthread_t two = start(2, ADAPTER); wait_until(&waiting[2]);
+            pthread_mutex_lock(&harness);
+            assert(actor_events(2) == 0 && !complete[2]);
+            release_pause = true; pthread_cond_broadcast(&changed);
+            pthread_mutex_unlock(&harness);
+            assert(pthread_join(one, NULL) == 0 && pthread_join(two, NULL) == 0);
+            assert(result[1] == -EIO && result[2] == 0);
+            assert(ec[0x0727] == 0xe5); assert_serial_actors(); assert_abort_fans();
+            pause_occurrence = 1;
+        }
+    } else if (!strcmp(test, "adapter_suspend")) {
         pause_kind = 'r'; pause_address = 0x0727;
         interleave(ADAPTER, SUSPEND);
         assert(ec[0x0727] == 0xa5);

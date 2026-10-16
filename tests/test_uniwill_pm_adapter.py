@@ -71,6 +71,18 @@ class UniwillPMAdapter(unittest.TestCase):
                                 timeout=10, preexec_fn=no_core)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_profile_clear_read_and_landed_or_unlanded_write_errors_restore_prior_state(self):
+        self.check_case('profile_abort_matrix')
+
+    def test_profile_clear_error_keeps_original_errno_when_rollback_also_fails(self):
+        self.check_case('profile_abort_cleanup')
+
+    def test_profile_success_and_feature_disabled_paths_keep_existing_pm_contract(self):
+        self.check_case('profile_success_and_qualification')
+
+    def test_profile_rollback_keeps_adapter_out_until_suspend_abort_completes(self):
+        self.check_case('profile_abort_concurrency')
+
     def test_adapter_then_suspend_keeps_final_custom_bit_cleared(self):
         self.check_case('adapter_suspend')
 

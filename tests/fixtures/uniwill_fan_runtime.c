@@ -877,7 +877,11 @@ int main(int argc, char **argv)
             reset(false); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
             ec[0x0727] = 0xe5; fail_after = failure;
             assert(uniwill_keyboard_suspend(NULL, 0) == -ETIMEDOUT);
-            assert(event_count == failure + 1 && backlight_calls == 0 && backlight_enabled == 1);
+            /* Only the failed clear-write needs a rollback read. This
+             * persistent fault also rejects that read; no recovery write lands. */
+            assert(event_count == failure + 1 + failure && backlight_calls == 0 && backlight_enabled == 1);
+            assert(errors == failure && (!failure || last_error == -ETIMEDOUT));
+            assert(events[event_count - 1].kind == 'r' && events[event_count - 1].address == 0x0727);
             assert(ec[0x0727] == 0xe5);
             reset(false); uniwill_device_features.uniwill_custom_profile_mode_needed = true;
             ec[0x0727] = 0xa5; fail_after = failure; backlight_enabled = 0;
