@@ -70,21 +70,43 @@
     "src/common/classes/ConfigHandler.ts": {
       "size": 11316,
       "sha256": "0bcae3164fe719e69287063840e849eabc6328def1e1aa0339b89bd5339212e0"
+    },
+    "src/common/models/DefaultProfiles.ts": {
+      "size": 14867,
+      "sha256": "5fcaf7db1684a39cbcef5280c02487549fde7475982532ad9c95fa866bf4b818"
+    },
+    "src/common/models/TccProfile.ts": {
+      "size": 4174,
+      "sha256": "ac5d4dd86deea73e84e0b6280560a8ce5e516ff2f9d8bf7206addb551d9be869"
+    },
+    "src/common/models/TccFanTable.ts": {
+      "size": 39349,
+      "sha256": "e0122ed479b101b2178e983c4421bb2f3b543f6fd46da579019ab6023e4166f7"
+    },
+    "src/common/models/TccSettings.ts": {
+      "size": 3487,
+      "sha256": "1c7e302ac8382cc06a2896162c470172f2c8a50a158397fd61da9d6a89f9ed4e"
+    },
+    "src/common/models/profiles/LegacyProfiles.ts": {
+      "size": 5661,
+      "sha256": "c4eb0a163b2e3b4a8033e03e56272d377bd13f0f5bc4d0b47d027a32fbd49668"
     }
   },
   "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
   "patched_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
     "src/service-app/classes/FanControlWorker.ts": "d93a37a6560d69cb642f6183aab264fede6d521bebb934d9cbc59345350fe00e",
-    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449",
-    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f"
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "535a8b61e8161a8059c6a557aab8a438aaa6357ce201051b71f378e678ce4314",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
+    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
   },
   "patch2_sha256": "fafffae6ed9923c6dcc2bb5faa90938fa68dcb1f72fff6e8060cc229403de285",
   "harness_sha256": {
     "lifecycle_test.cjs": "877aacd1f8e4ae3a42794f7e4be40a9de6730b39319b4d9dda601dd9d230e268",
     "caller_lifecycle_test.cjs": "346fdbabd069387cee9590e837559feb588b93dcacccd01e191cd70ff6feb150",
     "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76",
-    "readback_errors_test.cjs": "7492f97feb610c8ff51b68afd369ad1cb5f028a97c31edb6b96acb345a727d4d"
+    "readback_errors_test.cjs": "7492f97feb610c8ff51b68afd369ad1cb5f028a97c31edb6b96acb345a727d4d",
+    "settings_contract_test.cjs": "f425fac7692c72b7d6faaaf04142494d67ad083d50793330f9e4406d0609dcc0"
   },
   "patch12_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
@@ -97,5 +119,17 @@
     "src/common/models/IFanData.ts": "https://raw.githubusercontent.com/tuxedocomputers/tuxedo-control-center/v3.0.10/src/common/models/IFanData.ts"
   },
   "patch3_sha256": "60353bd61a955dd3272e78df63906acc6279bbb85238f7a8ef3ee883a76e8120",
-  "patch3_scope": "Finite numeric0..100 fan readbacks (worker-1 unavailable); preserve valid readback after failed write; safe aggregation/onWork formatting retains original errors. No hardware write policy or new DBus API."
+  "patch3_scope": "Finite numeric0..100 fan readbacks (worker-1 unavailable); preserve valid readback after failed write; safe aggregation/onWork formatting retains original errors. No hardware write policy or new DBus API.",
+  "patch123_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
+    "src/service-app/classes/FanControlWorker.ts": "d93a37a6560d69cb642f6183aab264fede6d521bebb934d9cbc59345350fe00e",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f"
+  },
+  "patch5_sha256": "c6ceb0e263cf81e80a1c3196a1e568d738fa270d8f1bdbecd4cac43a65c23f2b",
+  "patch5_scope": "Fail closed on existing settings parse/schema/read errors; only ENOENT defaults; preserve previous in-memory settings on read/migration/sync/write failure. No daemon process exit status or atomic disk write guarantee.",
+  "patch4_settings_files_sha256": {
+    "src/common/classes/ConfigHandler.ts": "0bcae3164fe719e69287063840e849eabc6328def1e1aa0339b89bd5339212e0",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449"
+  }
 }

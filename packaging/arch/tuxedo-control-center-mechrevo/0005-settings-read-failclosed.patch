@@ -1,0 +1,127 @@
+--- a/src/common/classes/ConfigHandler.ts
++++ b/src/common/classes/ConfigHandler.ts
+@@ -85,11 +85,63 @@
+     }
+ 
+     public readSettings(filePath: string = this.pathSettings): ITccSettings {
+-        return this.readConfig<ITccSettings>(filePath);
++        return this.validateSettings(this.readConfig<unknown>(filePath));
+     }
+ 
+     public async readSettingsAsync(filePath: string = this.pathSettings): Promise<ITccSettings> {
+-        return await this.readConfigAsync<ITccSettings>(filePath);
++        return this.validateSettings(await this.readConfigAsync<unknown>(filePath));
++    }
++
++    // Validate present fields before consumers use truthiness or nested values.
++    // Missing fields remain compatible with the daemon's existing migration.
++    private validateSettings(settings: unknown): ITccSettings {
++        const isRecord = (value: unknown): value is Record<string, unknown> =>
++            value !== null && typeof value === 'object' && !Array.isArray(value);
++        const invalid = (field: string): never => {
++            throw new TypeError(`ConfigHandler: Invalid settings field: ${field}`);
++        };
++        if (!isRecord(settings)) {
++            invalid('settings');
++        }
++        const values = settings as Record<string, unknown>;
++        for (const field of ['fahrenheit', 'cpuSettingsEnabled', 'fanControlEnabled', 'keyboardBacklightControlEnabled']) {
++            if (Object.hasOwn(values, field) && typeof values[field] !== 'boolean') {
++                invalid(field);
++            }
++        }
++        for (const field of ['shutdownTime', 'chargingProfile', 'chargingPriority']) {
++            if (Object.hasOwn(values, field) && values[field] !== null && typeof values[field] !== 'string') {
++                invalid(field);
++            }
++        }
++        if (Object.hasOwn(values, 'stateMap')) {
++            if (!isRecord(values.stateMap) || Object.values(values.stateMap).some(value => typeof value !== 'string')) {
++                invalid('stateMap');
++            }
++        }
++        if (Object.hasOwn(values, 'ycbcr420Workaround')) {
++            if (!Array.isArray(values.ycbcr420Workaround) || values.ycbcr420Workaround.some(card =>
++                !isRecord(card) || Object.values(card).some(value => typeof value !== 'boolean'))) {
++                invalid('ycbcr420Workaround');
++            }
++        }
++        if (Object.hasOwn(values, 'keyboardBacklightStates')) {
++            if (!Array.isArray(values.keyboardBacklightStates)) {
++                invalid('keyboardBacklightStates');
++            }
++            for (const state of values.keyboardBacklightStates as unknown[]) {
++                if (!isRecord(state)) {
++                    return invalid('keyboardBacklightStates entry');
++                }
++                for (const field of ['mode', 'brightness', 'red', 'green', 'blue']) {
++                    if (Object.hasOwn(state, field) &&
++                        (typeof state[field] !== 'number' || !Number.isFinite(state[field]))) {
++                        invalid(`keyboardBacklightStates.${field}`);
++                    }
++                }
++            }
++        }
++        return settings as ITccSettings;
+     }
+ 
+     public readWebcamSettings(filePath: string = this.pathWebcam): WebcamPreset[] {
+--- a/src/service-app/classes/TuxedoControlCenterDaemon.ts
++++ b/src/service-app/classes/TuxedoControlCenterDaemon.ts
+@@ -475,9 +475,20 @@
+     }
+ 
+     private readOrCreateConfigurationFiles(device: TUXEDODevice): void {
++        const previousSettings: ITccSettings = this.settings;
+         try {
+-            this.settings = this.config.readSettings();
+             let missingSetting: boolean = false;
++            try {
++                this.settings = this.config.readSettings();
++            } catch (err: unknown) {
++                // Only an absent file permits defaults. Parse, schema and I/O errors
++                // must stop loading without overwriting an existing configuration.
++                if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
++                    throw err;
++                }
++                this.settings = this.config.getDefaultSettings(device);
++                missingSetting = true;
++            }
+ 
+             // If settings are missing, attempt to recreate default
+             // TODO purge settings no longer in ITccSettings
+@@ -522,27 +533,18 @@
+                 this.settings.keyboardBacklightStates = this.config.getDefaultSettings(device).keyboardBacklightStates;
+                 missingSetting = true;
+             }
+-            missingSetting = this.syncOutputPortsSetting();
+-
++            missingSetting = this.syncOutputPortsSetting() || missingSetting;
+             if (missingSetting) {
+-                throw Error('TuxedoControlCenterDaemon: Missing setting');
+-            }
+-        } catch (_err: unknown) {
+-            // No settings available, create default settings
+-            try {
+-                if (this.settings === undefined) {
+-                    this.settings = this.config.getDefaultSettings(device);
+-                    this.syncOutputPortsSetting();
+-                }
+                 this.config.writeSettings(this.settings);
+                 this.logLine(
+                     `TuxedoControlCenterDaemon: Filled missing settings with default: "${this.config.pathSettings}"`,
+                 );
+-            } catch (err: unknown) {
+-                console.error(
+-                    `TuxedoControlCenterDaemon: Failed to fill missing settings with default: ${this.config.pathSettings} => ${err}`,
+-                );
+-            }
++            }
++        } catch (err: unknown) {
++            // Settings migration is synchronous. A failed reload must not expose
++            // its staged settings to the already running workers.
++            this.settings = previousSettings;
++            throw err;
+         }
+ 
+         try {

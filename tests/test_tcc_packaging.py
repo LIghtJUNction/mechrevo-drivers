@@ -2,7 +2,7 @@ import hashlib,json,os,pathlib,shutil,stat,subprocess,tempfile,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 RECIPE=ROOT/'packaging/arch/tuxedo-control-center-mechrevo'
 FIXTURE=ROOT/'tests/fixtures/tcc_3_0_10/upstream'
-PATCHES=['0001-fan-io-error-contract.patch','0002-fan-lifecycle.patch','0003-fan-readback-diagnostics.patch','0004-installed-resource-paths.patch']
+PATCHES=['0001-fan-io-error-contract.patch','0002-fan-lifecycle.patch','0003-fan-readback-diagnostics.patch','0004-installed-resource-paths.patch','0005-settings-read-failclosed.patch']
 class TccPackaging(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(dir=os.environ.get('MECHREVO_TEST_TMPDIR'));self.base=pathlib.Path(self.temp.name);self.src=self.base/'src';self.src.mkdir();self.source=self.src/'tuxedo-control-center-3.0.10';shutil.copytree(FIXTURE,self.source);self.pkg=self.base/'pkg';self.pkg.mkdir()
@@ -18,9 +18,9 @@ class TccPackaging(unittest.TestCase):
         return subprocess.run(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD'),str(self.src),str(self.pkg),str(RECIPE)],env=env,text=True,capture_output=True)
     def test_metadata_and_each_local_source_checksum_are_exact(self):
         script=r'source "$1"; printf "%s\0" "$pkgname" "$pkgver" "$pkgrel" "${source[@]}" "${sha256sums[@]}"'
-        r=subprocess.check_output(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD')]);fields=r.decode().rstrip('\0').split('\0');self.assertEqual(fields[:3],['tuxedo-control-center-mechrevo','3.0.10','4']);sources=fields[3:9];sums=fields[9:];self.assertEqual(len(sums),6);self.assertEqual(sources[1:],PATCHES+['electron-builder-dir.json']);self.assertEqual(sums[0],'d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532')
+        r=subprocess.check_output(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD')]);fields=r.decode().rstrip('\0').split('\0');self.assertEqual(fields[:3],['tuxedo-control-center-mechrevo','3.0.10','5']);sources=fields[3:10];sums=fields[10:];self.assertEqual(len(sums),7);self.assertEqual(sources[1:],PATCHES+['electron-builder-dir.json']);self.assertEqual(sums[0],'d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532')
         for name,digest in zip(sources[1:],sums[1:]):self.assertEqual(hashlib.sha256((RECIPE/name).read_bytes()).hexdigest(),digest,name)
-    def test_actual_prepare_applies_four_patches_to_original_fixture(self):
+    def test_actual_prepare_applies_five_patches_to_original_fixture(self):
         result=self.invoke('prepare');self.assertEqual(result.returncode,0,result.stdout+result.stderr);manifest=json.loads((FIXTURE.parent/'provenance.json').read_text())
         for name,digest in manifest['patched_files_sha256'].items():self.assertEqual(hashlib.sha256((self.source/name).read_bytes()).hexdigest(),digest,name)
         dist=self.source/'src/dist-data';self.assertIn('ExecStart=/usr/lib/tuxedo-control-center/data/service/tccd --start',(dist/'tccd.service').read_text());self.assertIn('Exec=tuxedo-control-center %U',(dist/'tuxedo-control-center.desktop').read_text());self.assertIn('Icon=tuxedo-control-center',(dist/'tuxedo-control-center.desktop').read_text());self.assertIn('Exec=tuxedo-control-center --tray',(dist/'tuxedo-control-center-tray.desktop').read_text());self.assertEqual((self.source/'src/udev/99-webcam.rules').read_text(),'/usr/lib/webcam\n')
@@ -32,6 +32,12 @@ class TccPackaging(unittest.TestCase):
         (public/PATCHES[2]).write_text('unreviewed drift\n');env=os.environ.copy();env['TCC_CONTRACT_ROOT']=str(contract);result=self.invoke('check',env);self.assertNotEqual(result.returncode,0);self.assertNotIn('must not run',result.stderr)
     def test_corrupted_resource_patch_is_rejected(self):
         (self.src/PATCHES[3]).write_text('invalid resource patch body\n');result=self.invoke('prepare');self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+    def test_corrupted_settings_patch_is_rejected(self):
+        (self.src/PATCHES[4]).write_text('invalid settings patch body\n');result=self.invoke('prepare');self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+    def test_check_rejects_settings_patch_different_from_reviewed_root(self):
+        contract=self.base/'contract';(contract/'tests').mkdir(parents=True);(contract/'tests/test_tcc_fan_error_contract.py').write_text('raise AssertionError("must not run")\n');public=contract/'packaging/arch/tuxedo-control-center-mechrevo';public.mkdir(parents=True)
+        for name in PATCHES:shutil.copy2(RECIPE/name,public/name)
+        (public/PATCHES[4]).write_text('unreviewed settings drift\n');env=os.environ.copy();env['TCC_CONTRACT_ROOT']=str(contract);result=self.invoke('check',env);self.assertNotEqual(result.returncode,0);self.assertNotIn('must not run',result.stderr);self.assertIn(PATCHES[4],result.stdout+result.stderr);self.assertIn('differ',result.stdout+result.stderr)
     def test_check_rejects_missing_typescript_before_running_tests(self):
         contract=self.base/'contract';(contract/'tests').mkdir(parents=True);(contract/'tests/test_tcc_fan_error_contract.py').write_text('raise AssertionError("must not run")\n');public=contract/'packaging/arch/tuxedo-control-center-mechrevo';public.mkdir(parents=True)
         for name in PATCHES:shutil.copy2(RECIPE/name,public/name)
