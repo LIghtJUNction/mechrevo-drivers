@@ -2372,15 +2372,29 @@ static int uw_init_fan_preserving_targets_locked(void)
 
 int uw_init_fan(void)
 {
+	bool universal;
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	universal = uniwill_device_features.uniwill_has_universal_ec_fan_control;
+	/* A valid table was historically a no-op here, including under FULL.
+	 * Pending PM intent must not turn that no-op into table cancellation. */
+	if (universal && direct_fan_control_suspend && fans_initialized) {
+		u8 mode;
+		status = uniwill_read_ec_ram(0x0751, &mode);
+		if (status || (mode & 0x40))
+			goto unlock;
+	}
 	status = uw_init_fan_preserving_targets_locked();
 	/* A repeated explicit init may enter with intent saved by an earlier
 	 * failed init or PM restore. Internal setters must not do this step. */
-	if (!status && uniwill_device_features.uniwill_has_universal_ec_fan_control &&
-	    direct_fan_control_suspend)
+	if (!status && universal && direct_fan_control_suspend)
 		status = uw_restore_fan_state_locked();
+	/* FULL may change after the precheck. PM cancellation returns zero,
+	 * but cannot establish successful initialization of a disabled table. */
+	if (!status && universal && !fans_initialized)
+		status = -EBUSY;
+unlock:
 	uw_fan_unlock();
 	return status;
 }

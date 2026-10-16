@@ -55,7 +55,7 @@ static unsigned int sleep_values[128], schedule_values[8];
 static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
-static int secondary_read_fail_event;
+static int secondary_read_fail_event, full_before_mode_read;
 static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
 static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write, landed_failed_fan_write, landed_failed_auto_write;
 static u8 ec[UINT16_MAX + 1u];
@@ -78,6 +78,9 @@ static int uniwill_read_ec_ram(u16 address, u8 *value)
     assert(event_count < 1024);
     events[event_count++] = (struct event){'r', address, 0};
     ++reads;
+    /* Model an asynchronous firmware mode change, never software state. */
+    if (address == 0x0751 && full_before_mode_read > 0 && !--full_before_mode_read)
+        ec[0x0751] |= 0x40;
     if (event_count == secondary_read_fail_event + 1)
         return -ENOSPC;
     if (fault(false))
@@ -164,6 +167,7 @@ static void reset(bool universal)
     commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = landed_failed_fan_write = landed_failed_auto_write = false;
     fail_after = -1;
     exact_fail_event = secondary_read_fail_event = -1;
+    full_before_mode_read = 0;
     fault_status = -ETIMEDOUT;
     read_failures = write_failures = mismatch_reads = last_error = 0;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
@@ -259,6 +263,14 @@ static void assert_universal_targets(u8 cpu, u8 gpu)
     assert(universal_fan_manual_active && fans_initialized && !direct_fan_control_suspend);
     assert(!direct_fan_control_started && !direct_fan_control_restart_needed);
     assert(schedules == 0 && !direct_fan_control_restart_delayed_work.pending);
+}
+static void prepare_universal_pending_cached(void)
+{
+    prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+    lose_universal_firmware_state(); clear_trace(); backlight_failures = 1;
+    assert(uniwill_keyboard_resume(NULL) == -EIO);
+    assert(universal_fan_manual_active && fans_initialized && direct_fan_control_suspend);
+    assert_saved(83, 97); assert_cached(83, 97); clear_trace();
 }
 static void prepare_manual(void)
 {
@@ -910,6 +922,51 @@ int main(int argc, char **argv)
         assert(uniwill_keyboard_suspend(NULL, 0) == 0 && uniwill_keyboard_resume(NULL) == 0);
         assert(event_count == count && schedules == queued && ec[0x0751] == 0x11);
         assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "universal_cached_pending_full_init") == 0) {
+        prepare_universal_pending_cached();
+        assert(set_full_fan_mode(true) == 0); clear_trace();
+        assert(uw_init_fan() == 0);
+        assert(fans_initialized && universal_fan_manual_active && direct_fan_control_suspend);
+        assert((ec[0x0751] & 0x40) && (ec[0x07c6] & 4) && (ec[0x07c5] & 0x80));
+        assert(ec[0x0f20] == 83 && ec[0x0f50] == 97);
+        assert_saved(83, 97); assert_cached(83, 97);
+        assert(reads == 1 && writes == 0 && schedules == 0);
+        assert(set_full_fan_mode(false) == 0); clear_trace();
+        assert(uw_init_fan() == 0); assert_universal_targets(83, 97);
+        /* Uninitialized explicit init retains historical FULL clearing. */
+        prepare_universal_pending_cached(); read_failures = 1;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT && !fans_initialized);
+        assert(set_full_fan_mode(true) == 0); clear_trace();
+        assert(uw_init_fan() == 0 && !(ec[0x0751] & 0x40));
+        assert_universal_targets(83, 97);
+    } else if (strcmp(test, "universal_cached_pending_init_read_errors") == 0) {
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int full = 0; full < 2; ++full)
+        for (unsigned int i = 0; i < sizeof(statuses)/sizeof(statuses[0]); ++i) {
+            prepare_universal_pending_cached();
+            if (full) assert(set_full_fan_mode(true) == 0);
+            clear_trace(); fault_status = statuses[i]; read_failures = 1;
+            assert(uw_init_fan() == statuses[i]);
+            assert(reads == 1 && writes == 0 && errors == 0);
+            assert(fans_initialized && universal_fan_manual_active && direct_fan_control_suspend);
+            assert_saved(83, 97); assert_cached(83, 97);
+            assert(!!(ec[0x0751] & 0x40) == full);
+            assert(ec[0x0f20] == 83 && ec[0x0f50] == 97 && (ec[0x07c6] & 4));
+            clear_trace(); assert(uw_init_fan() == 0);
+            if (full) assert(direct_fan_control_suspend); else assert_universal_targets(83, 97);
+        }
+    } else if (strcmp(test, "universal_cached_pending_init_full_race") == 0) {
+        prepare_universal_pending_cached();
+        full_before_mode_read = 2; /* precheck sees manual; restore sees FULL. */
+        assert(uw_init_fan() == -EBUSY);
+        assert((ec[0x0751] & 0x40) && !(ec[0x07c6] & 4) && !(ec[0x07c5] & 0x80));
+        assert(!fans_initialized && !universal_fan_manual_active && !direct_fan_control_suspend);
+        assert_cached(0, 0); assert(reads == 6 && writes == 2 && errors == 0);
+        assert(events[0].address == 0x0751 && events[1].address == 0x0751);
+        assert(uw_set_fan(0, 110) == (u32)-EBUSY);
+        /* A new explicit init may perform its existing FULL-clearing rebuild. */
+        clear_trace(); assert(uw_init_fan() == 0 && !(ec[0x0751] & 0x40));
+        assert(fans_initialized && universal_fan_manual_active);
     } else if (strcmp(test, "universal_reinit_owned_pair") == 0) {
         const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
         for (int failure = 0; failure < 6; ++failure)

@@ -100,6 +100,15 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_legacy_profile_and_tdp_updates_preserving_full_bit_keep_manual_worker(self):
         self.check_case("legacy_override_profile_preserves_worker")
 
+    def test_universal_cached_pending_init_under_full_preserves_existing_noop_and_clear_full_recovery(self):
+        self.check_case("universal_cached_pending_full_init")
+
+    def test_universal_cached_pending_init_mode_read_errors_preserve_errno_and_state(self):
+        self.check_case("universal_cached_pending_init_read_errors")
+
+    def test_universal_cached_pending_init_full_race_cannot_claim_disabled_table_initialized(self):
+        self.check_case("universal_cached_pending_init_full_race")
+
     def test_universal_reinit_after_failed_auto_preserves_owned_pair_for_either_request(self):
         self.check_case("universal_reinit_owned_pair")
 
