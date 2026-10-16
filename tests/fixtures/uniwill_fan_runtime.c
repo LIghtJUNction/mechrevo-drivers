@@ -56,6 +56,9 @@ static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
 static int secondary_read_fail_event, full_before_mode_read;
+static u16 target_failure_address;
+static int target_failures;
+static bool target_cleanup_read_failure, landed_failed_table_write;
 static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
 static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write, landed_failed_fan_write, landed_failed_auto_write;
 static u8 ec[UINT16_MAX + 1u];
@@ -105,9 +108,14 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     assert(event_count < 1024);
     events[event_count++] = (struct event){'w', address, value};
     ++writes;
-    if (fault(true)) {
+    bool target_failure = target_failures > 0 && address == target_failure_address;
+    if (target_failure) --target_failures;
+    if (fault(true) || target_failure) {
+        if (target_failure && target_cleanup_read_failure)
+            secondary_read_fail_event = event_count; /* fail next recovery read independently */
         if ((address == 0x0751 && landed_failed_mode_write) ||
             (landed_failed_auto_write && (address == 0x07c5 || address == 0x07c6)) ||
+            (landed_failed_table_write && (address == 0x0f20 || address == 0x0f50)) ||
             (landed_failed_fan_write && (address == 0x0751 || address == 0x1804 || address == 0x1809))) ec[address] = value;
         return fault_status;
     }
@@ -167,7 +175,9 @@ static void reset(bool universal)
     commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = landed_failed_fan_write = landed_failed_auto_write = false;
     fail_after = -1;
     exact_fail_event = secondary_read_fail_event = -1;
-    full_before_mode_read = 0;
+    full_before_mode_read = target_failures = 0;
+    target_failure_address = 0;
+    target_cleanup_read_failure = landed_failed_table_write = false;
     fault_status = -ETIMEDOUT;
     read_failures = write_failures = mismatch_reads = last_error = 0;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
@@ -922,6 +932,94 @@ int main(int argc, char **argv)
         assert(uniwill_keyboard_suspend(NULL, 0) == 0 && uniwill_keyboard_resume(NULL) == 0);
         assert(event_count == count && schedules == queued && ec[0x0751] == 0x11);
         assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "universal_partial_target_recovery") == 0) {
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int fan = 0; fan < 2; ++fan)
+        for (int stage = 1; stage < 3; ++stage)
+        for (int landed = 0; landed < 2; ++landed)
+        for (unsigned int error = 0; error < sizeof(statuses)/sizeof(statuses[0]); ++error)
+        for (int recovery = 0; recovery < 4; ++recovery) {
+            prepare_universal(); fault_status = statuses[error]; exact_fail_event = stage;
+            landed_failed_table_write = landed_failed_fan_write = landed;
+            assert((int)uw_set_fan(fan, 110) == statuses[error]);
+            assert(event_count == stage+1 && !fans_initialized && universal_fan_manual_active);
+            assert(direct_fan_control_suspend); assert_saved(83, 97); assert_cached(83, 97);
+            clear_trace();
+            if (recovery < 2) {
+                int next = recovery ? fan : !fan;
+                assert(uw_set_fan(next, 120) == 0);
+                assert_universal_targets(next ? 83 : 120, next ? 120 : 97);
+            } else if (recovery == 2) {
+                assert(uw_init_fan() == 0); assert_universal_targets(83, 97);
+            } else {
+                assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+                assert_saved(83, 97); lose_universal_firmware_state(); clear_trace();
+                assert(uniwill_keyboard_resume(NULL) == 0); assert_universal_targets(83, 97);
+            }
+        }
+    } else if (strcmp(test, "universal_partial_target_nested_failures") == 0) {
+        reset(true); ec[0x0751] = 0x11;
+        direct_fan_control_current_value_fan0 = direct_fan_control_current_value_fan1 = 0;
+        assert(uw_init_fan() == 0); clear_trace();
+        fault_status = -EIO; target_failure_address = 0x1804; target_failures = 1;
+        assert((int)uw_set_fan(0, 110) == -EIO); assert_saved(0, 0);
+        for (int cleanup_fails = 0; cleanup_fails < 2; ++cleanup_fails) {
+            clear_trace(); target_failure_address = 0x1809; target_failures = 1;
+            target_cleanup_read_failure = cleanup_fails;
+            assert((int)uw_set_fan(1, 120) == -EIO);
+            /* CPU restore normalizes0 to1 before GPU fails. Never replace
+             * the original saved0/0 pair with that partial live cache. */
+            assert_saved(0, 0); assert(direct_fan_control_suspend && !fans_initialized);
+            if (cleanup_fails) {
+                assert(errors == 1 && last_error == -ENOSPC && universal_fan_manual_active);
+                assert(ec[0x07c6] & 4); assert_cached(1, 0);
+            } else {
+                assert(errors == 0 && !universal_fan_manual_active && !(ec[0x07c6] & 4));
+                assert_cached(0, 0);
+            }
+        }
+        clear_trace(); target_cleanup_read_failure = false;
+        assert(uw_init_fan() == 0); assert_universal_targets(1, 1);
+        assert_saved(0, 0);
+    } else if (strcmp(test, "universal_partial_target_full_and_auto") == 0) {
+        for (int explicit_init = 0; explicit_init < 2; ++explicit_init) {
+            prepare_universal(); target_failure_address = 0x1804; target_failures = 1;
+            assert((int)uw_set_fan(0, 110) == -ETIMEDOUT);
+            assert(direct_fan_control_suspend && !fans_initialized);
+            assert(set_full_fan_mode(true) == 0); clear_trace();
+            if (explicit_init) {
+                /* Dirty init retains its pre-existing FULL-clearing contract. */
+                assert(uw_init_fan() == 0 && !(ec[0x0751] & 0x40));
+                assert_universal_targets(83, 97);
+            } else {
+                assert((int)uw_set_fan(1, 120) == -EBUSY);
+                assert((ec[0x0751] & 0x40) && !(ec[0x07c6] & 4));
+                assert(!direct_fan_control_suspend && !fans_initialized && !universal_fan_manual_active);
+                for (int i = 0; i < event_count; ++i)
+                    if (events[i].kind == 'w') assert(events[i].address == 0x07c5 || events[i].address == 0x07c6);
+            }
+        }
+        prepare_universal(); target_failure_address = 0x0f50; target_failures = 1;
+        landed_failed_table_write = true;
+        assert((int)uw_set_fan(1, 110) == -ETIMEDOUT && direct_fan_control_suspend);
+        clear_trace();
+        assert((int)uw_set_fan(2, 120) == -EINVAL && (int)uw_set_fan(0, 201) == -EINVAL);
+        assert(event_count == 0 && direct_fan_control_suspend); assert_saved(83, 97);
+        assert(uw_set_fan_auto() == 0 && !direct_fan_control_suspend && !universal_fan_manual_active);
+        assert_cached(0, 0); clear_trace();
+        assert(uw_set_fan(1, 120) == 0 && ec[0x0f20] == 1 && ec[0x0f50] == 120);
+        assert_cached(0, 120); /* Cancelled oldCPU83 is never replayed. */
+    } else if (strcmp(test, "universal_partial_target_preflight_unchanged") == 0) {
+        prepare_universal(); read_failures = 1;
+        assert((int)uw_set_fan(0, 110) == -ETIMEDOUT);
+        assert(fans_initialized && universal_fan_manual_active && !direct_fan_control_suspend);
+        assert(writes == 0); assert_cached(83, 97);
+        clear_trace(); assert(set_full_fan_mode(true) == 0); clear_trace();
+        assert((int)uw_set_fan(1, 120) == -EBUSY && writes == 0);
+        assert(fans_initialized && universal_fan_manual_active && !direct_fan_control_suspend);
+        assert_cached(83, 97);
+        assert((int)uw_set_fan(2, 120) == -EINVAL && (int)uw_set_fan(0, 201) == -EINVAL);
+        assert(fans_initialized && !direct_fan_control_suspend);
     } else if (strcmp(test, "universal_cached_pending_full_init") == 0) {
         prepare_universal_pending_cached();
         assert(set_full_fan_mode(true) == 0); clear_trace();

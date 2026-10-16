@@ -2554,10 +2554,19 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 			}
 
 			status = uniwill_write_ec_ram(addr_for_fan, fan_speed & 0xff);
-			if (status)
-				return status;
-
-			return direct_fan_control(fan_index, fan_speed, false);
+			if (!status)
+				status = direct_fan_control(fan_index, fan_speed, false);
+			if (status) {
+				/* Either write may have landed. Keep the last successful
+				 * pair and require full recovery before another target. */
+				if (!direct_fan_control_suspend) {
+					direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+					direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+					direct_fan_control_suspend = true;
+				}
+				fans_initialized = false;
+			}
+			return status;
 		}
 		/* Full fan mode owns fan control; do not claim an unapplied target. */
 		return -EBUSY;

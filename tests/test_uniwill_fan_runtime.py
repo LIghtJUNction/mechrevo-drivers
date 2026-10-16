@@ -100,6 +100,18 @@ class UniwillFanRuntime(unittest.TestCase):
     def test_legacy_profile_and_tdp_updates_preserving_full_bit_keep_manual_worker(self):
         self.check_case("legacy_override_profile_preserves_worker")
 
+    def test_universal_partial_target_write_errors_recover_complete_pair_through_each_public_path(self):
+        self.check_case("universal_partial_target_recovery")
+
+    def test_universal_partial_target_nested_restore_errors_preserve_original_pair_and_errno(self):
+        self.check_case("universal_partial_target_nested_failures")
+
+    def test_universal_partial_target_full_and_successful_auto_keep_existing_control_contracts(self):
+        self.check_case("universal_partial_target_full_and_auto")
+
+    def test_universal_partial_target_preflight_errors_do_not_dirty_untouched_table(self):
+        self.check_case("universal_partial_target_preflight_unchanged")
+
     def test_universal_cached_pending_init_under_full_preserves_existing_noop_and_clear_full_recovery(self):
         self.check_case("universal_cached_pending_full_init")
 
