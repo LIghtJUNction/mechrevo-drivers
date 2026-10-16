@@ -68,6 +68,16 @@ TCC 的两个 ODM worker 虽有定时周期，`onWork` 为空，不能据周期�
 但这些只证明能力。已识别的目标寄存器读取和遥测路径不是写入证据，
 尚未闭合它实际写入 `0x1a2` 的调用链，不能将它认定为阈值修改者。
 
+随后一次独立、限时的私有 tracefs 实机检查成功启用并清理了专属实例；
+20 秒窗口内 195 次 CPU0 参考读取保持 TCC offset 15°C／触发参考 85°C，
+未捕获匹配 `msr/write_msr` 的 `0x1a2` 写入事件。195 为在线累计检查数，
+只保存末 16 组参考明细。全局追踪控制与受保护配置未变，
+CPU buffer 统计没有丢失记录。此前两个候选均在启用事件前拒绝，失败材料保留。
+这只是一次 Linux wrapper 追踪窗口，未覆盖 SMM、固件及绕过 wrapper 的直接汇编；
+未捕获不能证明没有修改者，也不能据此确认是固件。IRQ／远程 IPI 里的 PID／comm
+只代表执行现场，不能直接当作发起写入的用户进程。实验工具尚未加入安装包。
+
+
 寄存器语义参考 [Intel Adaptive Thermal Monitor](https://edc.intel.com/content/www/us/en/design/ipla/software-development-platforms/client/platforms/alder-lake-desktop/12th-generation-intel-core-processors-datasheet-volume-1-of-2/011/adaptive-thermal-monitor/)
 及固定版本 [Linux v6.12 turbostat 解码](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L6766-L6777)，
 Alder Lake 的 6 位偏移见该版本 [adl_features](https://github.com/torvalds/linux/blob/v6.12/tools/power/x86/turbostat/turbostat.c#L688-L700)。
