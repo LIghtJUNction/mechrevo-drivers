@@ -4,7 +4,47 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
-## 2026-10-16 r106 启动镜像与菜单同步（最新，未重启）
+## 2026-10-16 universal 部分设速失败恢复（最新源码，未安装）
+
+源码 `e389631bbaac7bdfb8deacc68c54e4c4f908b6ba`，`uniwill_keyboard.h` SHA-256：
+`55b4242278891ae52f140f984d4fa4140bf6fc330a700755c4752dc4cc0322e2`。
+实际 C 故障模型复现：CPU/GPU 83/97 后 CPU110 的表写成功、直控写 EIO，
+旧状态为表110/直控83/缓存83、初始化有效且无待恢复标记；
+后续 GPU120 或公开初始化返回0仍不修复 CPU。根代理的两条独立用例在旧源码 SIGABRT、新源码通过。
+
+任一目标写失败现保存最后成功双目标（仅首次创建待恢复意图），初始化失效，
+后续同扇、另一扇、显式初始化或 PM 走完整恢复；内层失败不覆盖原 saved pair。
+失败 setter 不新增 EC/AUTO 操作，错误原样传播；未写入的前置读取失败、非法输入和 FULL 拒绝不标脏。
+失效缓存且 FULL 已置位时，显式初始化会清 FULL 并恢复双目标，沿既有失效缓存初始化行为；
+这是新增可达行为，旧错误有效缓存曾无操作。setter under FULL 的拒绝及取消旧意图保持。
+139 项相关回归通过，覆盖双扇/两写/模拟落地或未落地/三 errno/四恢复入口、
+saved0/0 经部分规范化为1后的嵌套失败、独立清理错误、AUTO/FULL 和前置拒绝。
+
+私有干净副本在 `7.2.9-arch1-1` headers 下 `W=1 -j2` 编译28模块通过，5条既有其他模块警告保留。
+作者139回归和独立负例/修复例跟踪完整；根构建 `54ab8bf0` 命令0，跟踪 partial：
+1个 make GMfifo 非普通文件事件读取 gap、411 unresolved。未通过重跑补造历史。
+本地根证据在 `.local-tests/fan-port-iteration/root-full-init/target-dirty/`，作者证据在
+`.local-tests/fan-port-iteration/universal-full-init/target-partial-next/`。
+统一 Backups 的 `universal-target-partial-20261016/` 保存17份作者载荷，
+`universal-target-partial-root-20261016/` 保存13份独立证据及实际核心ko，均逐文件回读核验。
+未安装或加载新修复；磁盘及主启动镜像仍r106，当前运行核心r37/WMIr60/传感器r76。
+TCC实验包仍未安装，热尖峰及动态偏移修改者未解决，实机验收仍9/20。
+
+## 2026-10-16 启动条目的后续维护审查（只读）
+
+固定源码检查普通 limine-snapper-sync 只重建 Snapshots 节点，保留主条目的原路径和散列；
+显式恢复会替换主条目。成功的官方 kernel rebuild 会按 kernel-id=linux 切到新生成的标准文件名，
+不应把这个成功路径称作回退到保留的旧镜像。原 wrapper 的吞错问题仍要求重建后验证实际产物。
+10 项静态源码合同和4条源码篡改负例通过，17份源/菜单/历史身份起止一致；
+没有执行 native 同步，也没有证明未来所有配置或实机启动行为。
+
+当前 EFI 占用72.44%，实际快照启动项为空、有效 LIMIT_USAGE_PERCENT=65；
+发布前每小时日志已报告创建受限，新保留的镜像进一步占用空间。
+主启动及独立Recovery入口核验不能替代快照启动恢复功能验收；本轮未改门槛、配置、服务或EFI。
+新冻结证据 `.local-tests/fan-port-iteration/boot-management-audit/`，
+统一 Backups 的 `boot-management-r106-20261016/` 保存36份小证据，逐文件回读通过，跟踪 complete/0。
+
+## 2026-10-16 r106 启动镜像与菜单同步（前轮，未重启）
 
 `/efi/EFI/Linux/omarchy_linux_r106.efi` 已写入，256,729,144 字节，SHA-256：
 `67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2`。
