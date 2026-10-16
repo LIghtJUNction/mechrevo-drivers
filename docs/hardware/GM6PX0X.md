@@ -1,8 +1,34 @@
 # 旷世 16 Pro GM6PX0X 本机验证
 
-日期：2026-10-14；2026-10-15／16 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
+日期：2026-10-14；2026-10-15／16／17 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
+
+## 2026-10-17 观察器 r16 已安装并核验
+
+`mechrevo-power-control 0.1.0-16` 已完成单次安装，包 SHA-256：
+`9d88c3ca3c245123e9464af4734ffa5dd746276ae2531acd0c1c1d11aa470516`。
+固定功能源码为 `2e76e5a174c69ec8e9a060d751d15e2bfb53b02c`；
+10 个载荷的字节、模式和 root 归属逐项一致，`pacman -Qkk` 为 22 项、0 改动。
+141 项功耗与温度回归、8 项包装测试的范围及候选阶段另见后文历史记录。
+
+安装后的实际入口成功返回 `package_temperature.available=true`、87°C 和传感器身份／读取窗口，
+`errors`、`diagnostic_errors` 均为空。两套 PL1 限值当次为 34.5W／55W，
+`holding_now=true`；这些是限值，不是测得的实际耗电功率。
+没有调整策略，单次温度不能证明热尖峰已经修复。
+
+五个受保护配置、四个指定进程身份、boot、加载模块及既有全局追踪状态前后相同，
+PackageKit 保持 inactive／PID 0；未执行 TCC／thermald 切换、驱动加载或功耗／风扇设置。
+安装使用已审查的私有 HookDir 覆盖；实际执行的三个 hook 仅检查 Omarchy 入口、
+等待 Limine 锁及更新时间戳，没有音频／温控服务重启、EFI 或 DKMS 动作。
+覆盖机制见 [ALPM hook 手册](https://man.archlinux.org/man/alpm-hooks.5.en)。
+
+恢复包 15 的 SHA-256 为 `936eeb3f37511a4d03d88ffb90a7f2d392ba1f3884d880451c45099d45e871c4`，
+已逐载荷确认与升级前磁盘内容相同。安装及恢复材料存于
+`~/Backups/projects/mechrevo-drivers/light/power-control-r16-installed-20261017/`，
+122 个文件、500856 字节已独立完整读回；本轮未实际执行回退。
+安装跟踪保留 partial（0 gap、10 条未解析删除事件），归档完整不能补全安装历史。
+硬件验收仍为 9/20；温控候选和完整 Windows 移植仍待验证。
 
 ## 2026-10-16 观察器 r15 安装与额外 PM 补偿
 
