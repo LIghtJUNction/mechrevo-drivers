@@ -4,7 +4,67 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
-## 2026-10-16 r72 RPM 安装与原厂功耗默认值续验（最新）
+## 2026-10-16 r76 手动风扇 PM 修复与 r12 观测（最新）
+
+源提交 `4a22fc74197b9f0550b93337be4eae9da09ef342` 修复 universal 手动风扇未参与 PM 的问题。
+独立追踪已拥有/可能启用的 RAM 表；初始化成功或提交无法确认时均不能当作 AUTO。
+睡眠前保存双目标并验证关闭表，恢复时使缓存失效、重建并恢复双目标；部分失败保留目标、
+尝试回 AUTO，原错误与恢复错误分别报告。FULL 覆盖先验证关闭旧表，保留 FULL 位，
+不能在后续恢复错误中复活旧目标。universal 路径不启动 legacy 周期 worker。
+旧源码的公共请求 PM roundtrip 负例确实失败；修复后 371 项相关及全部 710 项回归通过。
+并发覆盖 suspend/manual、resume/AUTO、resume/remove；均为实际 C 的模拟 EC，不是固件睡眠测试。
+
+两内核隔离 W=1 构建各 28 个模块成功；每套五条既有警告与旧源码对照相同，无新增警告。
+62 条导出符号名称/类型/namespace 与 r72 相同，但内核未启用符号 CRC，不能当作完整 ABI 证明。
+包 `4.24.0.r76.g4a22fc7-1` 已安装，SHA-256
+`0a8ea5f581a205ca51b5908348d3f13daa96cabb527358e1c98f08d71834713b`。
+86 个包内文件字节/权限、56 个源码、113 个安装文件/零改动核验通过。
+`7.2.9-arch1-1`、`7.2.7-arch1-1` 各 28 个模块完成 DKMS 安装、vermagic/签名检查。
+三项现有 EFI 映像签名检查通过，不代表 Secure Boot 验收或第二内核已实机启动。
+
+只独立重新加载只读传感器并完成十组读取，运行 build ID 与 r76 安装文件一致。
+keyboard/IO/NVIDIA/compatibility 仍运行 r37，WMI 仍运行 r60，核心 PM 修复仅安装到磁盘，
+没有实机挂起/恢复、核心热重载、重启或手动风扇写入。三个服务 PID、五个核心 build ID、
+键盘节点及配置散列保持，GPU 查询与身份保持，加载窗口无新增受监测 GPU/PCIe 故障。
+legacy FULL/周期 worker 和 remove 的固件 AUTO 语义仍未修复；不泛化本轮 universal PM 结果。
+
+观测包 `mechrevo-power-control 0.1.0-12` 固定源码
+`0c0c65eaf07534eaed3c957a174a961b579eae57`、配方 `d434f824995c40e232f51b9be9312df3fd3c4911`；
+包 SHA-256 `a50905b98885ebe77a157e24e447a6bba625f8a8e64d29f522b47615c351547d`。
+10 个 payload 字节/权限与固定提交匹配，22 个安装文件/零改动，配置/PID/六模块/键盘节点保持。
+新增 `fan_rpm` 不替代原始刻度；缺接口明确标不可用，读取错误、重复/损坏设备或运行中消失使观测失效。
+47 项观察回归和 8 项实际打包回归通过，全部包含在上述 710 项中。
+
+| 自然桌面观测 | 时长/样本 | CPU OEM RPM | GPU OEM RPM | 最高内部采样 |
+| --- | --- | --- | --- | --- |
+| 新源码直接运行 | 30.59 秒/23 | 3041–3970 | 4427–4939 | 97°C |
+| 安装 r12 后正式命令 | 30.50 秒/23 | 2453–3175 | 3915–4427 | 88°C |
+
+两窗口均 complete/valid，无新增受监测 GPU/PCIe 故障；负载、初始温度不同，不能比较散热收益。
+55W PL1、90°C 软件目标、每秒轮询、零 RAPL 防抖保持，PL2 140W 未持久托管。
+先前 100°C 热尖峰仍未解决；RPM 尚未用独立转速计校准。
+
+原厂字符串动态方法和另五个已定位载荷均静态恢复；六载荷共 735 条 CIL，另有
+3,320 个唯一字符串/10,965 处相邻调用。指令、字段和字符串明文全部留在私有证据。
+`19f3` 的 79 个 opcode 绑定 64 个处理函数，`19f6` 为 native VM 取指桥；handler/native VM 仍待分析。
+原厂 51 的充电优先级支持函数无条件 false，不应为 GM6 盲目新增该白名单。
+
+原厂 EFI managed 结构为 188 字节，但本机固定变量共 184 字节；按 Linux efivarfs 前四字节属性格式，
+实际数据为 180 字节。[Linux efivarfs 格式](https://docs.kernel.org/filesystems/efivarfs.html)。
+仅以 O_RDONLY 对精确变量做一次有界读取，未补零/重排/写入。
+已证明偏移的 APVersionCheck、ACRecoverySupport、ACRecoveryStatus 前缀字节均为 0，
+回执始终 `partial_prefix=true`、`format_qualified=false`，不据此宣称完整 ABI 兼容、最终功能不支持或 EFI 写资格。
+原厂 DLL 忽略读取长度而将缓冲尾部置零的行为不能作为 Linux 兼容依据。
+
+私有回执在 `.local-tests/postboot-20261016/oem-binding/`：
+`linux-fan-audit/pm/` 保存测试/双内核构建，`package/pm-driver/` 保存包/安装/传感器核验，
+`package/observer-r12/` 保存观测包/安装/正式实机观测，`native/` 和 `managed/` 的新动态分析保存恢复证据，
+`power-semantics/setting-gates/efi-abi/prefix-receipt.json` 保存 root600 的有界 EFI 读取。
+恢复材料位于 `~/Backups/projects/mechrevo-drivers/light/fan-pm-20261016/`（原 r72 包/原传感器及 r76 核验），
+以及 `power-thermal-20261016/observer-r12-recovery/`（r11 包/配置和 r12 核验）；均逐文件回读校验。
+源码已推送，AUR 元数据未更新。完整目标及剩余项见[功能覆盖](../OEM-FEATURE-COVERAGE.md)。
+
+## 2026-10-16 r72 RPM 安装与原厂功耗默认值续验（前轮）
 
 完整本地回归 689 项通过，其中实际 C 风扇运行/并发 53 项、温度/RPM 10 项。
 RPM 故意破坏 GPU 低地址、缩放、错误传播、跨字节刷新四个负例均被回归捕获。

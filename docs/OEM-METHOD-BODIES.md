@@ -3,8 +3,16 @@
 2026-10-16 已从原始 5.17.51.34 服务静态恢复方法表中的全部 **5,183 个 CIL 方法体**。
 CIL 是 .NET 的中间指令；这次取得的是可逐条解码的真实指令，不再只是共享异常桩。
 布局判定、CPU/GPU 转速公式及 RamFan1p5 曲线写入顺序已经追到实际分支。
-恢复代码仍有继续调用 VM 的包装方法，因此这不等于全部保护逻辑已还原，更不等于 Linux 完整移植。
+恢复代码仍有调用动态 IL 的包装方法；之前将入口 `0x0600182f` 称为 VM 分派的判断已纠正，
+它创建并缓存 DynamicMethod，与 native netvm 是不同路径。动态载荷还在逐项分析，
+这不等于全部保护逻辑已还原，更不等于 Linux 完整移植。
 全程只分析文件数据，没有加载或执行 OEM 程序、native 模块或恢复后的方法。
+
+原服务共有 8,702 个 MethodDef 元数据行，其中 6,841 个有非零 RVA：
+5,183 个属于已恢复保护表，另 1,658 个原文件方法体不在该表中，不能据此声称已审计完。
+1,861 个零 RVA 行含声明/导入，不能简单视为缺失实现。
+客户端、native/驱动、嵌套配件包、剩余 VM 和 Linux 界面等价功能还需逐项分析；
+已建立 28 类行为清单，但不声称穷尽所有功能。详见 [完整功能覆盖](OEM-FEATURE-COVERAGE.md)。
 
 ## 锁定分析对象
 
@@ -77,13 +85,32 @@ RVA `0x7a5aa8` 映射文件偏移 `0x7a3ca8`，12 字节（含 tiny header）为
 `AcpiCtrl.Read` 忽略传入的名称，不能根据该字符串猜另一个 EC 地址空间。
 GPU 低字节明确为 `0x046b`，没有把未经本机验证的 `0x046d` 套进来。
 但源码中的 RPM 名称和换算仍不能替代独立机械转速校准。
-`0x060019f6`、`0x06001c9b` 等恢复结果仍会分派到 VM；恢复外层 CIL 不代表其内部逻辑已经解释。
+`0x060019f6`、`0x06001c9b` 等恢复结果还调用动态 IL 构建器；后续已恢复其内层正文。
+其中 `0x060019f6` 的正文才是 native VM 取指桥，`0x06001c9b` 是数据读取器，不能混称 VM 执行器。
 
 本机新十组只读样本均为 `0x078e = 0xec`、`0x0740 = 0x10`。
 结合恢复后的工厂选择分支，正常读取成功时会选择 `MyFanManager_RamFan1p5`
 及 `FanTable_Manager1p5`。同组 OEM 公式字值为 CPU 3,816–3,878、GPU 4,939；
 不是独立转速仪结果，也没有在本机运行 Windows 选择函数。
 表写入、失败处理及 Linux 实施边界见 [原厂策略迁移](OEM-MIGRATION-NEXT.md)。
+
+## DynamicMethod 与字符串解码的新证据
+
+原始 managed IL 已确认 `0x0600182f` 经方法构建器生成、缓存 DynamicMethod，
+其包装调用使用实际 `MethodBase.Invoke`，不是 native netvm context。
+字符串入口 `0x0600196f` 的实际 75 字节帧已经解出，含 12 字节方法头及 63 字节 CIL，
+共 35 条指令；不能把 75 字节全部当作裸 IL。独立有界静态模型对 72 组用例核对算术与边界，
+覆盖空值/空串、UTF-16 单元、回绕及长度边界，没有执行 OEM 或 CLR DynamicMethod。
+
+从原始 `#US` 堆已静态恢复 3,320 个唯一字符串，关联原始/恢复 IL 中 10,965 处
+相邻 `ldstr` 与该解码器调用。此计数范围不含尚未证明的其他数据流或全部配置使用，
+也不代表每个字符串对应的功能已移植。完整语料、OEM 指令和解密参数仅留私有证据。
+六个已定位动态包装载荷已全部恢复，长度为 19/75/1841/27/608/87 字节，两个 tiny、四个 fat。
+独立校验代码/跳转/元数据/本地签名/异常区间；17 个损坏数据负例通过。
+它们对应原有六个包装方法的内层正文，不把恢复方法总数算作 `5183 + 6`。
+`0x060019f3` 建 opcode 处理器字典，`0x060019f4` 查表调用，`0x060019f6` 调用 native dec
+取得 opcode/operand 记录并缓存；`0x06001c9b` 读取指定 RVA 数据并可选 RC4。
+取指桥已定位不等于所有 VM 程序、动态方法、客户端或 native 行为已完整还原。
 
 ## 功耗/TCC 方法恢复的新增结论
 
@@ -101,6 +128,19 @@ Office 为 45/45/200/1、TCC 为 20；Turbo 为 130/130/200/1、TCC 为 5。
 没有为此切换原厂性能模式或写入功耗/TCC。完整字段地址、manager 边界及待验收条件见
 [功耗模式证据](OEM-MIGRATION-NEXT.md#原厂功耗模式的真实分支与本机默认字节)。
 
+## 电源事件与睡眠恢复的静态边界
+
+原元数据已闭合 OS 注册、delegate 和异步状态机之间的关联。
+普通 PowerModeChanged 处理器只处理电源状态变化；默认另一条通知路线注册的是显示状态，
+不是实际挂起/唤醒。配置选择的替代路线包含 Resume 通知，但不区分 S3/S4。
+恢复路径有 3 秒和 2 秒 `Thread.Sleep`，并会重放 profile 与排队曲线；
+同步方法返回不保证异步曲线提交完成，也不能据显示关闭推断风扇已回自动模式。
+
+源码允许已排队曲线在服务停止后再次使能：已检查路径没有队列排空/代次或停止状态检查。
+这不是 Windows 运行复现，也未证明外层所有同步条件；Linux 无须复制此行为。
+真实 OS 常量、完整事件链及 Linux 待验收边界见
+[事件覆盖说明](OEM-FEATURE-COVERAGE.md#电源与显示事件的新证据)。
+
 ## 复现与证据
 
 维护工具及用法见 [Windows 静态工具](WINDOWS-STATIC-TOOLS.md)。工具固定原始来源哈希、
@@ -117,6 +157,10 @@ Office 为 45/45/200/1、TCC 为 20；Turbo 为 130/130/200/1、TCC 为 5。
 - `hardware/hardware-receipt.json`：十组实机只读样本、探针移除、原服务/模块/配置保持及 GPU 健康核验。
 - `power-semantics/FINDINGS.md`、`evidence.json`、`mode-matrix.json`、`defaults-receipt.json`：实际功耗模式分支、逐方法来源 hash 和十五个默认字节的三组实机只读核对。
 - `hardware/rpm-trial-receipt.json`：Linux 只读 RPM 临时加载/读取/恢复验证；包安装状态另行记录。
+- `mapping/feature-coverage/`：服务方法与安装文件/嵌套包清单、28 类功能、manager 和本机支持边界。
+- `fan-layout-body/sleep-events/SLEEP-EVENTS.md`、`metadata-links.json`、`event-delegate-records.json`：OS 注册、事件身份和异步状态机的静态绑定证据。
+- `managed/string-decoder/string-decoder-receipt.json`、`static-model-receipt.json`、`corpus-receipt.json` 及 `native/string-decoder/`：DynamicMethod 构建路径、实际帧、静态模型和私有字符串计数。
+- `power-semantics/setting-gates/`：OEM 51 充电优先级固定关闭；EFI 188/180 字节差异及不具格式资格的前缀只读结果。
 
 早期 PE 元数据、native 解密与重建证据继续保留于
 `.local-tests/postboot-20261016/thermal-iterate/oem-body-audit/`。
