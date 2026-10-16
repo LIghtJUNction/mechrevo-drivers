@@ -75,6 +75,25 @@ GPU profile 的目标温度另走 GPU 接口，不能用打包 JSON 中的 87°C
 原厂模式迁移还需闭合实际 profile 选择、编辑/持久化输入及固件接受/恢复路径；
 当前 Linux 的 55W 上限和软件 90°C 目标是独立适配策略。
 
+## Custom 档 profile 选择到功耗写入的具体分支
+
+本轮继续复用原始 CIL，闭合选中 RamFan1p5 的 `M4P1..M4P5`：先检查四字符标签，
+设置索引 0..4 并尝试 JSON 持久化，再进入 Custom mode 3、刷新所选 profile 和应用设置。
+`CustomId=9` 会先把 `M4P4` 改为 `M4P1`，刷新时还会将索引大于 2 归零；不能从本机项目号 `0x10` /能力字节 `0xec` 推定该条件。
+这只是标签和 profile 选择，不是功耗范围校验。
+
+实际顺序先进入 `SetFanMode`：Custom 分支向 `0x0751` 写由 OC/既有 FanBoost 标志组成的整字节，
+再读改写 `0x0726` bit 7；随后发布托盘状态、请求异步曲线，再进入 Intel PL1/PL2/PL4 与 TCC 路径。
+还有条件式 CPU 电压和 GPU 调用，不能把上述寄存器列成完整、原子的事务。
+应用调用之后才尝试保存 OperatingMode 和 EFI PowerMode；这些持久化尝试均不等于硬件接受。
+所查 mode worker 的内部异常处理会丢弃应用异常并继续 pending-command 清理/调度，未见 PL/TCC 补偿或逐请求硬件 ACK。
+Linux 对等入口必须先验证完整 profile、串行执行并报告各阶段结果/部分失败，不能把已改变的软件模式或状态通知当作成功。
+
+12 个旧恢复方法体与原始包/既有回执重新核对，50 个原始指令契约及其单点篡改负例通过；
+16 个独立标量模型用例只检查标签和条件索引，不是运行 OEM、CLR 或硬件。
+小证据在私有 `power-semantics/custom-mode-transaction-v2/`，没有重复恢复 5,183 个方法。
+Resume 重放、profile 编辑输入及固件实际接受仍未闭合，本轮没有新增 EC/模式写入。
+
 ## 本机布局分支已经闭合
 
 真实 `IsSuportRamFan1p5` 读取 `0x078e` bit 6。项目号来自 `0x0740`；
