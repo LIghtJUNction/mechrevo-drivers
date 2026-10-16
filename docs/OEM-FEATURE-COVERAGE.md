@@ -172,6 +172,14 @@ XBF 事件连接、服务端应用 ACK 及硬件效果仍未闭合，不能假�
 2,345 个反射表项有界遍历、30 条原始映像篡改负例及 10 个局部分析条件检查通过，
 143 份旧冻结文件内容/权限/所有者未变；局部模型未执行原厂、CLR 或 VM 代码。
 
+私有 `mapping/aot-ac-classifier-predicates` 将分类器三个反射判断绑定到原包实际映射：
+`Type.IsEnum`、`Type.IsGenericType`、`Type.GetGenericTypeDefinition`；
+可空类型检测比较的是原包 `System.Nullable<T>` 定义，两个解包导入分别属于 `Enum` 和 `Nullable`。
+字典未命中且非枚举、非可空类型时，确认返回 `Object = 1`；这仍是条件分支，
+没有证明匿名根实际得到这些反射结果。不同非空 Type 对象的相等运算还会虚调用，
+因此不能只凭不同原生类型地址断言结果。37 条原始映像篡改负例、10 个局部条件检查通过，
+159 份旧冻结材料未变；未执行原厂代码，最终成员命名及 JSON 仍未闭合。
+
 
 Turbo/项目属性的菜单显示还取决于注册表和 Customize/SupportInfo；
 本轮没有本机 Windows 注册表或实际显示快照。托盘链不包含主 UI 的 USB/AC 控件，
