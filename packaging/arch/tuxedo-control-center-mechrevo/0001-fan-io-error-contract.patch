@@ -1,0 +1,187 @@
+--- a/src/native-lib/tuxedo_io_lib/tuxedo_io_api.hh
++++ b/src/native-lib/tuxedo_io_lib/tuxedo_io_api.hh
+@@ -353,7 +353,7 @@
+     }
+ 
+     virtual bool GetFanSpeedPercent(const int fanNr, int &fanSpeedPercent) {
+-        int fanSpeedRaw;
++        int fanSpeedRaw = 0;
+         bool result;
+ 
+         switch (fanNr) {
+@@ -367,6 +367,8 @@
+                 result = false;
+                 break;
+         }
++
++        if (!result) { return false; }
+ 
+         fanSpeedPercent = (int) std::round(fanSpeedRaw * 100.0 / MAX_FAN_SPEED);
+ 
+--- a/src/native-lib/tuxedo_io_napi.cc
++++ b/src/native-lib/tuxedo_io_napi.cc
+@@ -127,10 +127,10 @@
+     if (info.Length() != 2 || !info[0].IsNumber() || !info[1].IsObject()) { throw Napi::Error::New(info.Env(), "GetFanSpeedPercent - invalid argument"); }
+     TuxedoIOAPI io;
+     int fanNumber = info[0].As<Number>();
+-    int fanSpeedPercent;
++    int fanSpeedPercent = -1;
+     bool result = io.GetFanSpeedPercent(fanNumber, fanSpeedPercent);
+     Object objWrapper = info[1].As<Object>();
+-    objWrapper.Set("value", fanSpeedPercent);
++    if (result) { objWrapper.Set("value", fanSpeedPercent); }
+     return Boolean::New(info.Env(), result);
+ }
+ 
+@@ -138,10 +138,10 @@
+     if (info.Length() != 2 || !info[0].IsNumber() || !info[1].IsObject()) { throw Napi::Error::New(info.Env(), "GetFanTemperature - invalid argument"); }
+     TuxedoIOAPI io;
+     int fanNumber = info[0].As<Number>();
+-    int temperatureCelcius;
++    int temperatureCelcius = -1;
+     bool result = io.GetFanTemperature(fanNumber, temperatureCelcius);
+     Object objWrapper = info[1].As<Object>();
+-    objWrapper.Set("value", temperatureCelcius);
++    if (result) { objWrapper.Set("value", temperatureCelcius); }
+     return Boolean::New(info.Env(), result);
+ }
+ 
+--- a/src/service-app/classes/FanControlTuxedoIO.ts
++++ b/src/service-app/classes/FanControlTuxedoIO.ts
+@@ -96,6 +96,7 @@
+ 
+         if (!speedReadSuccess) {
+             console.log(`FanControlTuxedoIO: Fan speed read with IO API index ${fanIndex} failed`);
++            return -1;
+         }
+ 
+         return currentSpeedPercent.value;
+@@ -109,14 +110,14 @@
+             console.log(`FanControlTuxedoIO: Fan temperature read with IO API index ${fanIndex} failed`);
+         }
+ 
+-        return currentTemperatureCelcius.value;
++        return tempReadSuccess ? currentTemperatureCelcius.value : -1;
+     }
+ 
+     public async writeFanSpeed(fanIndex: number, calculatedSpeed: number): Promise<void> {
+         const speedWriteSuccess: boolean = ioAPI.setFanSpeedPercent(fanIndex, calculatedSpeed);
+ 
+         if (!speedWriteSuccess) {
+-            console.log(`FanControlTuxedoIO: Fan speed write with IO API index ${fanIndex} failed`);
++            throw new Error(`FanControlTuxedoIO: Fan speed write with IO API index ${fanIndex} failed`);
+         }
+     }
+ 
+--- a/src/service-app/classes/FanControlWorker.ts
++++ b/src/service-app/classes/FanControlWorker.ts
+@@ -71,6 +71,7 @@
+     };
+     private tuxedoDevice: TUXEDODevice;
+     private fanCheckCounter: number = 0;
++    private workInProgress: boolean = false;
+     private isUniwill: boolean = false;
+ 
+     private nrTempsAvailable: number;
+@@ -136,6 +137,16 @@
+         }
+     }
+ 
++    public override async work(): Promise<void> {
++        if (this.workInProgress) return;
++        this.workInProgress = true;
++        try {
++            await super.work();
++        } finally {
++            this.workInProgress = false;
++        }
++    }
++
+     public async onWork(): Promise<void> {
+         try {
+             if (this.fanApi === undefined || this.fanApi === null) {
+@@ -283,6 +294,25 @@
+         return { fanLogic, fanIndex, temp };
+     }
+ 
++    private throwFanErrors(errors: unknown[]): void {
++        if (errors.length === 1) throw errors[0];
++        if (errors.length > 1) {
++            throw new AggregateError(errors, `FanControlWorker: Fan operations failed: ${errors.map(String).join('; ')}`);
++        }
++    }
++
++    private async settleFanOperations<T>(operations: Promise<T>[]): Promise<T[]> {
++        const results = await Promise.allSettled(operations);
++        const errors: unknown[] = [];
++        const values: T[] = [];
++        for (const result of results) {
++            if (result.status === 'fulfilled') values.push(result.value);
++            else errors.push(result.reason);
++        }
++        this.throwFanErrors(errors);
++        return values;
++    }
++
+     private async setFansWithMaxSpeed(fans: Map<number, FanControlLogic>) {
+         const fanNumbers = Array.from(fans.keys());
+ 
+@@ -290,7 +320,7 @@
+             fanLogic: FanControlLogic;
+             fanIndex: number;
+             temp: number;
+-        }[] = await Promise.all(
++        }[] = await this.settleFanOperations(
+             fanNumbers.map(async (fanNumber: number) => {
+                 return await this.updateTempLogic(fans, fanNumber);
+             }),
+@@ -299,7 +329,7 @@
+         const speedArray: number[] = fanInformationArray.map(({ fanLogic }) => fanLogic.getSpeedPercent());
+         const maxSpeed = Math.max(...speedArray);
+ 
+-        await Promise.all(
++        await this.settleFanOperations(
+             fanInformationArray.map(async ({ fanLogic, fanIndex, temp }) => {
+                 await this.updateFanDbusData(fanIndex, fanLogic, maxSpeed, temp);
+             }),
+@@ -340,19 +370,32 @@
+         temperature: number,
+     ): Promise<void> {
+         if (temperature > -1) {
++            const errors: unknown[] = [];
+             if (this.fanWriteAvailable) {
+-                await this.writeFanSpeed(fanLogic, fanIndex, calculatedSpeed);
+-            }
+-
++                try {
++                    await this.writeFanSpeed(fanLogic, fanIndex, calculatedSpeed);
++                } catch (error: unknown) {
++                    errors.push(error);
++                }
++            }
++
++            let currentSpeedPercent = -1;
+             if (this.tccd.dbusData.sensorDataCollectionStatus) {
+-                const currentSpeedPercent: number = await this.fanApi.getFanSpeedPercent(fanIndex);
+-
++                try {
++                    currentSpeedPercent = await this.fanApi.getFanSpeedPercent(fanIndex);
++                } catch (error: unknown) {
++                    errors.push(error);
++                }
++            }
++            try {
+                 await this.setFanDbusData(fanIndex, temperature, currentSpeedPercent);
+-            } else {
+-                await this.setFanDbusData(fanIndex, temperature, -1);
+-            }
++            } catch (error: unknown) {
++                errors.push(error);
++            }
++            this.throwFanErrors(errors);
+         } else {
+             console.log('FanControlWorker: updateFanDbusData: Invalid temperature');
++            await this.setFanDbusData(fanIndex, -1, -1);
+         }
+     }
+ 

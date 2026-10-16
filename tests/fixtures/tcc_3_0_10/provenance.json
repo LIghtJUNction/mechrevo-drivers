@@ -1,0 +1,36 @@
+{
+  "upstream": "https://github.com/tuxedocomputers/tuxedo-control-center/tree/v3.0.10",
+  "archive_sha256": "d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532",
+  "license": "GPL-3.0-or-later; original headers and COPYING retained",
+  "files": {
+    "src/native-lib/tuxedo_io_napi.cc": {
+      "size": 12881,
+      "sha256": "9b187467d007bb21aceb25faede358ff1097c995ceac91ebec47d170d7771909"
+    },
+    "src/native-lib/tuxedo_io_lib/tuxedo_io_api.hh": {
+      "size": 23887,
+      "sha256": "16e5e6be0799456a2f3b82a85fb7db673ea827025b63a7f29c4db6ea97eae36c"
+    },
+    "src/native-lib/tuxedo_io_lib/tuxedo_io_ioctl.h": {
+      "size": 4155,
+      "sha256": "5e34e201fda07cce517d7c6d06b58ecda786d5d8ddbb8957277c51bc1f9d4c7f"
+    },
+    "src/service-app/classes/FanControlTuxedoIO.ts": {
+      "size": 5190,
+      "sha256": "9dcd8f62a8c4714e351e82741f8bb59135c93e1a41948d3e7fe61c74b01418e3"
+    },
+    "src/service-app/classes/FanControlWorker.ts": {
+      "size": 15490,
+      "sha256": "cca7247f4d72127dd99a52ce09e02eed0de1250da7bb94e93a20050e92e117c0"
+    },
+    "src/service-app/classes/DaemonWorker.ts": {
+      "size": 2045,
+      "sha256": "05a5eaebf44ed8d47faa1b45c54b6dd2474625158d432391db6b2c6343a2e136"
+    },
+    "COPYING": {
+      "size": 35149,
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    }
+  },
+  "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c"
+}

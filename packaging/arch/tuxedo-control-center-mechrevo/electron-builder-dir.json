@@ -1,0 +1,23 @@
+{
+  "appId": "tuxedocontrolcenter",
+  "directories": {
+    "output": "./dist/packages"
+  },
+  "files": [
+    "dist/tuxedo-control-center/**/*"
+  ],
+  "extraResources": [
+    "dist/tuxedo-control-center/data"
+  ],
+  "asar": true,
+  "npmRebuild": false,
+  "electronDist": "/usr/lib/electron42",
+  "electronVersion": "42.11.11",
+  "linux": {
+    "target": [
+      "dir"
+    ],
+    "category": "System",
+    "icon": "dist/tuxedo-control-center/data/dist-data/tuxedo-control-center_256.svg"
+  }
+}

@@ -1,0 +1,86 @@
+# Maintained local full-source build; never installs/restarts running services.
+# GPL-3.0-or-later. Use pinned Node24.22.0/npm11.19.1 in an explicit private PATH.
+# Run from this repository, or set TCC_CONTRACT_ROOT to its reviewed checkout.
+pkgname=tuxedo-control-center-mechrevo
+pkgver=3.0.10
+pkgrel=1
+pkgdesc='TCC with qualified fan I/O failure reporting, rebuilt native/service/UI'
+arch=('x86_64')
+url='https://github.com/tuxedocomputers/tuxedo-control-center'
+license=('GPL-3.0-or-later')
+provides=("tuxedo-control-center=$pkgver")
+conflicts=('tuxedo-control-center')
+depends=('electron42=42.11.11' 'python' 'libxcrypt-compat' 'systemd-libs')
+makedepends=('nodejs>=22.22.2' 'npm' 'git' 'gcc' 'make' 'python' 'patch' 'pkgconf')
+options=('!strip' '!debug' '!lto')
+source=("tuxedo-control-center-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        '0001-fan-io-error-contract.patch' 'electron-builder-dir.json')
+sha256sums=('d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532'
+            '93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c' '641390a3c0837b13e9a9488c2256f21858360ac807336ae3bce7be725a6fb914')
+
+prepare() {
+    cd "$srcdir/tuxedo-control-center-$pkgver" || return 1
+    patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0001-fan-io-error-contract.patch" || return 1
+    # Preserve package.json/package-lock; no npm install/implicit Electron version rewrite.
+    sed -i 's|^ExecStart.*|ExecStart=/usr/lib/tuxedo-control-center/data/service/tccd --start|;s|^ExecStop.*|ExecStop=/usr/lib/tuxedo-control-center/data/service/tccd --stop|' src/dist-data/tccd.service
+    sed -i 's|^Exec=.*|Exec=tuxedo-control-center --tray|' src/dist-data/tuxedo-control-center-tray.desktop
+    sed -i 's|^Exec=.*|Exec=tuxedo-control-center %U|;s|^Icon=.*|Icon=tuxedo-control-center|' src/dist-data/tuxedo-control-center.desktop
+    sed -i 's|/opt/tuxedo-control-center/resources/dist/|/usr/lib/|g' src/udev/99-webcam.rules
+}
+
+build() {
+    cd "$srcdir/tuxedo-control-center-$pkgver" || return 1
+    [[ $(node --version) == v24.22.0 && $(npm --version) == 11.19.1 ]] || { echo 'Use reviewed private Node24.22.0/npm11.19.1 PATH' >&2; return 1; }
+    [[ $(cat /usr/lib/electron42/version) == 42.11.11 ]] || return 1
+    export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+    export NODE_OPTIONS=--openssl-legacy-provider
+    export NPM_CONFIG_ALLOW_GIT=all
+    export NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-"$srcdir/.npm-cache"}
+    export PKG_CACHE_PATH=${PKG_CACHE_PATH:-"$srcdir/.pkg-cache"}
+    export ELECTRON_BUILDER_CACHE=${ELECTRON_BUILDER_CACHE:-"$srcdir/.electron-builder-cache"}
+    export npm_config_devdir=${npm_config_devdir:-"$srcdir/.node-gyp"}
+    local lock_before
+    lock_before=$(sha256sum package-lock.json) || return 1
+    npm ci --no-audit --no-fund || return 1
+    [[ $(sha256sum package-lock.json) == "$lock_before" ]] || return 1
+    npm run build-prod || return 1
+    ./node_modules/.bin/electron-builder --linux --dir --config "$srcdir/electron-builder-dir.json" || return 1
+    [[ -s dist/packages/linux-unpacked/resources/app.asar ]] || return 1
+    [[ -x dist/packages/linux-unpacked/resources/dist/tuxedo-control-center/data/service/tccd ]] || return 1
+    [[ $(sha256sum package-lock.json) == "$lock_before" ]] || return 1
+}
+
+check() {
+    cd "$srcdir/tuxedo-control-center-$pkgver" || return 1
+    local contract_root=${TCC_CONTRACT_ROOT:-"$startdir/../../.."}
+    [[ -f $contract_root/tests/test_tcc_fan_error_contract.py && ! -L $contract_root/tests/test_tcc_fan_error_contract.py ]] || return 1
+    cmp "$srcdir/0001-fan-io-error-contract.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0001-fan-io-error-contract.patch" || return 1
+    export TCC_NODE=$(command -v node)
+    export TCC_NODE_INCLUDE=$(node -p 'require("path").resolve(require("path").dirname(process.execPath),"../include/node")')
+    export TCC_NODE_ADDON_API="$PWD/node_modules/node-addon-api"
+    export TCC_TYPESCRIPT_MODULE="$PWD/node_modules/typescript"
+    export MECHREVO_TEST_TMPDIR="$srcdir/.contract-tmp"
+    mkdir -p "$MECHREVO_TEST_TMPDIR" || return 1
+    python -B -m unittest discover -s "$contract_root/tests" -p test_tcc_fan_error_contract.py -v || return 1
+}
+
+package() {
+    local name=tuxedo-control-center
+    cd "$srcdir/$name-$pkgver" || return 1
+    install -dm755 "$pkgdir/usr/lib/$name"
+    cp -a dist/packages/linux-unpacked/resources/. "$pkgdir/usr/lib/$name/" || return 1
+    mv "$pkgdir/usr/lib/$name/dist/$name/data" "$pkgdir/usr/lib/$name/data" || return 1
+    install -Dm644 src/dist-data/tuxedo-control-center{,-tray}.desktop -t "$pkgdir/usr/share/applications"
+    install -Dm644 src/dist-data/tuxedo-control-center_256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/$name.png"
+    install -Dm644 src/dist-data/tuxedo-control-center_256.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/$name.svg"
+    install -Dm644 src/dist-data/com.tuxedocomputers.{tccd,tomte}.policy -t "$pkgdir/usr/share/polkit-1/actions"
+    install -Dm644 src/dist-data/com.tuxedocomputers.tcc.metainfo.xml -t "$pkgdir/usr/share/metainfo"
+    install -Dm644 src/dist-data/com.tuxedocomputers.tccd.conf -t "$pkgdir/usr/share/dbus-1/system.d"
+    install -Dm644 src/dist-data/tccd{,-sleep}.service -t "$pkgdir/usr/lib/systemd/system"
+    install -Dm644 src/udev/99-webcam.rules -t "$pkgdir/usr/lib/udev/rules.d"
+    install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+    install -dm755 "$pkgdir/usr/bin"
+    printf '%s\n' '#!/bin/sh' 'exec /usr/bin/electron42 /usr/lib/tuxedo-control-center/app.asar "$@"' > "$pkgdir/usr/bin/$name"
+    chmod 755 "$pkgdir/usr/bin/$name"
+    # Deliberately no .install script and no daemon-reload/enable/start hook.
+}
