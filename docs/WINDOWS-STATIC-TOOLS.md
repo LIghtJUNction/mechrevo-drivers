@@ -34,3 +34,18 @@ python -B scripts/windows_oem_static.py --source /明确路径/GCUService.exe --
 真实源有 5183 条记录，输出 `methods/0600xxxx.recovered.bin`。manifest 的 `method_recovery` 记录表及 key 指令来源、原 MethodDef 行 RVA/方法 RVA、每条 record RVA、密文及明文 SHA256、tiny/fat 头、CodeSize、local signature token、EH section 尺寸、尾部 padding 和 VBPD 标记。FWSN 的 `local_signature_offset` 与 `extra` 保留原字段，不猜测其含义，前者不是已证明的 body-relative offset。
 
 方法体检查只证明头和字节边界、EH 区段尺寸及 MethodDef RID 对应关系。**没有宣称 CLR stack verification、完整 CIL 语义校验、恢复原程序集或恢复签名。** Opcode/branch 验证由独立 .NET 工具产生另份回执。恢复前先检查所有记录，异常不创建输出目录；写入异常仍保留 `complete=false`，不自动删材料。成功回执需与冻结 `all-record-receipt.json` 逐 token 比较全部 5183 个明文 SHA，不能仅凭合成测试声称完整恢复。
+
+
+## 可选六个 DynamicMethod 内层恢复
+
+```sh
+python -B scripts/windows_oem_static.py --source /明确路径/GCUService.exe --output /又一个新目录 --recover-dynamic-methods
+```
+
+此开关独立于 `--recover-methods`。内部恢复并核验 FWSN wrapper 来源，但默认只落盘两个 native 容器及六个内层 body/cipher/适用的 external local signature，不写整套 5183 外层。同时指定两个开关才写两套。六个内层对应已有 wrapper，不能计为 5183 之外六个新方法。
+
+资格链为固定原源 SHA → FWSN wrapper 精确 SHA → 已核验 builder `0600182f` 参数描述符（RVA、长度、call offset、local 来源和 discriminator）→ 密文及内层精确 SHA。描述符仅包含来源数值和哈希，没有 vendor IL。整组六条canonical JSON还绑定独立冻结SHA，录错call offset/discriminator会拒绝。工具另外从实际wrapper bytes执行有限的静态prefix解释：只处理已识别的常量、符号参数、locals、算术和已知条件分支，最多1000步，核对真实call offset、call token `0600182f`、current-method及末七项实际RVA/长度/key/local/discriminator实参。未知opcode、未知分支条件、截短operand、已访问指令重叠均拒绝。它不执行OEM/CLR，不解析被跳过字节，也不声称完整原始CFG或完整CIL验证。32-byte fixed key 从原 PE FieldRVA `040025ac` 对应 `0x792328` 读取，按已核验 callback 变换，再 RC4 解出 `0x70b6f0` 的16-byte layer key；密钥字节与明文 key hash 均不写回执或源码。此固定格式不提供 CLI hash 绕过。
+
+输出 `dynamic-methods/` 权限700，各二进制600。manifest 记录 descriptor/wrapper/table/key来源和所有输出回读 SHA。内层是标准 tiny/fat 方法体，**不添加或要求 VBPD**；严格检查 CodeSize、真实长度、payload重叠、EH try/handler/filter范围、finally/fault字段、external local signature源边界和prefix/compressed-count最小字节边界。完整 local类型语法、opcode/branch及CLR stack校验需独立回执，不从这些边界检查推断通过。六个真实输出须逐项对比冻结 manifest；`0600196f` 的75-byte结果还需与先前独立恢复结果相同。
+
+这些文件仍是原厂派生私有分析材料。禁止把 body、cipher、local signature、解密 key、vendor IL 或可能含敏感值的输出提交公开源码或远程服务；允许提交的维护工具只有解析逻辑与资格来源数值/哈希。异常或部分写入始终保留不完整回执，工具不会执行任何 OEM 或构造/签名原程序集。

@@ -358,7 +358,368 @@ def recover_methods(source, pe, analysis, source_map):
         native_analysis_sha256=digest(analysis), all_tokens_unique=True,
         verification="Header, code bounds, EH section sizes and MethodDef RID mapping only; not CLR stack or full CIL verification")
 
-def run(source_path, output_path, recover=False):
+
+# Qualified source facts, not vendor instructions or cryptographic key bytes.
+# FWSN wrapper hashes bind the descriptor arguments to independently recovered bodies.
+DYNAMIC_DESCRIPTORS = ({'token': 100667985,
+  'wrapper_sha256': 'e06f82f555e7f5c1e1e88d0cd8436414760ae7decb472999cc561d6713e089f5',
+  'wrapper_call_offset': '0x26',
+  'source_rva': 7552968,
+  'length': 19,
+  'cipher_sha256': '8a730e95a8261e552b9c21fdcb61e521c75146bd84e37469c60716d3ceaddf0f',
+  'body_sha256': 'f6d6d4da10b91e822806ab622da2e4dcf93be51956f87b80db87f69f78060507',
+  'external_local_rva': 0,
+  'external_local_length': 0,
+  'external_local_sha256': None,
+  'fallback_local_rva': 0,
+  'builder_discriminator': 5},
+ {'token': 100669807,
+  'wrapper_sha256': '5dc44c355bdaf95fa0ecf4ba10c1ef649ed2a4271e8f1a42d65601cb0be4b9fb',
+  'wrapper_call_offset': '0x29',
+  'source_rva': 7012208,
+  'length': 75,
+  'cipher_sha256': '4b340c021351241cd67760eed872ae8c0a846465ed03fc91e6267db31ba7054c',
+  'body_sha256': 'be8d7476a2fbd14bb7785a5aea8f56a6bbf2b6018ef6a460fc0bd7425ac653c2',
+  'external_local_rva': 6932712,
+  'external_local_length': 32,
+  'external_local_sha256': 'c52c01dcadfae21c887530df86c2d87481dffc18e4a62bd6a3c666127e6ff620',
+  'fallback_local_rva': 9033915,
+  'builder_discriminator': 4},
+ {'token': 100669939,
+  'wrapper_sha256': '95c7ba02ff0a7c590d706f7ca1cdb2e58ff9c92fa220df94e69bb47a096a45ea',
+  'wrapper_call_offset': '0x2e',
+  'source_rva': 6694080,
+  'length': 1841,
+  'cipher_sha256': '496fecabd5fbfc0c88698481e4ca7e42455f6ce7ea05fc019a70080b3a7c8bbf',
+  'body_sha256': 'f59f609ce2aaf02bd54a79239e887c48b9639446d11e1200cc3dd6ab3b12a6f1',
+  'external_local_rva': 0,
+  'external_local_length': 0,
+  'external_local_sha256': None,
+  'fallback_local_rva': 0,
+  'builder_discriminator': 3},
+ {'token': 100669940,
+  'wrapper_sha256': '432d59f2f4762fec65e08a06c41289a2f5bd15e3a514bba375b5b740d3515cb1',
+  'wrapper_call_offset': '0x34',
+  'source_rva': 6667976,
+  'length': 27,
+  'cipher_sha256': 'b1b018305bb9cd323ad58c2c2532cd817a4c1c8989860e0f1655c703def86d89',
+  'body_sha256': 'dd665ec79b2c27dd5253c51ec3b9927ad5a1a1605bdac429df9479901ab25497',
+  'external_local_rva': 0,
+  'external_local_length': 0,
+  'external_local_sha256': None,
+  'fallback_local_rva': 0,
+  'builder_discriminator': 2},
+ {'token': 100669942,
+  'wrapper_sha256': '9acf82a1abe3bfc4a6a4cba34a63570a3d2feb2710624c272c7203ede06ae232',
+  'wrapper_call_offset': '0x30',
+  'source_rva': 7605856,
+  'length': 608,
+  'cipher_sha256': 'eb8623cf30301efc48b928afde547939fb6728b91f68748033a3303563305743',
+  'body_sha256': 'cdd6b5aa71054ecba7da7ad51263c2ca41999aab3a7feff1cd677ce9ca4323d3',
+  'external_local_rva': 7566520,
+  'external_local_length': 70,
+  'external_local_sha256': '9ad88046290fb6b79f145e762fd5a559bd7014703f038345e0c9e4cd85cd85dc',
+  'fallback_local_rva': 9034257,
+  'builder_discriminator': 1},
+ {'token': 100670619,
+  'wrapper_sha256': '0667187bc4815e71c3d58133933f8893e1ec0f59b082bc3de73b56304636e808',
+  'wrapper_call_offset': '0x26',
+  'source_rva': 6635000,
+  'length': 87,
+  'cipher_sha256': 'a9a23873f7f38982ea1f3b8af8ecc3cd340ae0f36e173f7b450a8c59a2085c26',
+  'body_sha256': 'cdc78381c23050f9024170835ded1528f5d7fa2df060569b72d70d3bc204289e',
+  'external_local_rva': 7003384,
+  'external_local_length': 32,
+  'external_local_sha256': '0f7e97248bdf41d765bff6c0e7cc4639e9314a18eb56c26f27e883f0be1fe722',
+  'fallback_local_rva': 9032973,
+  'builder_discriminator': 0})
+DYNAMIC_DESCRIPTOR_SHA256 = "35ecc08cfb52a376df811f80013964b5bd7f369f61fb856954b9db39dc0e2bf4"
+DYNAMIC_KEY_FIELD_TOKEN = 0x040025AC
+DYNAMIC_KEY_FIELD_RVA = 0x792328
+DYNAMIC_LAYER_KEY_RVA = 0x70B6F0
+DYNAMIC_LAYER_CIPHER_SHA256 = "186bc65ef99789fb8d3272dd26dbe356898d3d64540963d1389fd426d5db595b"
+
+
+def dynamic_body_bounds(body):
+    """Standard CIL body extents, without the FWSN outer VBPD trailer."""
+    if not body or len(body) >= MAX_COMPACT:
+        raise FormatError("dynamic body length outside cap")
+    kind = body[0] & 3
+    if kind == 2:
+        header_size, code_size, stack, flags, local = 1, body[0] >> 2, 8, 2, 0
+    elif kind == 3:
+        span(0, 12, len(body), "dynamic fat header")
+        flags, stack, code_size, local = struct.unpack_from("<HHII", body)
+        header_size = (flags >> 12)*4
+        if header_size != 12 or flags & 0x0FE4:
+            raise FormatError("unsupported dynamic fat flags/header")
+        if local and (local >> 24 != 0x11 or not (local & 0xFFFFFF)):
+            raise FormatError("invalid dynamic locals token")
+    else:
+        raise FormatError("invalid dynamic method header")
+    if not code_size:
+        raise FormatError("empty dynamic method code")
+    _, end = span(header_size, code_size, len(body), "dynamic code")
+    sections = []
+    if kind == 3 and flags & 8:
+        position = (end + 3) & ~3
+        if any(body[end:position]):
+            raise FormatError("nonzero dynamic section alignment padding")
+        while True:
+            span(position, 4, len(body), "dynamic EH header")
+            section_kind = body[position]
+            if section_kind & 0x3F != 1:
+                raise FormatError("unsupported dynamic EH kind")
+            fat = bool(section_kind & 0x40)
+            size = int.from_bytes(body[position+1:position+4], "little") if fat else body[position+1]
+            clause_size = 24 if fat else 12
+            if size < 4 or (size-4) % clause_size:
+                raise FormatError("invalid dynamic EH size")
+            if not fat and any(body[position+2:position+4]):
+                raise FormatError("invalid small EH reserved bytes")
+            _, end = span(position, size, len(body), "dynamic EH section")
+            clauses = []
+            for offset in range(position+4, end, clause_size):
+                f, start, n, handler, hn, extra = struct.unpack_from("<IIIIII" if fat else "<HHBHBI", body, offset)
+                if f not in (0, 1, 2, 4) or not n or not hn:
+                    raise FormatError("invalid dynamic EH clause flags/extent")
+                span(start, n, code_size, "EH try")
+                span(handler, hn, code_size, "EH handler")
+                if f == 1 and extra >= code_size:
+                    raise FormatError("EH filter outside method code")
+                if f in (2, 4) and extra:
+                    raise FormatError("finally/fault clause has unexpected token")
+                if f == 0 and (extra >> 24 not in (1, 2, 0x1B) or not (extra & 0xFFFFFF)):
+                    raise FormatError("invalid EH catch type token")
+                clauses.append(dict(flags=f, try_start=start, try_length=n, handler_start=handler,
+                                    handler_length=hn, class_token_or_filter=hex(extra)))
+            sections.append(dict(offset=position, kind=section_kind, fat=fat, size=size, clauses=clauses))
+            if not section_kind & 0x80:
+                break
+            position = (end+3)&~3
+            if any(body[end:position]):
+                raise FormatError("nonzero chained EH alignment padding")
+    if end != len(body):
+        raise FormatError("unexpected trailing dynamic method bytes")
+    return dict(format="tiny" if kind == 2 else "fat", header_size=header_size,
+                code_size=code_size, max_stack=stack, flags=hex(flags), locals_token=hex(local),
+                sections=sections, body_end=end, trailing_bytes=0)
+
+
+def external_local_bounds(signature):
+    """Validate local-signature prefix/count bounds; full type grammar is separate."""
+    if len(signature) < 2 or len(signature) > 65536 or signature[0] != 7:
+        raise FormatError("invalid external local signature header/length")
+    first = signature[1]
+    width = 1 if first < 0x80 else 2 if first < 0xC0 else 4 if first < 0xE0 else 0
+    if not width or len(signature) < 1 + width:
+        raise FormatError("invalid compressed local count")
+    count = (first & (0x7F if width == 1 else 0x3F if width == 2 else 0x1F))
+    for value in signature[2:1+width]:
+        count = (count << 8) | value
+    if count > len(signature) - 1 - width:
+        raise FormatError("external local count exceeds available type bytes")
+    return dict(local_count=count, count_size=width,
+                verification="Prefix/compressed count and minimum byte bounds only; full signature type grammar is independently audited")
+
+
+
+def wrapper_builder_arguments(wrapper, token):
+    """Bounded static prefix evaluation; symbolic values never call OEM/CLR code."""
+    header = body_header(wrapper)
+    start, size = header['header_size'], header['code_size']
+    code = wrapper[start:start+size]
+    pc, stack, locals_, decoded = 0, [], {}, {}
+    def pop():
+        if not stack:
+            raise FormatError("wrapper stack underflow")
+        return stack.pop()
+    def integer(value):
+        if type(value) is not int:
+            raise FormatError("wrapper arithmetic/branch needs known integer")
+        return value
+    def i32(value):
+        value &= 0xFFFFFFFF
+        return value - 0x100000000 if value & 0x80000000 else value
+    for step in range(1000):
+        span(pc, 1, len(code), "wrapper instruction")
+        opcode = code[pc]
+        op_size = 1
+        operand_size = 0
+        if opcode == 0xFE:
+            span(pc, 2, len(code), "wrapper extended opcode")
+            opcode = 0xFE00 | code[pc+1]
+            op_size = 2
+        if opcode in (0x0E, 0x11, 0x13, 0x1F, 0x2B, 0x2C, 0x2D):
+            operand_size = 1
+        elif opcode in (0x20, 0x28, 0x38, 0x39, 0x3A, 0x74):
+            operand_size = 4
+        elif opcode in (0xFE09, 0xFE0C, 0xFE0E):
+            operand_size = 2
+        elif opcode not in (0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                             0x0A, 0x0B, 0x0C, 0x0D, 0x14, 0x15, 0x16, 0x17, 0x18,
+                             0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x25, 0x26,
+                             0x58, 0x59, 0x5A, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64,
+                             0x65, 0x66, 0x69, 0x6D):
+            raise FormatError("unsupported reachable wrapper opcode")
+        _, end = span(pc, op_size+operand_size, len(code), "wrapper operand")
+        if pc not in decoded:
+            if any(pc < z and a < end for a, z in decoded.values()):
+                raise FormatError("wrapper branch overlaps decoded instruction boundary")
+            decoded[pc] = (pc, end)
+        value = int.from_bytes(code[pc+op_size:end], "little")
+        next_pc = end
+        if opcode == 0x00:
+            pass
+        elif 0x02 <= opcode <= 0x05 or opcode in (0x0E, 0xFE09):
+            stack.append(("arg", opcode-2 if opcode <= 5 else value))
+        elif 0x06 <= opcode <= 0x09 or opcode in (0x11, 0xFE0C):
+            index = opcode-6 if opcode <= 9 else value
+            if index not in locals_:
+                raise FormatError("uninitialized wrapper local")
+            stack.append(locals_[index])
+        elif 0x0A <= opcode <= 0x0D or opcode in (0x13, 0xFE0E):
+            index = opcode-0x0A if opcode <= 0x0D else value
+            if index >= 256:
+                raise FormatError("wrapper local index exceeds cap")
+            locals_[index] = pop()
+        elif opcode == 0x14:
+            stack.append(None)
+        elif 0x15 <= opcode <= 0x1E:
+            stack.append(opcode-0x16)
+        elif opcode in (0x1F, 0x20):
+            stack.append(int.from_bytes(code[pc+op_size:end], "little", signed=True))
+        elif opcode == 0x25:
+            item = pop(); stack.extend((item, item))
+        elif opcode == 0x26:
+            pop()
+        elif opcode == 0x74:
+            item = pop(); stack.append(item)  # symbolic cast; never resolve a runtime type
+        elif opcode == 0x28:
+            if value == 0x0A0001DC:
+                stack.append(("currentmethod", token))
+            elif value == 0x0600182F:
+                if len(stack) != 9:
+                    raise FormatError("builder call wrapper stack is not exactly nine arguments")
+                return dict(call_offset=hex(pc), args=stack, steps=step+1,
+                            visited_instruction_count=len(decoded),
+                            verification="Reachable bounded prefix only; skipped bytes and full original CFG are not decoded")
+            else:
+                raise FormatError("unsupported wrapper call target")
+        elif opcode in (0x2B, 0x2C, 0x2D, 0x38, 0x39, 0x3A):
+            relative = int.from_bytes(code[pc+op_size:end], "little", signed=True)
+            take = True
+            if opcode not in (0x2B, 0x38):
+                predicate = pop()
+                if predicate is not None and type(predicate) is not int:
+                    raise FormatError("unknown symbolic wrapper branch predicate")
+                take = bool(predicate) if opcode in (0x2D, 0x3A) else not bool(predicate)
+            if take:
+                next_pc = end + relative
+                span(next_pc, 1, len(code), "wrapper branch target")
+                if any(a < next_pc < z for a, z in decoded.values()):
+                    raise FormatError("wrapper branch targets decoded operand")
+        elif opcode in (0x69, 0x6D):
+            item = integer(pop())
+            stack.append(i32(item) if opcode == 0x69 else item & 0xFFFFFFFF)
+        elif opcode in (0x65, 0x66):
+            item = integer(pop());stack.append(i32(-item if opcode == 0x65 else ~item))
+        else:
+            right, left = integer(pop()), integer(pop())
+            if opcode == 0x58: result = left+right
+            elif opcode == 0x59: result = left-right
+            elif opcode == 0x5A: result = left*right
+            elif opcode == 0x5F: result = left & right
+            elif opcode == 0x60: result = left | right
+            elif opcode == 0x61: result = left ^ right
+            elif opcode == 0x62: result = left << (right & 31)
+            elif opcode == 0x63: result = i32(left) >> (right & 31)
+            else: result = (left & 0xFFFFFFFF) >> (right & 31)
+            stack.append(i32(result))
+        if len(stack) > 128:
+            raise FormatError("wrapper stack exceeds cap")
+        pc = next_pc
+    raise FormatError("wrapper prefix step limit exceeded")
+
+def recover_dynamic_methods(source, pe, methods):
+    descriptor_sha = digest(json.dumps(DYNAMIC_DESCRIPTORS, sort_keys=True, separators=(",", ":")).encode())
+    if descriptor_sha != DYNAMIC_DESCRIPTOR_SHA256:
+        raise FormatError("qualified dynamic descriptor manifest SHA mismatch")
+    wrappers = {int(record['token'], 16): (body, record) for body, record in methods}
+    stored = read_rva(source, pe, DYNAMIC_KEY_FIELD_RVA, 32)
+    fixed = bytes(((value ^ 0x3C) - 0xC3) & 255 for value in stored)
+    encrypted_key = read_rva(source, pe, DYNAMIC_LAYER_KEY_RVA, 16)
+    if digest(encrypted_key) != DYNAMIC_LAYER_CIPHER_SHA256:
+        raise FormatError("dynamic layer key cipher provenance mismatch")
+    key = rc4(fixed, encrypted_key)
+    seen, payload_ranges, local_ranges, results = set(), [], [], []
+    all_ranges = [(DYNAMIC_KEY_FIELD_RVA, DYNAMIC_KEY_FIELD_RVA+32),
+                  (DYNAMIC_LAYER_KEY_RVA, DYNAMIC_LAYER_KEY_RVA+16)]
+    if len(DYNAMIC_DESCRIPTORS) != 6:
+        raise FormatError("qualified dynamic descriptor count mismatch")
+    for desc in DYNAMIC_DESCRIPTORS:
+        token = desc['token']
+        if token in seen or token not in wrappers or digest(wrappers[token][0]) != desc['wrapper_sha256']:
+            raise FormatError("dynamic descriptor wrapper hash/token mismatch")
+        seen.add(token)
+        call = wrapper_builder_arguments(wrappers[token][0], token)
+        expected = [desc['source_rva'], desc['length'], desc['external_local_rva'],
+                    desc['external_local_length'], desc['fallback_local_rva'],
+                    DYNAMIC_LAYER_KEY_RVA, desc['builder_discriminator']]
+        if call['call_offset'] != desc['wrapper_call_offset'] or call['args'][1] != ("currentmethod", token):
+            raise FormatError("dynamic wrapper call offset/current-method mismatch")
+        if call['args'][2:] != expected:
+            raise FormatError("dynamic wrapper builder arguments disagree with descriptor")
+        rva, n = desc['source_rva'], desc['length']
+        if not 0 < n < MAX_COMPACT:
+            raise FormatError("dynamic descriptor payload length outside cap")
+        _, end = span(rva, n, 0xFFFFFFFF, "dynamic payload")
+        disjoint(payload_ranges, rva, end, "dynamic payloads")
+        disjoint(all_ranges, rva, end, "dynamic key/payload/local regions")
+        cipher = read_rva(source, pe, rva, n)
+        if digest(cipher) != desc['cipher_sha256']:
+            raise FormatError("dynamic cipher SHA mismatch")
+        body = rc4(key, cipher)
+        if digest(body) != desc['body_sha256']:
+            raise FormatError("dynamic body SHA mismatch (key or cipher corruption)")
+        bounds = dynamic_body_bounds(body)
+        local_rva, local_size = desc['external_local_rva'], desc['external_local_length']
+        if bool(local_rva) != bool(local_size):
+            raise FormatError("incomplete external local signature descriptor")
+        if desc["fallback_local_rva"]:
+            # Only file backing is established here; fallback contents/semantics are not inferred.
+            read_rva(source, pe, desc["fallback_local_rva"], 1)
+        signature = None
+        local_details = None
+        if local_size:
+            if not 0 < local_size <= 65536:
+                raise FormatError("external local signature exceeds cap")
+            _, local_end = span(local_rva, local_size, 0xFFFFFFFF, "external local signature")
+            disjoint(local_ranges, local_rva, local_end, "external local signatures")
+            disjoint(all_ranges, local_rva, local_end, "dynamic key/payload/local regions")
+            signature = read_rva(source, pe, local_rva, local_size)
+            if digest(signature) != desc['external_local_sha256']:
+                raise FormatError("external local signature SHA mismatch")
+            local_details = external_local_bounds(signature)
+        results.append((cipher, body, signature, dict(token=f"{token:08x}", descriptor=desc,
+            wrapper_record_rva=wrappers[token][1]['record_rva'],
+            wrapper_source_rva=wrappers[token][1]['source_rva'],
+            wrapper_argument_verification=dict(call_offset=call['call_offset'], steps=call['steps'],
+                visited_instruction_count=call['visited_instruction_count'],
+                arguments_match_descriptor=True, scope=call['verification']), bounds=bounds,
+            external_local_bounds=local_details)))
+    # Read-only key material intentionally never enters receipts or source literals.
+    origin = dict(stored_fixed_key_field_token=hex(DYNAMIC_KEY_FIELD_TOKEN), stored_fixed_key_rva=hex(DYNAMIC_KEY_FIELD_RVA),
+        stored_fixed_key_size=32, fixed_key_derivation="u8((stored XOR 0x3c)-0xc3)",
+        layer_key_cipher_rva=hex(DYNAMIC_LAYER_KEY_RVA), layer_key_cipher_size=16,
+        layer_key_cipher_sha256=digest(encrypted_key),
+        descriptor_origin="Frozen independently audited descriptors; recovered wrapper hashes and bounded reachable constant-prefix nine builder arguments reverified from actual bytes",
+        descriptor_manifest_sha256=descriptor_sha,
+        counting_boundary="Six payloads implement existing wrapper MethodDefs, not six additional methods beyond 5183 outers",
+        verification="Static bytes only; standard header/code/EH extents and local signature prefix bounds, not CLR stack or complete CIL/signature verification")
+    return results, origin
+
+def run(source_path, output_path, recover=False, recover_dynamic=False):
     pefile = dependency()
     if source_path.stat().st_size > MAX_SOURCE:
         raise FormatError("source exceeds 64 MiB cap")
@@ -391,7 +752,8 @@ def run(source_path, output_path, recover=False):
                 parsed.close()
             images.append((rva, compact, analysis, sections, info))
         methods, method_origin = (recover_methods(source, pe, images[0][2], method_metadata(source, pe))
-                                  if recover else ([], None))
+                                  if recover or recover_dynamic else ([], None))
+        dynamics, dynamic_origin = (recover_dynamic_methods(source, pe, methods) if recover_dynamic else ([], None))
         manifest = dict(schema_version=1, complete=False, source=str(source_path),
                         source_sha256=digest(source), source_size=len(source),
                         source_warnings=pe.get_warnings(), synthetic=SYNTHETIC,
@@ -423,6 +785,26 @@ def run(source_path, output_path, recover=False):
                     f.write(plain)
                 manifest["method_recovery"]["methods"].append(dict(file="methods/"+name, **record))
             manifest["method_recovery"]["complete"] = True
+        if recover_dynamic:
+            dynamic_dir = output_path / "dynamic-methods"
+            dynamic_dir.mkdir(mode=0o700)
+            manifest["dynamic_recovery"] = dict(complete=False, origin=dynamic_origin, methods=[])
+            receipt()
+            for cipher, body, signature, record in dynamics:
+                outputs = {}
+                for suffix, data in (("cipher", cipher), ("dynamic", body), ("external-local-sig", signature)):
+                    if data is None:
+                        continue
+                    name = record['token'] + "." + suffix + ".bin"
+                    dest = dynamic_dir / name
+                    with dest.open("xb") as f:
+                        f.write(data)
+                    dest.chmod(0o600)
+                    if dest.read_bytes() != data:
+                        raise FormatError("dynamic output readback mismatch")
+                    outputs[suffix] = dict(file="dynamic-methods/"+name, size=len(data), sha256=digest(data), full_readback_equal=True)
+                manifest["dynamic_recovery"]["methods"].append(dict(**record, outputs=outputs))
+            manifest["dynamic_recovery"]["complete"] = True
         manifest["complete"] = True
         receipt()
         return manifest
@@ -435,9 +817,10 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="new directory; existing paths are refused")
     parser.add_argument("--recover-methods", action="store_true", help="also recover qualified FWSN method bodies as static bytes")
+    parser.add_argument("--recover-dynamic-methods", action="store_true", help="also recover six qualified inner CIL bodies without executing OEM code")
     args = parser.parse_args(argv)
     try:
-        result = run(args.source, args.output, recover=args.recover_methods)
+        result = run(args.source, args.output, recover=args.recover_methods, recover_dynamic=args.recover_dynamic_methods)
     except Exception as exc:
         print(f"Static extraction failed: {exc}. Any output is incomplete unless manifest.complete is true.", file=sys.stderr)
         return 1

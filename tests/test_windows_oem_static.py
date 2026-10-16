@@ -278,4 +278,147 @@ class MethodRecoveryTests(unittest.TestCase):
             self.assertFalse(manifest["method_recovery"]["complete"])
 
 
+class DynamicTests(unittest.TestCase):
+    def wrap_code(self, code):
+        body=struct.pack("<HHII",0x3013,8,len(code),0)+code
+        return body+bytes((-len(body))%4)+b"VBPD"
+
+    def wrapper(self, desc):
+        # Synthetic constant branch skips two unsupported bytes; no vendor instructions.
+        code=b"\x16\x2c\x02\xff\xff\x14\x28"+struct.pack("<I",0x0a0001dc)
+        for value in (desc['source_rva'],desc['length'],desc['external_local_rva'],desc['external_local_length'],desc['fallback_local_rva'],4128,desc['builder_discriminator']):
+            code+=b"\x20"+struct.pack("<i",value)
+        offset=len(code)
+        code+=b"\x28"+struct.pack("<I",0x0600182f)+b"\x2a"
+        desc['wrapper_call_offset']=hex(offset)
+        body=self.wrap_code(code)
+        desc['wrapper_sha256']=m.digest(body)
+        return body
+
+    def fixture(self):
+        stored = bytes(range(32))
+        fixed = bytes(((v ^ 0x3c)-0xc3)&255 for v in stored)
+        encrypted_key = bytes(range(16))
+        key = m.rc4(fixed, encrypted_key)
+        source = bytearray(1024)
+        source[:32], source[32:48] = stored, encrypted_key
+        methods, descriptors = [], []
+        for i in range(6):
+            token = 0x06000001+i
+            wrapper = b"\x06\x2aVBPD"
+            body = b"\x06\x2a"
+            rva = 4096+200+i*16
+            cipher = m.rc4(key, body)
+            source[rva-4096:rva-4096+len(cipher)] = cipher
+            methods.append((wrapper,dict(token=hex(token),record_rva=hex(4096+64+i*24),source_rva="0x1000")))
+            descriptors.append(dict(token=token,wrapper_sha256=m.digest(wrapper),wrapper_call_offset="0x10",source_rva=rva,length=len(cipher),cipher_sha256=m.digest(cipher),body_sha256=m.digest(body),external_local_rva=0,external_local_length=0,external_local_sha256=None,fallback_local_rva=0,builder_discriminator=i))
+        methods=[(self.wrapper(d), methods[i][1]) for i,d in enumerate(descriptors)]
+        section = types.SimpleNamespace(PointerToRawData=0,SizeOfRawData=len(source),VirtualAddress=4096)
+        return source, types.SimpleNamespace(sections=[section]), methods, descriptors
+
+    def recover(self, source, pe, methods, descriptors, qualified_hash=None):
+        import json
+        if qualified_hash is None:
+            qualified_hash=m.digest(json.dumps(descriptors,sort_keys=True,separators=(",",":")).encode())
+        with patch.object(m,"DYNAMIC_DESCRIPTOR_SHA256",qualified_hash),patch.object(m,"DYNAMIC_DESCRIPTORS",descriptors), patch.object(m,"DYNAMIC_KEY_FIELD_RVA",4096), patch.object(m,"DYNAMIC_LAYER_KEY_RVA",4128), patch.object(m,"DYNAMIC_LAYER_CIPHER_SHA256",m.digest(bytes(range(16)))):
+            return m.recover_dynamic_methods(bytes(source),pe,methods)
+
+    def test_synthetic_six_body_recovery_and_no_key_bytes_receipt(self):
+        source, pe, methods, descriptors = self.fixture()
+        result, origin = self.recover(source,pe,methods,descriptors)
+        self.assertEqual(len(result),6)
+        self.assertTrue(all(x[1] == b"\x06\x2a" for x in result))
+        self.assertNotIn("layer_key_sha256",origin)
+        self.assertNotIn("key_bytes",origin)
+        self.assertEqual(origin["stored_fixed_key_size"],32)
+
+    def test_key_cipher_wrapper_offsets_and_caps_rejected(self):
+        for mode in ("storedkey","encryptedkey","cipher","wrapper","overlap","cap","duplicate","external"):
+            source, pe, methods, descriptors = self.fixture()
+            if mode == "storedkey": source[0] ^= 1
+            if mode == "encryptedkey": source[32] ^= 1
+            if mode == "cipher": source[200] ^= 1
+            if mode == "wrapper": methods[0] = (b"wrong",methods[0][1])
+            if mode == "overlap": descriptors[1]['source_rva']=descriptors[0]['source_rva']
+            if mode == "cap": descriptors[0]['length']=m.MAX_COMPACT
+            if mode == "duplicate": descriptors[1]['token']=descriptors[0]['token']
+            if mode == "external": descriptors[0]['external_local_rva']=4900
+            with self.subTest(mode=mode),self.assertRaises(m.FormatError):self.recover(source,pe,methods,descriptors)
+
+    def test_frozen_descriptor_argument_corruption_rejected(self):
+        import json
+        for field in ("wrapper_call_offset","builder_discriminator"):
+            source,pe,methods,descriptors=self.fixture()
+            qualified=m.digest(json.dumps(descriptors,sort_keys=True,separators=(",",":")).encode())
+            descriptors[0][field]="0x11" if field=="wrapper_call_offset" else 999
+            with self.subTest(field=field),self.assertRaisesRegex(m.FormatError,"descriptor manifest SHA"):
+                self.recover(source,pe,methods,descriptors,qualified)
+
+    def test_actual_wrapper_argument_mutations_rejected_even_with_new_descriptor_hash(self):
+        for field in ("wrapper_call_offset","builder_discriminator","source_rva","length","external_local_rva","external_local_length","fallback_local_rva"):
+            source,pe,methods,descriptors=self.fixture()
+            if field=="wrapper_call_offset":descriptors[0][field]="0x00"
+            else:descriptors[0][field]+=1
+            with self.subTest(field=field),self.assertRaisesRegex(m.FormatError,"wrapper (call offset|builder arguments)"):
+                self.recover(source,pe,methods,descriptors)
+
+    def test_wrapper_unknown_branch_opcode_call_and_operand_boundaries_rejected(self):
+        cases=[b"\x02\x2d\x00",b"\x2b\xfe",b"\x20\x00\x00\x00\x00\x2b\xfb",b"\x20",b"\x06",b"\xff",b"\x28"+struct.pack("<I",0x06009999)]
+        for code in cases:
+            with self.subTest(code=code.hex()),self.assertRaises(m.FormatError):
+                m.wrapper_builder_arguments(self.wrap_code(code),0x06000001)
+
+    def test_external_local_signature_read_and_corruption(self):
+        source,pe,methods,descriptors=self.fixture()
+        signature=b"\x07\x01\x08"
+        source[800:803]=signature
+        descriptors[0].update(external_local_rva=4896,external_local_length=3,external_local_sha256=m.digest(signature))
+        methods[0]=(self.wrapper(descriptors[0]),methods[0][1])
+        result,_=self.recover(source,pe,methods,descriptors)
+        self.assertEqual(result[0][2],signature)
+        self.assertEqual(result[0][3]['external_local_bounds']['local_count'],1)
+        source[802]^=1
+        with self.assertRaisesRegex(m.FormatError,"local signature SHA"):self.recover(source,pe,methods,descriptors)
+        for b in (b"",b"\x07\xff",b"\x07\x05\x08",b"\x06\x01\x08"):
+            with self.subTest(signature=b),self.assertRaises(m.FormatError):m.external_local_bounds(b)
+
+    def eh_body(self):
+        return struct.pack("<HHII",0x301b,8,2,0)+b"\x00\x2a\x00\x00"+b"\x41\x1c\x00\x00"+struct.pack("<IIIIII",2,0,1,1,1,0)
+
+    def test_real_standard_header_and_eh_extents_without_vbpd(self):
+        b=self.eh_body();bounds=m.dynamic_body_bounds(b)
+        self.assertEqual(bounds['body_end'],len(b))
+        self.assertEqual(bounds['sections'][0]['clauses'][0]['flags'],2)
+        for offset,value in ((4,100),(24,3),(36,3),(40,1),(0,0x401b)):
+            bad=bytearray(b)
+            struct.pack_into("<H" if offset==0 else "<I",bad,offset,value)
+            with self.subTest(offset=offset),self.assertRaises(m.FormatError):m.dynamic_body_bounds(bytes(bad))
+        for bad in (b[:-1],b+b"VBPD",b"\x00",b"\x02",b"\x03",b"\xfe\x2a"):
+            with self.subTest(body=bad),self.assertRaises(m.FormatError):m.dynamic_body_bounds(bad)
+
+    def test_dynamic_flag_independent_output_privacy_and_partial_failure(self):
+        import json
+        for fail in (False,True):
+            source,rva=StaticTests().synthetic_source()
+            record=dict(token="06000001",descriptor={},bounds={})
+            with tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/"source";path.write_bytes(source);output=Path(directory)/"output"
+                original=Path.open
+                def failing(path,*args,**kwargs):
+                    if fail and path.name.endswith(".dynamic.bin"):raise OSError("injected dynamic output failure")
+                    return original(path,*args,**kwargs)
+                with patch.object(m,"SOURCE_SHA256",m.digest(source)),patch.object(m,"PAYLOAD_RVAS",(rva,)),patch.object(m,"method_metadata",return_value={}),patch.object(m,"recover_methods",return_value=([],{})),patch.object(m,"recover_dynamic_methods",return_value=([(b"cipher",b"\x06\x2a",None,record)],{})),patch.object(Path,"open",failing):
+                    if fail:
+                        with self.assertRaises(OSError):m.run(path,output,recover_dynamic=True)
+                    else:m.run(path,output,recover_dynamic=True)
+                manifest=json.loads((output/"manifest.json").read_text())
+                self.assertEqual(manifest['complete'],not fail)
+                self.assertEqual(manifest['dynamic_recovery']['complete'],not fail)
+                self.assertFalse((output/"methods").exists())
+                self.assertNotIn('method_recovery',manifest)
+                self.assertEqual(output.stat().st_mode&0o777,0o700)
+                self.assertEqual((output/'dynamic-methods').stat().st_mode&0o777,0o700)
+                for f in (output/'dynamic-methods').iterdir():self.assertEqual(f.stat().st_mode&0o777,0o600)
+
+
 if __name__ == "__main__": unittest.main()
