@@ -2349,12 +2349,38 @@ static int uw_init_fan_locked(void) {
 	return 0;
 }
 
+/* Rebuilding an owned table resets both first duties. Preserve the complete
+ * successful pair before rebuilding, even for a one-fan explicit request.
+ * The pending flag keeps setters inside restore from recursively restoring. */
+static int uw_init_fan_preserving_targets_locked(void)
+{
+	bool restore_pair = uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+		!fans_initialized && universal_fan_manual_active && !direct_fan_control_suspend;
+	int status;
+
+	if (restore_pair) {
+		direct_fan_control_current_value_fan0_suspend_save = direct_fan_control_current_value_fan0;
+		direct_fan_control_current_value_fan1_suspend_save = direct_fan_control_current_value_fan1;
+		direct_fan_control_suspend = true;
+	}
+	status = uw_init_fan_locked();
+	/* Raw initialization already handles uncertain commit recovery. */
+	if (!status && restore_pair)
+		status = uw_restore_fan_state_locked();
+	return status;
+}
+
 int uw_init_fan(void)
 {
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
-	status = uw_init_fan_locked();
+	status = uw_init_fan_preserving_targets_locked();
+	/* A repeated explicit init may enter with intent saved by an earlier
+	 * failed init or PM restore. Internal setters must not do this step. */
+	if (!status && uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+	    direct_fan_control_suspend)
+		status = uw_restore_fan_state_locked();
 	uw_fan_unlock();
 	return status;
 }
@@ -2488,7 +2514,7 @@ static u32 uw_set_fan_locked(u32 fan_index, u8 fan_speed)
 		if (status)
 			return status;
 		if (!(byte_data & 0x40)) {
-			status = uw_init_fan_locked();
+			status = uw_init_fan_preserving_targets_locked();
 			if (status)
 				return status;
 
@@ -2952,7 +2978,7 @@ static int uw_restore_fan_state_locked(void)
 		u8 mode;
 		result = uniwill_read_ec_ram(0x0751, &mode);
 		if (result)
-			return result;
+			goto restore_failed;
 		/* FULL can supersede a failed resume through either mode API. */
 		if (mode & 0x40) {
 			/* FULL overrides the target, but clearing FULL later must not
@@ -2971,9 +2997,10 @@ static int uw_restore_fan_state_locked(void)
 	status = result ? 0 : (int)uw_set_fan_locked(1, direct_fan_control_current_value_fan1_suspend_save);
 	if (status && !result)
 		result = status;
-	if (!result) {
+	if (!result)
 		direct_fan_control_suspend = false;
-	} else if (universal && result != -EBUSY) {
+restore_failed:
+	if (result && universal && result != -EBUSY) {
 		/* Do not leave a partially restored manual table active. Desired
 		 * targets survive AUTO so a later callback/request can retry. */
 		recovery_status = (int)uw_set_fan_auto_locked();

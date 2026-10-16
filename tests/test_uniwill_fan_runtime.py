@@ -55,6 +55,9 @@ class UniwillFanRuntime(unittest.TestCase):
                  "uw_fan_control_start",
                  "uw_restore_fan_state_locked", "uniwill_keyboard_suspend",
                  "uniwill_keyboard_resume")
+        if "static int uw_init_fan_preserving_targets_locked(" in keyboard:
+            position = names.index("uw_init_fan")
+            names = names[:position] + ("uw_init_fan_preserving_targets_locked",) + names[position:]
         fixture = (ROOT / "tests/fixtures/uniwill_fan_runtime.c").read_text()
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(
             constants + [function(keyboard, name) for name in names]))
@@ -96,6 +99,21 @@ class UniwillFanRuntime(unittest.TestCase):
 
     def test_legacy_profile_and_tdp_updates_preserving_full_bit_keep_manual_worker(self):
         self.check_case("legacy_override_profile_preserves_worker")
+
+    def test_universal_reinit_after_failed_auto_preserves_owned_pair_for_either_request(self):
+        self.check_case("universal_reinit_owned_pair")
+
+    def test_universal_reinit_pair_each_failure_preserves_original_retry_targets(self):
+        self.check_case("universal_reinit_restore_failures")
+
+    def test_universal_reinit_exported_init_preserves_pair_and_retries_pending_failures(self):
+        self.check_case("universal_reinit_exported_init")
+
+    def test_universal_reinit_early_restore_read_failure_recovers_once_and_reports_cleanup_separately(self):
+        self.check_case("universal_reinit_early_restore_cleanup")
+
+    def test_universal_reinit_respects_full_invalid_input_and_unowned_first_init(self):
+        self.check_case("universal_reinit_boundaries")
 
     def test_universal_pm_rebuilds_tables_and_both_targets_without_legacy_worker(self):
         self.check_case("universal_pm_roundtrip")

@@ -55,8 +55,9 @@ static unsigned int sleep_values[128], schedule_values[8];
 static u8 queued_fan0[8], queued_fan1[8];
 static int fail_after, exact_fail_event, read_failures, write_failures, mismatch_reads, last_error, fault_status;
 static u16 mismatch_address;
+static int secondary_read_fail_event;
 static int failed_commit_readbacks, recovery_write_failures, recovery_mismatches;
-static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write, landed_failed_fan_write;
+static bool commit_verification_exhausted, recovery_clear_written, landed_failed_mode_write, landed_failed_fan_write, landed_failed_auto_write;
 static u8 ec[UINT16_MAX + 1u];
 
 static bool fault(bool write)
@@ -77,6 +78,8 @@ static int uniwill_read_ec_ram(u16 address, u8 *value)
     assert(event_count < 1024);
     events[event_count++] = (struct event){'r', address, 0};
     ++reads;
+    if (event_count == secondary_read_fail_event + 1)
+        return -ENOSPC;
     if (fault(false))
         return fault_status; /* Deliberately leave the output untouched on failure. */
     if (address == 0x07c6 && (ec[address] & 4) && ec[0x0f00] == 115 && failed_commit_readbacks) {
@@ -101,6 +104,7 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
     ++writes;
     if (fault(true)) {
         if ((address == 0x0751 && landed_failed_mode_write) ||
+            (landed_failed_auto_write && (address == 0x07c5 || address == 0x07c6)) ||
             (landed_failed_fan_write && (address == 0x0751 || address == 0x1804 || address == 0x1809))) ec[address] = value;
         return fault_status;
     }
@@ -157,9 +161,9 @@ static void reset(bool universal)
     memset(events, 0, sizeof(events));
     event_count = reads = writes = sleeps = schedules = cancellations = errors = 0;
     failed_commit_readbacks = recovery_write_failures = recovery_mismatches = 0;
-    commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = landed_failed_fan_write = false;
+    commit_verification_exhausted = recovery_clear_written = landed_failed_mode_write = landed_failed_fan_write = landed_failed_auto_write = false;
     fail_after = -1;
-    exact_fail_event = -1;
+    exact_fail_event = secondary_read_fail_event = -1;
     fault_status = -ETIMEDOUT;
     read_failures = write_failures = mismatch_reads = last_error = 0;
     uniwill_device_features.uniwill_has_universal_ec_fan_control = universal;
@@ -231,7 +235,7 @@ static void assert_saved(u8 fan0, u8 fan1)
 static void clear_trace(void)
 {
     event_count = reads = writes = sleeps = schedules = errors = last_error = 0;
-    fail_after = exact_fail_event = -1;
+    fail_after = exact_fail_event = secondary_read_fail_event = -1;
 }
 static void prepare_universal(void)
 {
@@ -906,6 +910,127 @@ int main(int argc, char **argv)
         assert(uniwill_keyboard_suspend(NULL, 0) == 0 && uniwill_keyboard_resume(NULL) == 0);
         assert(event_count == count && schedules == queued && ec[0x0751] == 0x11);
         assert(!direct_fan_control_started && !direct_fan_control_restart_delayed_work.pending);
+    } else if (strcmp(test, "universal_reinit_owned_pair") == 0) {
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int failure = 0; failure < 6; ++failure)
+        for (int landed = 0; landed < 2; ++landed)
+        for (unsigned int status = 0; status < sizeof(statuses)/sizeof(statuses[0]); ++status)
+        for (int fan = 0; fan < 2; ++fan) {
+            prepare_universal(); fault_status = statuses[status]; fail_after = failure;
+            landed_failed_auto_write = landed;
+            assert((int)uw_set_fan_auto() == statuses[status]);
+            assert(universal_fan_manual_active && !fans_initialized && !direct_fan_control_suspend);
+            assert_cached(83, 97); clear_trace();
+            assert(uw_set_fan(fan, 110) == 0);
+            assert_universal_targets(fan ? 83 : 110, fan ? 110 : 97);
+            assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            lose_universal_firmware_state(); clear_trace();
+            assert(uniwill_keyboard_resume(NULL) == 0);
+            assert_universal_targets(fan ? 83 : 110, fan ? 110 : 97);
+            assert(uw_set_fan_auto() == 0 && !universal_fan_manual_active && !direct_fan_control_suspend);
+        }
+    } else if (strcmp(test, "universal_reinit_restore_failures") == 0) {
+        prepare_universal(); read_failures = 1;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+        assert(uw_set_fan(0, 110) == 0);
+        int requested_target = -1;
+        for (int i = 0; i < event_count; ++i)
+            if (events[i].kind == 'w' && events[i].address == 0x0f20 && events[i].value == 110) requested_target = i;
+        assert(requested_target > 0);
+        const int statuses[] = {-EIO, -ENODEV, -ETIMEDOUT};
+        for (int failure = 0; failure < requested_target; ++failure)
+        for (unsigned int status = 0; status < sizeof(statuses)/sizeof(statuses[0]); ++status) {
+            prepare_universal(); read_failures = 1;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+            fault_status = statuses[status]; fail_after = failure;
+            assert((int)uw_set_fan(0, 110) == statuses[status]);
+            if (direct_fan_control_suspend) assert_saved(83, 97);
+            assert(schedules == 0 && !direct_fan_control_started);
+            clear_trace();
+            assert(uw_set_fan(1, 120) == 0);
+            assert_universal_targets(83, 120);
+        }
+    } else if (strcmp(test, "universal_reinit_exported_init") == 0) {
+        for (int full = 0; full < 2; ++full) {
+            prepare_universal(); read_failures = 1;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+            if (full) ec[0x0751] |= 0x40;
+            assert(uw_init_fan() == 0);
+            assert(!(ec[0x0751] & 0x40)); /* Existing explicit init mode semantics. */
+            assert_universal_targets(83, 97);
+            assert(uw_set_fan(1, 120) == 0); assert_universal_targets(83, 120);
+        }
+        prepare_universal(); read_failures = 1;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+        assert(uw_init_fan() == 0);
+        int count = event_count;
+        for (int failure = 0; failure < count; ++failure) {
+            prepare_universal(); read_failures = 1;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+            fail_after = failure;
+            assert(uw_init_fan() == -ETIMEDOUT);
+            assert(direct_fan_control_suspend); assert_saved(83, 97);
+            clear_trace();
+            assert(uw_init_fan() == 0);
+            assert_universal_targets(83, 97);
+        }
+        /* Existing failed-PM intent, including AUTO-cleared live cache. */
+        for (int late = 0; late < 2; ++late) {
+            prepare_universal(); assert(uniwill_keyboard_suspend(NULL, 0) == 0);
+            lose_universal_firmware_state(); clear_trace();
+            if (late) backlight_failures = 1; else fail_after = 2;
+            assert(uniwill_keyboard_resume(NULL) == (late ? -EIO : -ETIMEDOUT));
+            assert(direct_fan_control_suspend); assert_saved(83, 97); clear_trace();
+            assert(uw_init_fan() == 0); assert_universal_targets(83, 97);
+        }
+    } else if (strcmp(test, "universal_reinit_early_restore_cleanup") == 0) {
+        prepare_universal(); read_failures = 1;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+        assert(uw_init_fan() == 0);
+        int first_restore_mode = -1; bool committed = false;
+        for (int i = 0; i < event_count; ++i) {
+            if (events[i].kind == 'w' && events[i].address == 0x07c6 && (events[i].value & 4)) committed = true;
+            if (committed && events[i].kind == 'r' && events[i].address == 0x0751) { first_restore_mode = i; break; }
+        }
+        assert(first_restore_mode > 0);
+        for (int cleanup_fails = 0; cleanup_fails < 2; ++cleanup_fails) {
+            prepare_universal(); read_failures = 1;
+            assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+            fault_status = -EIO; exact_fail_event = first_restore_mode;
+            if (cleanup_fails) secondary_read_fail_event = first_restore_mode + 1;
+            assert(uw_init_fan() == -EIO && direct_fan_control_suspend);
+            assert_saved(83, 97); assert(!fans_initialized);
+            assert(events[first_restore_mode+1].kind == 'r' && events[first_restore_mode+1].address == 0x07c6);
+            if (cleanup_fails) {
+                assert(errors == 1 && last_error == -ENOSPC);
+                assert(universal_fan_manual_active && (ec[0x07c6] & 4));
+                assert(event_count == first_restore_mode + 2); /* no implicit second AUTO */
+            } else {
+                assert(errors == 0 && !universal_fan_manual_active && !(ec[0x07c6] & 4));
+                assert(event_count == first_restore_mode + 7); /* one AUTO with verified two-bit release */
+            }
+            clear_trace(); assert(uw_init_fan() == 0); assert_universal_targets(83, 97);
+        }
+    } else if (strcmp(test, "universal_reinit_boundaries") == 0) {
+        prepare_universal(); read_failures = 1;
+        assert((int)uw_set_fan_auto() == -ETIMEDOUT); clear_trace();
+        assert((int)uw_set_fan(2, 110) == -EINVAL && (int)uw_set_fan(0, 201) == -EINVAL);
+        assert(event_count == 0 && !direct_fan_control_suspend); assert_cached(83, 97);
+        ec[0x0751] |= 0x40;
+        assert((int)uw_set_fan(0, 110) == -EBUSY && writes == 0);
+        assert(!direct_fan_control_suspend && universal_fan_manual_active && !fans_initialized);
+        assert(ec[0x0f20] == 83 && ec[0x0f50] == 97); assert_cached(83, 97);
+        clear_trace(); assert(uw_set_fan_auto() == 0);
+        assert(!universal_fan_manual_active && !direct_fan_control_suspend);
+        ec[0x0751] &= ~0x40; clear_trace();
+        assert(uw_set_fan(0, 110) == 0);
+        assert(ec[0x0f20] == 110 && ec[0x0f50] == 1);
+        assert(ec[0x1804] == 110 && !direct_fan_control_suspend);
+        /* Unowned first init must not infer the fixture's arbitrary caches. */
+        reset(true); ec[0x0751] = 0x11;
+        assert(uw_set_fan(0, 110) == 0 && ec[0x0f50] == 1);
+        for (int i = 0; i < event_count; ++i)
+            assert(events[i].address != 0x1809);
     } else if (strcmp(test, "universal_pm_roundtrip") == 0) {
         prepare_universal();
         assert(uniwill_keyboard_suspend(NULL, 0) == 0);
