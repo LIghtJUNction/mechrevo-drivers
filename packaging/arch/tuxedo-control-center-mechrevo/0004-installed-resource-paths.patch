@@ -1,0 +1,108 @@
+--- a/src/e-app/backendAPIs/configAPI.ts
++++ b/src/e-app/backendAPIs/configAPI.ts
+@@ -17,13 +17,17 @@
+  * along with TUXEDO Control Center.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++import * as child_process from 'node:child_process';
+ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
+-import { ipcMain } from 'electron';
++import { app, ipcMain } from 'electron';
+ import { ConfigHandler } from '../../common/classes/ConfigHandler';
+ import { TccPaths } from '../../common/classes/TccPaths';
+ import type { ITccProfile } from '../../common/models/TccProfile';
+ import type { ITccSettings } from '../../common/models/TccSettings';
+-import { cwd, environmentIsProduction, execFile, execFileSync } from './utilsAPI';
++import { cwd, environmentIsProduction, execFile } from './utilsAPI';
++
++// System Electron launches an installed app.asar with app.isPackaged=false.
++const useInstalledResources: boolean = environmentIsProduction || app.getAppPath().endsWith('.asar');
+ 
+ const config: ConfigHandler = new ConfigHandler(
+     TccPaths.SETTINGS_FILE,
+@@ -37,7 +41,7 @@
+     const tmpProfilesPath: string = '/tmp/tmptccprofiles';
+     config.writeProfiles(newProfileList, tmpProfilesPath);
+     let tccdExec: string;
+-    if (environmentIsProduction) {
++    if (useInstalledResources) {
+         tccdExec = TccPaths.TCCD_EXEC_FILE;
+     } else {
+         tccdExec = `${cwd}/dist/tuxedo-control-center/data/service/tccd`;
+@@ -54,16 +58,17 @@
+ 
+ function pkexecWriteCustomProfiles(profiles: ITccProfile[]): boolean {
+     const tmpProfilesPath = '/tmp/tmptccprofiles';
+-    config.writeProfiles(profiles, tmpProfilesPath);
+     let tccdExec: string;
+-    if (environmentIsProduction) {
++    if (useInstalledResources) {
+         tccdExec = TccPaths.TCCD_EXEC_FILE;
+     } else {
+         tccdExec = `${cwd}/dist/tuxedo-control-center/data/service/tccd`;
+     }
+     // https://stackoverflow.com/questions/57484453/how-to-get-err-stderr-from-execsync
+     try {
+-        execFileSync(`pkexec ${tccdExec} --new_profiles ${tmpProfilesPath}`);
++        config.writeProfiles(profiles, tmpProfilesPath);
++        // The shared execFileSync helper is async and returns caught errors.
++        child_process.execFileSync('pkexec', [tccdExec, '--new_profiles', tmpProfilesPath]);
+         return true;
+     } catch (err: unknown) {
+         console.error(`configAPI: pkexecWriteCustomProfiles failed => ${err}`);
+@@ -78,7 +83,7 @@
+     config.writeSettings(settings, tmpSettingsPath);
+     let tccdExec: string;
+ 
+-    if (environmentIsProduction) {
++    if (useInstalledResources) {
+         tccdExec = TccPaths.TCCD_EXEC_FILE;
+     } else {
+         tccdExec = `${cwd}/dist/tuxedo-control-center/data/service/tccd`;
+@@ -113,7 +118,7 @@
+         config.writeSettings(newSettings, tmpSettingsPath);
+         let tccdExec: string;
+ 
+-        if (environmentIsProduction) {
++        if (useInstalledResources) {
+             tccdExec = TccPaths.TCCD_EXEC_FILE;
+         } else {
+             tccdExec = `${cwd}/dist/tuxedo-control-center/data/service/tccd`;
+--- a/src/e-app/backendAPIs/webcamAPI.ts
++++ b/src/e-app/backendAPIs/webcamAPI.ts
+@@ -18,6 +18,7 @@
+  */
+ 
+ import * as child_process from 'node:child_process';
++import { app } from 'electron';
+ import { ConfigHandler } from '../../common/classes/ConfigHandler';
+ import { TccPaths } from '../../common/classes/TccPaths';
+ import { WebcamAPIFunctions } from '../../common/models/IWebcamAPI';
+@@ -25,6 +26,9 @@
+ import { clearWebcamWindow, createWebcamPreview, tccWindow, webcamWindow } from './browserWindowsAPI';
+ import { userConfig } from './initMain';
+ import { cwd, environmentIsProduction, execCmd, execFile } from './utilsAPI';
++
++// System Electron launches an installed app.asar with app.isPackaged=false.
++const useInstalledResources: boolean = environmentIsProduction || app.getAppPath().endsWith('.asar');
+ 
+ const webcamConfigHandler: ConfigHandler = new ConfigHandler(
+     TccPaths.SETTINGS_FILE,
+@@ -36,7 +40,7 @@
+ 
+ function getWebcamCtrlPythonPath(): string {
+     let webcamCtrolsPath: string;
+-    if (environmentIsProduction) {
++    if (useInstalledResources) {
+         webcamCtrolsPath = TccPaths.TCCD_PYTHON_CAMERACTRL_FILE;
+     } else {
+         webcamCtrolsPath = `${cwd}/src/cameractrls/cameractrls.py`;
+@@ -150,7 +154,7 @@
+             const tmpWebcamPath: string = '/tmp/tmptccwebcam';
+             webcamConfigHandler.writeWebcamSettings(webcamSettings, tmpWebcamPath);
+             let tccdExec: string;
+-            if (environmentIsProduction) {
++            if (useInstalledResources) {
+                 tccdExec = TccPaths.TCCD_EXEC_FILE;
+             } else {
+                 tccdExec = `${cwd}/dist/tuxedo-control-center/data/service/tccd`;

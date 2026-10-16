@@ -50,6 +50,26 @@
     "src/common/models/IFanData.ts": {
       "size": 1667,
       "sha256": "53e5bc94bf6cc93ae72fdd769f35c787e0c72eb4a6958b8ffbef6c37e98d636b"
+    },
+    "src/common/classes/TccPaths.ts": {
+      "size": 1674,
+      "sha256": "7b5937768e71aba9cfe9126714c0030f7ce194a24a1bed4bd6fa34d27641ce54"
+    },
+    "src/e-app/backendAPIs/configAPI.ts": {
+      "size": 5678,
+      "sha256": "c2d05974bed278f0d3cb2426179e64897e6422338a8e4a03f10beebc357122c2"
+    },
+    "src/e-app/backendAPIs/webcamAPI.ts": {
+      "size": 6526,
+      "sha256": "3c2d94ea9c62f2cc07c68c14bb36262b48d4e984186c510686933a7fd24c5098"
+    },
+    "src/e-app/backendAPIs/utilsAPI.ts": {
+      "size": 10487,
+      "sha256": "ed478dca2efe298743088bdce551a5975459ca1426d9bcb7c35769fe5748ecfa"
+    },
+    "src/common/classes/ConfigHandler.ts": {
+      "size": 11316,
+      "sha256": "0bcae3164fe719e69287063840e849eabc6328def1e1aa0339b89bd5339212e0"
     }
   },
   "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
