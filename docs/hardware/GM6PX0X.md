@@ -4,6 +4,60 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
+## 2026-10-16 r72 RPM 安装与原厂功耗默认值续验（最新）
+
+完整本地回归 689 项通过，其中实际 C 风扇运行/并发 53 项、温度/RPM 10 项。
+RPM 故意破坏 GPU 低地址、缩放、错误传播、跨字节刷新四个负例均被回归捕获。
+源提交 `749949a50d1a0c038c83d5cf02261536e4b80360` 已推送。
+包 `mechrevo-drivers-dkms-git 4.24.0.r72.g749949a-1` 已安装，SHA-256
+`14d30c1b30fdafb09df87beda98148f452c592f30ff9b25cb04df549595008fd`。
+86 个包内文件的内容/权限、56 个驱动源文件与固定提交一致；113 个安装文件、0 改动。
+`7.2.9-arch1-1`、`7.2.7-arch1-1` 各 28 个模块完成 DKMS 安装、vermagic 和签名核对。
+三项现有 EFI 映像签名检查通过；这不等于 Secure Boot 实机验收。
+
+仅独立卸载/加载 `mechrevo_ec_sensors`，运行 build ID 与正式安装文件一致。
+新增 `fan1_input/fan2_input` 和 CPU fan/GPU fan 标签，连同原温度接口均为 0444，无 PWM 写接口。
+正式加载后十组样本 CPU 字值 3,558–3,617、GPU 4,939；`sensors` 显示 RPM。
+这是已恢复的 OEM 算术公式及只读接口验收，未用独立转速计校准。
+每次最多三次高/低/高字节读取，跨字节刷新未稳定返回 EAGAIN，传输失败明确报错。
+精确 DMI/BIOS、项目 `0x10`、`0x078e` bit 6 及启动 RPM 读取任一失败时，整个传感器模块拒绝加载。
+
+临时试用曾完成十组采样并恢复 r61 模块；正式安装后另行加载、采样和核验。
+全过程 TCC/thermald/nvidia-powerd PID、五个核心模块 build ID、键盘节点 inode、配置/状态散列保持，
+GPU 身份保持、加载窗口无新增受监测 GPU/PCIe 故障。
+keyboard/IO/NVIDIA/compatibility 仍为开机 r37，WMI 为先前 r60；传感器为 r72。
+新曲线提交修复已安装但尚未在核心模块生效，未在本机主动写曲线或切换手动模式。
+回归验证先关闭表控制、完整写入再启用，提交失败与恢复失败分别报告；未改现有 96 字节常速表布局。
+universal/legacy 手动模式状态所有权与真实睡眠恢复仍待修复及实机验收。
+
+另一个固定十五地址 ECRR 只读探针完成三次相同快照后卸载：
+
+| OEM 默认模式 | PL1 字节 | PL2 字节 | PL4 字节 | DState 字节 | TCC 偏移字节 |
+| --- | --- | --- | --- | --- | --- |
+| Gaming | 75 | 75 | 200 | 1 | 5 |
+| Office | 45 | 45 | 200 | 1 | 20 |
+| Turbo | 130 | 130 | 200 | 1 | 5 |
+
+地址及真实 getter/caller 见[原厂策略迁移](../OEM-MIGRATION-NEXT.md)。这是固件保存的原始默认值，
+不是当前 RAPL/MSR 限制、实测瓦特或已执行温度目标；未据此写入 EC 或改变 Linux 策略。
+十五字节探测前后全部既存模块、配置、服务 PID、键盘节点和 GPU 保持，未新增受监测故障。
+55W PL1 上限、90°C 软件目标、每秒检查、零 RAPL 防抖保持，PL2 140W 仍未持久托管。
+先前已观测到 100°C；本轮接口与协议推进不能当作热尖峰修复或 Windows 性能比较。
+
+安装后另完成 30.51 秒、23 样本只读温度/功耗/MSR 观测，回执 complete/valid，
+最高采样 97°C，CPU0 package throttle 计数首末增加 1,949，仍存在热限制；
+无新增受监测 GPU/PCIe 故障。此短窗口只补安装后健康证据，不构成持续负载散热验收。
+
+私有证据：`.local-tests/postboot-20261016/oem-binding/` 下
+`integration-tests.log`、`hardware/rpm-trial-receipt.json`、`hardware/installed-load-receipt.json`、
+`package/package-verification.json`、`package/installed-verification.json`、`power-semantics/defaults-receipt.json`。
+安装后短窗口另见 `hardware/rpm-thermal-30s.json`。
+原厂 IL/密钥/二进制不公开。恢复材料均在 `~/Backups/projects/mechrevo-drivers/light/`：
+`windows-oem-recovery-20261016/`、`oem-power-defaults-20261016/` 保存已回读校验的分析证据；
+`oem-rpm-install-20261016/` 保留 r61 包，`rpm-live-20261016/` 保留原传感器模块。
+各目录内有 manifest 与恢复说明；恢复只读传感器无需卸载 WMI/keyboard/NVIDIA 核心。
+源码已推送，未更新 AUR 发布元数据；AUR git 配方与本机固定提交安装应分开理解。
+
 ## 2026-10-16 OEM 方法恢复与本机布局只读复核
 
 原始 5.17.51.34 服务的方法表已恢复 5,183 个 CIL 方法体，每条均通过独立 OEM 尾标记。

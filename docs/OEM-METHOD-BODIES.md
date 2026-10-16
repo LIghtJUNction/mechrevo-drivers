@@ -85,6 +85,22 @@ GPU 低字节明确为 `0x046b`，没有把未经本机验证的 `0x046d` 套进
 不是独立转速仪结果，也没有在本机运行 Windows 选择函数。
 表写入、失败处理及 Linux 实施边界见 [原厂策略迁移](OEM-MIGRATION-NEXT.md)。
 
+## 功耗/TCC 方法恢复的新增结论
+
+选中 RamFan1p5 manager 的 Intel 路径已追到真实 profile 应用分支：Custom 模式
+把 profile PL1/PL2/PL4 写到 `0x0783..0x0785`，其他三模式传入零作为默认/覆盖请求。
+所有模式按 profile 开关决定向 `0x0786` 写入带 bit 7 的 TCC offset 或零。
+零不等于实测 0W，字节转换和吞错也不证明固件已接受请求。
+不能把 base manager 的 PL4 换算或忽略 Tau 的方法套入选中的 manager。
+
+动态默认 getter 已与本机十五个固定地址的三组只读样本对应：
+Gaming 的 PL1/PL2/PL4/DState 为 75/75/200/1、TCC 为 5；
+Office 为 45/45/200/1、TCC 为 20；Turbo 为 130/130/200/1、TCC 为 5。
+这些只是按恢复后字段标签解释的原始默认字节，不是运行中的 RAPL 限值、
+温度限制执行结果或安全功耗边界。本轮探针已移除，原模块/PID/配置保持，无新增受监测故障，
+没有为此切换原厂性能模式或写入功耗/TCC。完整字段地址、manager 边界及待验收条件见
+[功耗模式证据](OEM-MIGRATION-NEXT.md#原厂功耗模式的真实分支与本机默认字节)。
+
 ## 复现与证据
 
 维护工具及用法见 [Windows 静态工具](WINDOWS-STATIC-TOOLS.md)。工具固定原始来源哈希、
@@ -99,6 +115,8 @@ GPU 低字节明确为 `0x046b`，没有把未经本机验证的 `0x046d` 套进
 - `fan-layout-body/layout-semantics.json`、`control-semantics.md`：布局分支、16 项曲线、启用及生命周期调用。
 - `rpm-bodies/RPM-ANALYSIS.md`、`rpm-static-receipt.json`：delegate、地址、公式及失败路径。
 - `hardware/hardware-receipt.json`：十组实机只读样本、探针移除、原服务/模块/配置保持及 GPU 健康核验。
+- `power-semantics/FINDINGS.md`、`evidence.json`、`mode-matrix.json`、`defaults-receipt.json`：实际功耗模式分支、逐方法来源 hash 和十五个默认字节的三组实机只读核对。
+- `hardware/rpm-trial-receipt.json`：Linux 只读 RPM 临时加载/读取/恢复验证；包安装状态另行记录。
 
 早期 PE 元数据、native 解密与重建证据继续保留于
 `.local-tests/postboot-20261016/thermal-iterate/oem-body-audit/`。
