@@ -10,7 +10,7 @@
 
 pkgname=mechrevo-power-control
 pkgver=0.1.0
-pkgrel=14
+pkgrel=15
 pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
 arch=('x86_64')
 url='https://github.com/LIghtJUNction/mechrevo-drivers'
@@ -21,7 +21,7 @@ depends=('python' 'thermald=2:2.5.13' 'systemd')
 makedepends=('git')
 options=('!strip' '!debug' '!lto')
 
-_source_commit=${MECHREVO_POWER_COMMIT-ff2add6f2ec24766a76b6cab88c43e85e31248b2}
+_source_commit=${MECHREVO_POWER_COMMIT-cbb33960a470cd7d791341fc1ceff56a21a7c578}
 _source_url=${MECHREVO_POWER_SOURCE:-"${url}.git"}
 if [[ ! $_source_commit =~ ^[0-9a-f]{40}$ ]]; then
     printf '%s\n' 'Set MECHREVO_POWER_COMMIT to a reviewed full 40-character Git commit.' >&2
