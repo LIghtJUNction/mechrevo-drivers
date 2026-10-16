@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURE=ROOT/'tests/fixtures/tcc_3_0_10'
 PATCH=ROOT/'packaging/arch/tuxedo-control-center-mechrevo/0001-fan-io-error-contract.patch'
+PATCH2=PATCH.with_name('0002-fan-lifecycle.patch')
 
 class TccFanContract(unittest.TestCase):
     @classmethod
@@ -20,14 +21,29 @@ class TccFanContract(unittest.TestCase):
             data=(FIXTURE/'upstream'/name).read_bytes()
             assert len(data)==record['size'] and hashlib.sha256(data).hexdigest()==record['sha256']
         assert hashlib.sha256(PATCH.read_bytes()).hexdigest()==cls.manifest['patch_sha256']
-        cls.tmp=tempfile.TemporaryDirectory(prefix='tcc-contract-',dir=os.environ.get('MECHREVO_TEST_TMPDIR'))
-        cls.base=Path(cls.tmp.name);cls.legacy=cls.base/'legacy';cls.patched=cls.base/'patched'
+        assert hashlib.sha256(PATCH2.read_bytes()).hexdigest()==cls.manifest['patch2_sha256']
+        for name,digest in cls.manifest['harness_sha256'].items():
+            assert hashlib.sha256((FIXTURE/name).read_bytes()).hexdigest()==digest
+        cls.tmp=None if os.environ.get('TCC_KEEP_TEST_TMPDIR') else tempfile.TemporaryDirectory(prefix='tcc-contract-',dir=os.environ.get('MECHREVO_TEST_TMPDIR'))
+        cls.base=Path(cls.tmp.name if cls.tmp else tempfile.mkdtemp(prefix='tcc-contract-',dir=os.environ.get('MECHREVO_TEST_TMPDIR')))
+        cls.command_count=0
+        cls.legacy=cls.base/'legacy';cls.patched=cls.base/'patched'
         shutil.copytree(FIXTURE/'upstream',cls.legacy);shutil.copytree(FIXTURE/'upstream',cls.patched)
         subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        cls.patch1=cls.base/'patch1';shutil.copytree(cls.patched,cls.patch1)
+        subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH2)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        for name,digest in cls.manifest['patched_files_sha256'].items():
+            assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
+        cls.generated=None
     @classmethod
-    def tearDownClass(cls):cls.tmp.cleanup()
+    def tearDownClass(cls):
+        if cls.tmp:cls.tmp.cleanup()
     def run_cmd(self,args,success=True):
         r=subprocess.run([str(x) for x in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=120)
+        if os.environ.get('TCC_TEST_LOG_DIR'):
+            self.__class__.command_count+=1
+            log=Path(os.environ['TCC_TEST_LOG_DIR']);log.mkdir(parents=True,exist_ok=True)
+            (log/(str(self.__class__.command_count).zfill(3)+'.json')).write_text(json.dumps({'args':[str(x) for x in args],'returncode':r.returncode,'output':r.stdout},indent=2)+'\n')
         if success:self.assertEqual(r.returncode,0,r.stdout)
         else:self.assertNotEqual(r.returncode,0,r.stdout)
         return r.stdout
@@ -55,5 +71,71 @@ class TccFanContract(unittest.TestCase):
         hybrid=self.base/'old-worker-with-patched-io';shutil.copytree(self.patched,hybrid)
         name='src/service-app/classes/FanControlWorker.ts';shutil.copy2(self.legacy/name,hybrid/name)
         self.run_cmd([os.environ['TCC_NODE'],FIXTURE/'service_test.cjs',os.environ['TCC_TYPESCRIPT_MODULE'],hybrid],success=False)
+
+    def service_tools(self):
+        if not all(os.environ.get(k) for k in ('TCC_TYPESCRIPT_MODULE','TCC_NODE')):
+            self.skipTest('explicit existing locked TypeScript/Node required; no automatic install')
+        return os.environ['TCC_NODE'],os.environ['TCC_TYPESCRIPT_MODULE']
+
+    def generated_classes(self):
+        node,ts=self.service_tools()
+        if self.__class__.generated is None:
+            out=self.base/'generated-js'
+            code="const fs=require('fs'),path=require('path'),ts=require(process.argv[1]);for(const name of ['DaemonWorker','FanControlBaseClass','FanControlTuxedoIO','FanControlWorker','TuxedoControlCenterDaemon','StateSwitcherWorker']){const source=fs.readFileSync(path.join(process.argv[2],'src/service-app/classes',name+'.ts'),'utf8');const result=ts.transpileModule(source,{reportDiagnostics:true,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}});if(result.diagnostics.some(d=>d.category===ts.DiagnosticCategory.Error))throw Error('TypeScript transpile diagnostic: '+name);const dest=path.join(process.argv[3],'service-app/classes');fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,name+'.js'),result.outputText);}"
+            self.run_cmd([node,'-e',code,ts,self.patched,out])
+            self.__class__.generated=out
+        return self.__class__.generated
+
+    def negative_assertion(self,args):
+        output=self.run_cmd(args,success=False)
+        self.assertIn('AssertionError',output,output)
+
+    def test_lifecycle_actual_ts_independent_js_and_patch1_negatives(self):
+        node,ts=self.service_tools()
+        groups=['false-throw','mapping-retry','exit-drain-reopen','exit-failed-retry','start-drain-busy-profile','start-failure-queue','exit-waits-start','queued-start-cancel','owned-capability-loss','restart-start-errors']
+        for group in groups:
+            for kind,source in [('ts',self.patched),('js',self.generated_classes())]:
+                with self.subTest(group=group,kind=kind):
+                    self.run_cmd([node,FIXTURE/'lifecycle_test.cjs',ts,source,group,kind])
+            with self.subTest(group=group,kind='patch1-negative'):
+                self.negative_assertion([node,FIXTURE/'lifecycle_test.cjs',ts,self.patch1,group,'ts'])
+
+    def test_queued_start_cancellation_mutation_is_rejected(self):
+        node,ts=self.service_tools();hybrid=self.base/'cancel-start-mutation';shutil.copytree(self.patched,hybrid)
+        f=hybrid/'src/service-app/classes/FanControlWorker.ts';s=f.read_text();marker="if (this.closing) throw new Error('FanControlWorker: queued start cancelled by exit');";self.assertEqual(s.count(marker),2);f.write_text(s.replace(marker,'if (this.closing) return;'))
+        self.negative_assertion([node,FIXTURE/'lifecycle_test.cjs',ts,hybrid,'queued-start-cancel','ts'])
+
+    def test_cleanup_stages_actual_ts_js_and_original_mutation_negatives(self):
+        node,ts=self.service_tools();rel='src/service-app/classes/FanControlTuxedoIO.ts'
+        for kind,file in [('ts',self.patched/rel),('js',self.generated_classes()/'service-app/classes/FanControlTuxedoIO.js')]:
+            with self.subTest(kind=kind):self.run_cmd([node,FIXTURE/'stage_errors_test.cjs',ts,file,kind])
+        for name,source in [('original',self.legacy),('patch1',self.patch1)]:
+            with self.subTest(kind=name):self.negative_assertion([node,FIXTURE/'stage_errors_test.cjs',ts,source/rel,'ts'])
+        f=self.base/'constant-stage-mutation.ts';source=(self.patched/rel).read_text();marker="`FanControlTuxedoIO: fan cleanup incomplete: ${failureStages.join('; ')}`";self.assertEqual(source.count(marker),1);f.write_text(source.replace(marker,"'FanControlTuxedoIO: fan cleanup incomplete'"))
+        self.negative_assertion([node,FIXTURE/'stage_errors_test.cjs',ts,f,'ts'])
+        unsafe=self.base/'unsafe-stage-mutation.ts';marker="""            try {
+                detail = String(error);
+            } catch {
+                detail = '[unprintable error]';
+            }""";self.assertEqual(source.count(marker),1);unsafe.write_text(source.replace(marker,'            detail = String(error);'))
+        for group in ['auto-formatter','disable-formatter','both-formatters']:
+            with self.subTest(kind='unsafe-mutation',group=group):self.negative_assertion([node,FIXTURE/'stage_errors_test.cjs',ts,unsafe,'ts',group])
+
+    def test_actual_callers_ts_js_and_isolated_original_callers(self):
+        node,ts=self.service_tools();baseline=self.base/'original-callers-final-worker';shutil.copytree(self.patched,baseline)
+        for name in ['TuxedoControlCenterDaemon','StateSwitcherWorker']:
+            rel='src/service-app/classes/'+name+'.ts';shutil.copy2(self.legacy/rel,baseline/rel)
+        groups=['profile-during-exit','refresh-during-apply','shutdown-during-start','shutdown-no-reopen','best-effort-workers','concurrent-starts','restart-after-cleanup','init-failure-observable','exit-failure-retry','hostile-start-error','signal-clean','signal-failed','fatal-error','trigger-state-reject']
+        unchanged={'restart-after-cleanup','signal-clean'}
+        for group in groups:
+            for kind,source in [('ts',self.patched),('js',self.generated_classes())]:
+                with self.subTest(group=group,kind=kind):self.run_cmd([node,FIXTURE/'caller_lifecycle_test.cjs',ts,source,self.patched,group,kind])
+            with self.subTest(group=group,kind='original-callers'):
+                args=[node,FIXTURE/'caller_lifecycle_test.cjs',ts,baseline,self.patched,group,'ts']
+                if group in unchanged:self.run_cmd(args)
+                else:
+                    output=self.run_cmd(args,success=False)
+                    expected={'exit-failure-retry':'Error: hostile primitive','hostile-start-error':'Error: hostile primitive','trigger-state-reject':'Error: state async failure'}.get(group,'AssertionError')
+                    self.assertIn(expected,output,output)
 
 if __name__=='__main__':unittest.main()

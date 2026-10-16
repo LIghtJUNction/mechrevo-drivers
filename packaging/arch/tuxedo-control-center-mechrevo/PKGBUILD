@@ -3,7 +3,7 @@
 # Run from this repository, or set TCC_CONTRACT_ROOT to its reviewed checkout.
 pkgname=tuxedo-control-center-mechrevo
 pkgver=3.0.10
-pkgrel=1
+pkgrel=2
 pkgdesc='TCC with qualified fan I/O failure reporting, rebuilt native/service/UI'
 arch=('x86_64')
 url='https://github.com/tuxedocomputers/tuxedo-control-center'
@@ -14,13 +14,15 @@ depends=('electron42=42.11.11' 'python' 'libxcrypt-compat' 'systemd-libs')
 makedepends=('nodejs>=22.22.2' 'npm' 'git' 'gcc' 'make' 'python' 'patch' 'pkgconf')
 options=('!strip' '!debug' '!lto')
 source=("tuxedo-control-center-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
-        '0001-fan-io-error-contract.patch' 'electron-builder-dir.json')
+        '0001-fan-io-error-contract.patch' '0002-fan-lifecycle.patch' 'electron-builder-dir.json')
 sha256sums=('d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532'
-            '93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c' '641390a3c0837b13e9a9488c2256f21858360ac807336ae3bce7be725a6fb914')
+            '93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c'
+            'fafffae6ed9923c6dcc2bb5faa90938fa68dcb1f72fff6e8060cc229403de285' '641390a3c0837b13e9a9488c2256f21858360ac807336ae3bce7be725a6fb914')
 
 prepare() {
     cd "$srcdir/tuxedo-control-center-$pkgver" || return 1
     patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0001-fan-io-error-contract.patch" || return 1
+    patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0002-fan-lifecycle.patch" || return 1
     # Preserve package.json/package-lock; no npm install/implicit Electron version rewrite.
     sed -i 's|^ExecStart.*|ExecStart=/usr/lib/tuxedo-control-center/data/service/tccd --start|;s|^ExecStop.*|ExecStop=/usr/lib/tuxedo-control-center/data/service/tccd --stop|' src/dist-data/tccd.service
     sed -i 's|^Exec=.*|Exec=tuxedo-control-center --tray|' src/dist-data/tuxedo-control-center-tray.desktop
@@ -43,6 +45,7 @@ build() {
     lock_before=$(sha256sum package-lock.json) || return 1
     npm ci --no-audit --no-fund || return 1
     [[ $(sha256sum package-lock.json) == "$lock_before" ]] || return 1
+    ./node_modules/.bin/tsc --noEmit --incremental false -p ./src/service-app || return 1
     npm run build-prod || return 1
     ./node_modules/.bin/electron-builder --linux --dir --config "$srcdir/electron-builder-dir.json" || return 1
     [[ -s dist/packages/linux-unpacked/resources/app.asar ]] || return 1
@@ -55,6 +58,7 @@ check() {
     local contract_root=${TCC_CONTRACT_ROOT:-"$startdir/../../.."}
     [[ -f $contract_root/tests/test_tcc_fan_error_contract.py && ! -L $contract_root/tests/test_tcc_fan_error_contract.py ]] || return 1
     cmp "$srcdir/0001-fan-io-error-contract.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0001-fan-io-error-contract.patch" || return 1
+    cmp "$srcdir/0002-fan-lifecycle.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0002-fan-lifecycle.patch" || return 1
     export TCC_NODE=$(command -v node)
     export TCC_NODE_INCLUDE=$(node -p 'require("path").resolve(require("path").dirname(process.execPath),"../include/node")')
     export TCC_NODE_ADDON_API="$PWD/node_modules/node-addon-api"

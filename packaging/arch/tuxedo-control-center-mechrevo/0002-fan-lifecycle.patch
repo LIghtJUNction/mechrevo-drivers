@@ -1,0 +1,424 @@
+--- a/src/service-app/classes/FanControlTuxedoIO.ts
++++ b/src/service-app/classes/FanControlTuxedoIO.ts
+@@ -23,21 +23,63 @@
+ import { FAN_LOGIC } from './FanControlLogic';
+ 
+ export class FanControlTuxedoIO extends FanControlBaseClass {
++    private cleanupRequired: boolean = false;
++
++    private releaseFanControl(): void {
++        const failures: unknown[] = [];
++        const failureStages: string[] = [];
++        const describeFailure = (stage: string, error: unknown): string => {
++            let detail: string;
++            try {
++                detail = String(error);
++            } catch {
++                detail = '[unprintable error]';
++            }
++            return `${stage}: ${detail}`;
++        };
++        try {
++            if (!ioAPI.setFansAuto()) {
++                throw new Error('FanControlTuxedoIO: automatic fan request failed');
++            }
++        } catch (error: unknown) {
++            failures.push(error);
++            failureStages.push(describeFailure('AUTO', error));
++        }
++        // Attempt this independent compatibility cleanup even if AUTO failed.
++        // On qualified Uniwill/Clevo this is not a hardware-mode acknowledgement.
++        try {
++            if (!ioAPI.setEnableModeSet(false)) {
++                throw new Error('FanControlTuxedoIO: mode-disable request failed');
++            }
++        } catch (error: unknown) {
++            failures.push(error);
++            failureStages.push(describeFailure('mode-disable', error));
++        }
++        if (failures.length) {
++            throw new AggregateError(failures, `FanControlTuxedoIO: fan cleanup incomplete: ${failureStages.join('; ')}`);
++        }
++        this.cleanupRequired = false;
++        console.log('FanControlTuxedoIO: Automatic control request accepted');
++    }
++
+     public async initFanControl(fanWriteAvailable: boolean, fanControlEnabled: boolean): Promise<void> {
+         if (fanWriteAvailable) {
++            // A failed transition can still have reached firmware.
++            this.cleanupRequired = true;
+             if (fanControlEnabled) {
+-                ioAPI.setEnableModeSet(true);
+-                console.log('FanControlTuxedoIO: Enabling manual mode');
++                if (!ioAPI.setEnableModeSet(true)) {
++                    throw new Error('FanControlTuxedoIO: mode-enable request failed');
++                }
++                console.log('FanControlTuxedoIO: Manual control initialization accepted');
++            } else {
++                this.releaseFanControl();
+             }
+-            if (!fanControlEnabled) {
+-                ioAPI.setFansAuto();
+-                ioAPI.setEnableModeSet(false);
+-                console.log('FanControlTuxedoIO: Enabling automatic mode');
+-            }
+-
+             this.tccd.dbusData.fansOffAvailable = ioAPI.getFansOffAvailable();
+             this.tccd.dbusData.fansMinSpeed = ioAPI.getFansMinSpeed();
+         } else {
++            // Read-only initialization cannot silently abandon prior attempts.
++            // A never-owned backend still performs no hardware API calls.
++            if (this.cleanupRequired) this.releaseFanControl();
+             console.log('FanControlTuxedoIO: Fan write not available');
+         }
+     }
+@@ -114,6 +156,7 @@
+     }
+ 
+     public async writeFanSpeed(fanIndex: number, calculatedSpeed: number): Promise<void> {
++        this.cleanupRequired = true;
+         const speedWriteSuccess: boolean = ioAPI.setFanSpeedPercent(fanIndex, calculatedSpeed);
+ 
+         if (!speedWriteSuccess) {
+@@ -137,8 +180,8 @@
+     }
+ 
+     public async exit(): Promise<void> {
+-        ioAPI.setFansAuto(); // required to avoid high fan speed on wakeup for certain devices
+-        ioAPI.setEnableModeSet(false);
+-        console.log('FanControlTuxedoIO: Enabling automatic mode');
++        if (this.cleanupRequired) {
++            this.releaseFanControl();
++        }
+     }
+ }
+--- a/src/service-app/classes/FanControlWorker.ts
++++ b/src/service-app/classes/FanControlWorker.ts
+@@ -72,6 +72,13 @@
+     private tuxedoDevice: TUXEDODevice;
+     private fanCheckCounter: number = 0;
+     private workInProgress: boolean = false;
++    private inFlightWork: Promise<void> | undefined;
++    private lifecycleTail: Promise<void> = Promise.resolve();
++    private lifecyclePending: number = 0;
++    private closing: boolean = false;
++    private cleanupConfirmed: boolean = false;
++    private exitInProgress: boolean = false;
++    private exitOperation: Promise<void> | undefined;
+     private isUniwill: boolean = false;
+ 
+     private nrTempsAvailable: number;
+@@ -111,6 +118,8 @@
+ 
+             this.fanApi = null;
+             console.log('FanControlWorker: onStart: Fan API not available');
++        } else if (!(await this.initializeFanControl(this.fanApi))) {
++            throw new Error('FanControlWorker: selected fan backend is unavailable');
+         }
+     }
+ 
+@@ -137,13 +146,65 @@
+         }
+     }
+ 
++    public override async start(): Promise<void> {
++        if (this.closing) {
++            if (this.exitInProgress) throw new Error('FanControlWorker: exit is in progress');
++            if (!this.cleanupConfirmed) throw new Error('FanControlWorker: previous cleanup is unconfirmed');
++            this.closing = false;
++            this.exitOperation = undefined;
++        }
++        this.lifecyclePending = (this.lifecyclePending ?? 0) + 1;
++        const operation = (this.lifecycleTail ?? Promise.resolve()).then(async (): Promise<void> => {
++            if (this.closing) throw new Error('FanControlWorker: queued start cancelled by exit');
++            // Public profile/start transitions wait for the complete prior tick.
++            await this.inFlightWork?.catch((): void => {});
++            if (this.closing) throw new Error('FanControlWorker: queued start cancelled by exit');
++            await super.start();
++        });
++        // The queue remains usable after an initialization failure. The caller
++        // still receives that failure; do not select another backend silently.
++        this.lifecycleTail = operation.catch((): void => {});
++        try {
++            await operation;
++        } finally {
++            this.lifecyclePending -= 1;
++        }
++    }
++
+     public override async work(): Promise<void> {
+-        if (this.workInProgress) return;
++        if (this.closing || this.workInProgress || this.lifecyclePending > 0) return;
+         this.workInProgress = true;
++        const operation = super.work();
++        this.inFlightWork = operation;
+         try {
+-            await super.work();
++            await operation;
+         } finally {
++            if (this.inFlightWork === operation) this.inFlightWork = undefined;
+             this.workInProgress = false;
++        }
++    }
++
++    public override async exit(): Promise<void> {
++        this.closing = true;
++        if (!this.exitOperation) this.cleanupConfirmed = false;
++        this.exitInProgress = true;
++        const operation = this.exitOperation ?? (async (): Promise<void> => {
++            await this.lifecycleTail;
++            // Wait outside onWork: an internal reinitialization must not queue
++            // behind and await the work operation that is currently running it.
++            await this.inFlightWork?.catch((): void => {});
++            await super.exit();
++            this.cleanupConfirmed = true;
++        })();
++        this.exitOperation = operation;
++        try {
++            await operation;
++        } catch (error: unknown) {
++            // An explicit later exit may retry cleanup; new work stays closed.
++            if (this.exitOperation === operation) this.exitOperation = undefined;
++            throw error;
++        } finally {
++            if (this.exitOperation === operation || !this.exitOperation) this.exitInProgress = false;
+         }
+     }
+ 
+@@ -179,7 +240,7 @@
+     }
+ 
+     public async onExit(): Promise<void> {
+-        await this.fanApi.exit();
++        if (this.fanApi) await this.fanApi.exit();
+     }
+ 
+     private async initializeFanControl(
+@@ -219,7 +280,7 @@
+         if (fanApiUnavailable && this.retryFanInitCounter > 0) {
+             console.log('FanControlWorker: checkFanApiAvailable: Fan API not defined, retrying initialization');
+             this.retryFanInitCounter = this.retryFanInitCounter - 1;
+-            this.onStart(true);
++            await this.onStart(true);
+             return;
+         }
+ 
+@@ -247,6 +308,7 @@
+     }
+ 
+     private async initializeFanControlApi(fanControlEnabled: boolean, resetFanMap?: boolean): Promise<void> {
++        this.mapStatus = false;
+         await this.fanApi.initFanControl(this.fanWriteAvailable, fanControlEnabled);
+         const numberInterfaces: number = await this.fanApi.getNumberFanInterfaces();
+ 
+--- a/src/service-app/classes/TuxedoControlCenterDaemon.ts
++++ b/src/service-app/classes/TuxedoControlCenterDaemon.ts
+@@ -69,6 +69,10 @@
+     public activeProfile: ITccProfile;
+ 
+     private workers: DaemonWorker[] = [];
++    // Shutdown is terminal for this daemon; service restart creates a new instance.
++    private workerLifecycleTail: Promise<void> = Promise.resolve();
++    private workerShutdownRequested: boolean = false;
++    private workerExitOperation: Promise<boolean> | undefined;
+     private listeners: (KeyboardBacklightListener | NVIDIAPowerCTRLListener)[] = [];
+ 
+     protected started: boolean = false;
+@@ -129,32 +133,64 @@
+         this.listeners.push(new KeyboardBacklightListener(this));
+         this.listeners.push(new NVIDIAPowerCTRLListener(this));
+ 
+-        await this.startWorkers();
+-
++        if (!(await this.startWorkers())) {
++            this.stateWorker.reapplyProfile();
++        }
++
++        if (this.workerShutdownRequested) {
++            return;
++        }
+         this.started = true;
+         this.logLine('TuxedoControlCenterDaemon: Daemon started');
+ 
+         // Start continuous work for each worker with individual interval
+         for (const worker of this.workers) {
+             worker.timer = setInterval(async (): Promise<void> => {
++                if (this.workerShutdownRequested) {
++                    return;
++                }
+                 try {
+                     await worker.work();
+                 } catch (err: unknown) {
+-                    console.error(`TuxedoControlCenterDaemon: Failed executing onWork() of ${worker.name} => ${err}`);
++                    console.error(`TuxedoControlCenterDaemon: Failed executing onWork() of ${worker.name} => ${this.formatWorkerError(err)}`);
+                 }
+             }, worker.timeout);
+         }
+     }
+ 
+-    public async startWorkers(): Promise<void> {
+-        for (const worker of this.workers) {
+-            try {
+-                worker.updateProfile(this.getCurrentProfile());
+-                await worker.start();
+-            } catch (err: unknown) {
+-                console.error(`TuxedoControlCenterDaemon: Failed executing onStart => ${err}`);
+-            }
+-        }
++    private formatWorkerError(err: unknown): string {
++        try {
++            return String(err);
++        } catch {
++            return '[unprintable error]';
++        }
++    }
++
++    public async startWorkers(reason: 'explicit' | 'profile' = 'explicit'): Promise<boolean> {
++        if (this.workerShutdownRequested) {
++            return false;
++        }
++        const operation = (this.workerLifecycleTail ?? Promise.resolve()).then(async (): Promise<boolean> => {
++            if (this.workerShutdownRequested) {
++                return false;
++            }
++            let succeeded = true;
++            for (const worker of this.workers) {
++                if (this.workerShutdownRequested) {
++                    return false;
++                }
++                try {
++                    worker.updateProfile(this.getCurrentProfile());
++                    await worker.start();
++                } catch (err: unknown) {
++                    succeeded = false;
++                    console.error(`TuxedoControlCenterDaemon: Failed executing onStart() of ${worker.name} (${reason}) => ${this.formatWorkerError(err)}`);
++                }
++            }
++            return succeeded && !this.workerShutdownRequested;
++        });
++        this.workerLifecycleTail = operation.then(() => undefined, () => undefined);
++        return await operation;
+     }
+ 
+     public triggerStateCheck(reset?: boolean): void {
+@@ -165,7 +201,9 @@
+             if (reset) {
+                 this.stateWorker.reapplyProfile();
+             }
+-            this.stateWorker.work();
++            void this.stateWorker.work().catch((err: unknown): void => {
++                console.error(`TuxedoControlCenterDaemon: Failed executing state check => ${this.formatWorkerError(err)}`);
++            });
+         }
+     }
+ 
+@@ -183,23 +221,42 @@
+         if (this.started) {
+             await this.onExit();
+         }
+-        process.exit();
+-    }
+-
+-    public async onExit(): Promise<void> {
++        process.exit(1);
++    }
++
++    public async onExit(): Promise<boolean> {
++        this.workerShutdownRequested = true;
+         for (const worker of this.workers) {
+             clearInterval(worker.timer);
+         }
+-
+-        for (const worker of this.workers) {
++        if (this.workerExitOperation !== undefined) {
++            return await this.workerExitOperation;
++        }
++        const operation = (this.workerLifecycleTail ?? Promise.resolve()).then(async (): Promise<boolean> => {
++            let succeeded = true;
++            for (const worker of this.workers) {
++                try {
++                    await worker.exit();
++                } catch (err: unknown) {
++                    succeeded = false;
++                    console.error(`TuxedoControlCenterDaemon: Failed executing onExit() of ${worker.name} => ${this.formatWorkerError(err)}`);
++                }
++            }
+             try {
+-                await worker.exit();
++                this.config.writeSettings(this.settings);
+             } catch (err: unknown) {
+-                console.error(`TuxedoControlCenterDaemon: Failed executing onExit() => ${err}`);
+-            }
+-        }
+-
+-        this.config.writeSettings(this.settings);
++                succeeded = false;
++                console.error(`TuxedoControlCenterDaemon: Failed saving settings on exit => ${this.formatWorkerError(err)}`);
++            }
++            return succeeded;
++        });
++        this.workerExitOperation = operation;
++        this.workerLifecycleTail = operation.then(() => undefined, () => undefined);
++        const succeeded = await operation;
++        if (!succeeded && this.workerExitOperation === operation) {
++            this.workerExitOperation = undefined;
++        }
++        return succeeded;
+     }
+ 
+     private async handleArgumentProgramFlow(): Promise<void> {
+@@ -508,15 +565,15 @@
+         // SIGINT is the normal exit signal that the service gets from itself
+         process.on('SIGINT', async (): Promise<never> => {
+             this.logLine('SIGINT - Exiting');
+-            await this.onExit();
+-            process.exit(0);
++            const succeeded = await this.onExit();
++            process.exit(succeeded ? 0 : 1);
+         });
+ 
+         // Also stop on SIGTERM
+         process.on('SIGTERM', async (): Promise<never> => {
+             this.logLine('SIGTERM - Exiting');
+-            await this.onExit();
+-            process.exit(SIGTERM);
++            const succeeded = await this.onExit();
++            process.exit(succeeded ? SIGTERM : 1);
+         });
+ 
+         process.on('SIGHUP', (): void => {
+--- a/src/service-app/classes/StateSwitcherWorker.ts
++++ b/src/service-app/classes/StateSwitcherWorker.ts
+@@ -27,6 +27,7 @@
+     private currentStateProfileId: string;
+ 
+     private refreshProfile: boolean = false;
++    private refreshGeneration: number = 0;
+ 
+     constructor(tccd: TuxedoControlCenterDaemon) {
+         super(2000, 'StateSwitcherWorker', tccd);
+@@ -39,6 +40,7 @@
+ 
+     /** Refresh profile application */
+     public reapplyProfile(): void {
++        this.refreshGeneration += 1;
+         this.refreshProfile = true;
+     }
+ 
+@@ -118,9 +120,14 @@
+         // Run worker start procedure / application of profile
+         // if the profile changed
+         if (oldActiveProfileId !== this.tccd.activeProfile.id || this.refreshProfile) {
+-            this.refreshProfile = false;
++            this.refreshProfile = true;
++            const generation = this.refreshGeneration;
++            const requestedProfileId = this.tccd.activeProfile.id;
+             this.tccd.updateDBusActiveProfileData();
+-            this.tccd.startWorkers();
++            const succeeded = await this.tccd.startWorkers('profile');
++            if (succeeded && generation === this.refreshGeneration && requestedProfileId === this.tccd.activeProfile.id) {
++                this.refreshProfile = false;
++            }
+         }
+     }
+ 

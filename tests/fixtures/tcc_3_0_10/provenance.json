@@ -30,7 +30,31 @@
     "COPYING": {
       "size": 35149,
       "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": {
+      "size": 43198,
+      "sha256": "3dfe98fd7831f395f414dd482ae3dd9ff9de45251081c02db59ead85e93d303c"
+    },
+    "src/service-app/classes/StateSwitcherWorker.ts": {
+      "size": 5403,
+      "sha256": "b2b3bb8fd595e12e39bb6245145f416d72368f449906bea6cebd0cd1cb505cea"
+    },
+    "src/service-app/classes/FanControlBaseClass.ts": {
+      "size": 3658,
+      "sha256": "39cb3f8b8f902a50bbf912523f633f7b35e58fb2552e7f2e2893620fc2545363"
     }
   },
-  "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c"
+  "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
+  "patched_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
+    "src/service-app/classes/FanControlWorker.ts": "122b13ca97c19cc03a944018dc1b86d9ca4cd95440a1ec0c8efa7b0ad3c85c15",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "417e5851e4dde6b65b64b1b26f1eb8e520ad5a90d816eaada82bd415587ce449",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f"
+  },
+  "patch2_sha256": "fafffae6ed9923c6dcc2bb5faa90938fa68dcb1f72fff6e8060cc229403de285",
+  "harness_sha256": {
+    "lifecycle_test.cjs": "877aacd1f8e4ae3a42794f7e4be40a9de6730b39319b4d9dda601dd9d230e268",
+    "caller_lifecycle_test.cjs": "346fdbabd069387cee9590e837559feb588b93dcacccd01e191cd70ff6feb150",
+    "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76"
+  }
 }
