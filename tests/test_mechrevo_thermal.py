@@ -305,6 +305,131 @@ class ThermalSystemAdapter(unittest.TestCase):
         self.assertTrue(all(r >> 30 == 2 for r in self.requests))
         self.assertEqual({p:p.read_bytes() for p in before},before)
 
+    def rpm_fixture(self, cpu="3816", gpu="4939", node="hwmon7"):
+        base = "/sys/class/hwmon/" + node + "/"
+        for name, value in {"name": "mechrevo_ec", "fan1_label": "CPU fan",
+                            "fan2_label": "GPU fan", "fan1_input": cpu,
+                            "fan2_input": gpu, "temp1_input": "99000"}.items():
+            self.write(base + name, value)
+        return self.root / base.lstrip("/")
+
+    def test_oem_rpm_discovery_keeps_raw_duty_and_internal_temperatures(self):
+        self.rpm_fixture()
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.system.open_sensors()
+        sample = self.system.sample()
+        self.assertEqual(sample["fan_rpm"], {"available": True, "source": "mechrevo_ec",
+                                              "cpu_rpm": 3816, "gpu_rpm": 4939})
+        self.assertEqual(sample["package_mc"], 80000)
+        self.assertEqual(sample["core_max_mc"], 81000)
+        self.assertEqual(sample["ec"]["fan1_raw"], 170)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+    def test_absent_and_older_temperature_only_rpm_are_explicit_not_zero(self):
+        expected = {"available": False, "reason": "mechrevo_ec RPM interface absent"}
+        self.system.open_sensors()
+        self.assertEqual(self.system.sample()["fan_rpm"], expected)
+        self.write("/sys/class/hwmon/hwmon7/name", "mechrevo_ec")
+        self.write("/sys/class/hwmon/hwmon7/temp1_input", "77000")
+        self.assertEqual(self.system.sample()["fan_rpm"], expected)
+        self.rpm_fixture(node="hwmon8")
+        self.write("/sys/class/hwmon/hwmon8/name", "other_vendor")
+        self.assertEqual(self.system.sample()["fan_rpm"], expected)
+
+    def test_rpm_includes_valid_zero_and_unsigned_word_maximum_and_updates(self):
+        self.rpm_fixture("0", "65535")
+        self.system.open_sensors()
+        first = self.system.sample()["fan_rpm"]
+        self.assertEqual((first["cpu_rpm"], first["gpu_rpm"]), (0, 65535))
+        self.rpm_fixture("65535", "0")
+        second = self.system.sample()["fan_rpm"]
+        self.assertEqual((second["cpu_rpm"], second["gpu_rpm"]), (65535, 0))
+
+    def test_duplicate_oem_nodes_and_wrong_labels_are_errors(self):
+        self.rpm_fixture()
+        self.rpm_fixture(node="hwmon8")
+        with self.assertRaisesRegex(THERMAL.ObservationError, "Ambiguous"):
+            self.system.fan_rpm()
+        self.write("/sys/class/hwmon/hwmon8/name", "other_vendor")
+        for channel in (1, 2):
+            with self.subTest(channel=channel):
+                self.rpm_fixture()
+                self.write(f"/sys/class/hwmon/hwmon7/fan{channel}_label", "other")
+                with self.assertRaisesRegex(THERMAL.ObservationError, "label"):
+                    self.system.fan_rpm()
+
+    def test_advertised_missing_and_unreadable_rpm_never_become_absence(self):
+        for name in ("fan1_label", "fan2_label", "fan1_input", "fan2_input"):
+            with self.subTest(name=name):
+                sensor = self.rpm_fixture()
+                (sensor / name).unlink()
+                with self.assertRaisesRegex(THERMAL.ObservationError, "Cannot read"):
+                    self.system.fan_rpm()
+        self.rpm_fixture()
+        original = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path.name == "fan2_input":
+                raise PermissionError("denied")
+            return original(path, *args, **kwargs)
+        with mock.patch.object(Path, "read_text", denied):
+            with self.assertRaisesRegex(THERMAL.ObservationError, "denied"):
+                self.system.fan_rpm()
+
+    def test_same_system_reopen_starts_new_rpm_availability_history(self):
+        sensor = self.rpm_fixture()
+        self.system.open_sensors()
+        self.assertTrue(self.system.sample()["fan_rpm"]["available"])
+        self.system.close()
+        for path in sensor.glob("fan*"):
+            path.unlink()
+        self.system.open_sensors()
+        self.assertEqual(self.system.sample()["fan_rpm"],
+                         {"available": False, "reason": "mechrevo_ec RPM interface absent"})
+
+    def test_previously_available_rpm_removal_invalidates_later_sample(self):
+        sensor = self.rpm_fixture()
+        self.system.open_sensors()
+        self.assertTrue(self.system.sample()["fan_rpm"]["available"])
+        (sensor / "fan1_input").unlink()
+        with self.assertRaisesRegex(THERMAL.ObservationError, "Cannot read"):
+            self.system.sample()
+        for path in sensor.glob("fan*"):
+            path.unlink()
+        with self.assertRaisesRegex(THERMAL.ObservationError, "disappeared"):
+            self.system.sample()
+        self.write("/sys/class/hwmon/hwmon7/name", "other_vendor")
+        with self.assertRaisesRegex(THERMAL.ObservationError, "disappeared"):
+            self.system.sample()
+
+    def test_actual_rpm_error_invalidates_observation_and_keeps_prior_sample(self):
+        self.rpm_fixture()
+        fake = FakeSystem()
+        fake.open_sensors = self.system.open_sensors
+        reads = 0
+        def sample():
+            nonlocal reads
+            if reads:
+                self.write("/sys/class/hwmon/hwmon7/fan2_input", "65536")
+            reads += 1
+            return self.system.sample()
+        fake.sample = sample
+        result = THERMAL.observe(2, 1, fake, fake.clock, fake.sleep)
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["complete"])
+        self.assertEqual(len(result["samples"]), 1)
+        self.assertEqual(result["samples"][0]["fan_rpm"]["gpu_rpm"], 4939)
+        self.assertIn("Invalid mechrevo_ec fan2 RPM", result["errors"][0])
+        self.assertTrue(fake.closed)
+
+    def test_each_malformed_or_out_of_range_rpm_is_rejected(self):
+        for raw in ("-1", "+1", "65536", "1.0", "", "NaN", "1 2", "٠", "999999999999"):
+            for channel in (1, 2):
+                with self.subTest(raw=raw, channel=channel):
+                    self.rpm_fixture()
+                    self.write(f"/sys/class/hwmon/hwmon7/fan{channel}_input", raw)
+                    with self.assertRaisesRegex(THERMAL.ObservationError, "Invalid"):
+                        self.system.fan_rpm()
+
     def test_unknown_bios_rejected_before_open_or_ioctl(self):
         self.write("/sys/class/dmi/id/bios_version", "other")
         with self.assertRaises(THERMAL.ObservationError):

@@ -35,6 +35,7 @@ SIGTERM／SIGHUP 会尝试保存中断原因；即便 SIGKILL 无法被处理，
 
 - CPU package 和最高核心温度、读取前后 package 温度、单组读取耗时。
 - 现有驱动的两个 EC 温度字节及双风扇原始刻度；原始刻度不是 RPM。
+- 从 `mechrevo_ec` hwmon 的 CPU fan/GPU fan 接口读取的 OEM RPM，独立记入 `fan_rpm`。
 - CPU0 暴露的封装热节流计数、RAPL 能量计数及计数回绕范围。
 - CPU0 对应核心的节流计数、封装节流累计/最大记录时间；接口缺失记为 `null`，不是零。
 - MSR／MMIO 的 PL1、PL2 及两类时间窗口。PL2 可以高于设置的 PL1。
@@ -48,6 +49,14 @@ CPU0 对应核心没有增加，也不能代表其他物理核心没有过热。
 
 `coretemp` 温度约缓存一秒，短间隔的读取前/后值可能复用同一缓存，不能据此证明期间温度稳定。
 秒级能量平均值也不能排除毫秒级 PL2 突发。
+
+`fan_rpm` 与原有 `ec.fan1_raw/fan2_raw` 分开，不能把占空比刻度换算或改名成 RPM。
+有接口时记录 `available=true`、`source=mechrevo_ec`、`cpu_rpm` 和 `gpu_rpm`；
+无此模块或旧版只有温度接口时，明确记录 `available=false` 及原因，不填零。
+真实接口返回零属于有效读数，但不构成独立机械转速测量。CPU/GPU 也不是同时读取。
+每组重新识别设备和两路标签；重复设备、缺少部分风扇文件、错误标签、读取失败、
+非十进制或超出原厂 16 位公式范围的读数使观测失效。一次观测中已经出现的 RPM 接口
+随后消失也会使观测失效，保留此前样本，不能把驱动消失解释成风扇停转。
 
 可选 `--read-thermal-msr` 在原有 DMI/BIOS 限制外，核对 Intel family 6/model 151 的
 CPU0 身份及内核暴露的 MSR、DTS、package thermal、power-limit CPUID 能力。

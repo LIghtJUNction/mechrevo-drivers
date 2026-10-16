@@ -103,6 +103,7 @@ class System:
         self.root, self.runner, self.ioctl = Path(root), runner, ioctl
         self.fd = None
         self.hwmon = None
+        self.rpm_interface_seen = False
         self.read_thermal_msr = read_thermal_msr
         self.msr_fd = None
 
@@ -203,6 +204,8 @@ class System:
         return value
 
     def open_sensors(self):
+        # Availability history belongs to this capture, not the System lifetime.
+        self.rpm_interface_seen = False
         if {k: self.text("/sys/class/dmi/id/" + k) for k in IDENTITY} != IDENTITY:
             raise ObservationError("This host/BIOS is not qualified for these EC readings")
         if self.read_thermal_msr:
@@ -223,6 +226,40 @@ class System:
         self.ioctl(self.fd, READ_REQUESTS[name], value, True)
         return value[0]
 
+    def fan_rpm(self):
+        """Read the qualified OEM hwmon interface, never infer RPM from duty."""
+        candidates = [p for p in self.path("/sys/class/hwmon").glob("hwmon*")
+                      if (p / "name").read_text().strip() == "mechrevo_ec"]
+        if len(candidates) > 1:
+            raise ObservationError("Ambiguous mechrevo_ec RPM sensors")
+        absent = {"available": False, "reason": "mechrevo_ec RPM interface absent"}
+        if not candidates:
+            if self.rpm_interface_seen:
+                raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
+            return absent
+        sensor = candidates[0]
+        # Older temperature-only releases are supported. A partial advertised
+        # fan interface is a failure, rather than evidence that RPM is absent.
+        if not list(sensor.glob("fan*")):
+            if self.rpm_interface_seen:
+                raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
+            return absent
+        result = {"available": True, "source": "mechrevo_ec"}
+        for channel, label, key in ((1, "CPU fan", "cpu_rpm"),
+                                    (2, "GPU fan", "gpu_rpm")):
+            try:
+                actual_label = (sensor / f"fan{channel}_label").read_text().strip()
+                raw = (sensor / f"fan{channel}_input").read_text().strip()
+            except OSError as exc:
+                raise ObservationError(f"Cannot read mechrevo_ec fan{channel} RPM: {exc}") from exc
+            if actual_label != label:
+                raise ObservationError(f"Unexpected mechrevo_ec fan{channel} label")
+            if not re.fullmatch(r"[0-9]+", raw) or len(raw) > 5 or int(raw) > 65535:
+                raise ObservationError(f"Invalid mechrevo_ec fan{channel} RPM value")
+            result[key] = int(raw)
+        self.rpm_interface_seen = True
+        return result
+
     def sample(self):
         start = time.monotonic()
         package = int((self.hwmon / "temp1_input").read_text())
@@ -238,6 +275,7 @@ class System:
                                   for name in ("constraint_0_power_limit_uw", "constraint_1_power_limit_uw",
                                                "constraint_0_time_window_us", "constraint_1_time_window_us")}
                            for zone in ZONES}}
+        result["fan_rpm"] = self.fan_rpm()
         result["package_after_mc"] = int((self.hwmon / "temp1_input").read_text())
         result["cpu0_throttle_details"] = self.throttle_details()
         if self.read_thermal_msr:
