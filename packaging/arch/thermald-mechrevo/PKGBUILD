@@ -1,7 +1,7 @@
 # Maintained local candidate; never installs or starts a daemon during build/check.
 pkgname=thermald-mechrevo
 pkgver=2.5.13
-pkgrel=3
+pkgrel=4
 epoch=2
 pkgdesc='thermald with checked-temperature error handling and preference-state preservation'
 arch=('x86_64' 'x86_64_v3')
@@ -50,7 +50,8 @@ check() {
     local root=${THERMALD_CONTRACT_ROOT:-"$startdir/../../.."}
     local test_file
     for test_file in test_thermald_checked_temperature.py test_thermald_checked_adaptive.py \
-                     test_thermald_checked_virtual.py test_thermald_checked_packaging.py; do
+                     test_thermald_checked_virtual.py test_thermald_checked_dbus.py \
+                     test_thermald_checked_packaging.py; do
         [[ -f $root/tests/$test_file && ! -L $root/tests/$test_file ]] || return 1
     done
     cmp "$srcdir/0001-checked-temperature.patch" "$root/packaging/arch/thermald-mechrevo/0001-checked-temperature.patch" || return 1

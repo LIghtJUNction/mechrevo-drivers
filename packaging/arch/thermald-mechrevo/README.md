@@ -50,8 +50,9 @@ latency, whole-daemon scheduling and hardware cooling are not verified. Release 
 invalid-sentinel/ordinary-no-match, predicate short-circuit, virtual dependency
 cycles, transactional filtering/cache and concurrent graph/parameter tests.
 The full contract command requires all four test modules in package check(),
-including their exact prepared-source verification. DBus allocation-failure
-cleanup still has private coverage and needs a portable regression.
+including their exact prepared-source verification. Release 4 adds portable DBus allocation-failure cleanup, output ownership and
+actual handler response-format regressions; IPC and allocator boundaries remain
+explicit doubles, not production GLib OOM or live-bus verification.
 
 This differently named package provides `thermald=2:2.5.13` and conflicts with
 `thermald`; replacement requires an explicit pacman transaction. Its
@@ -93,7 +94,7 @@ temporary-file removal events. These limits remain separate from command success
 This is an unsigned, unpublished, uninstalled artifact; no new daemon was run.
 
 
-## Local pkgrel3 artifact qualification (2026-10-16)
+## Historical pkgrel3 artifact qualification (2026-10-16)
 
 The complete public contract run passed 25 tests without skips in 31.547 seconds,
 with actual prepared production-source inputs and unchanged before/after source
@@ -116,3 +117,26 @@ readback. Test tracking remains partial with zero gaps and 248 temporary-removal
 events; repackage tracking has two gaps and four unresolved events. Raw evidence
 is retained separately from successful commands. The candidate is uninstalled,
 unsigned and unpublished; the new daemon has not run and no thermal benefit is claimed.
+
+
+## Local pkgrel4 artifact qualification (2026-10-16)
+
+All 32 public tests passed independently without skips in 34.407 seconds with
+actual prepared production inputs. Package check() now requires all five test
+modules; each missing module is rejected before Python launches. New DBus tests
+cover failed reads, first/second allocation failure, invalid sensor indexes,
+owned string cleanup/transfer, legal zero and actual `(ssi)`/`(u)` handler formats.
+Original and three mutation controls must fail at specific assertions.
+
+Candidate `thermald-mechrevo-2:2.5.13-4-x86_64_v3.pkg.tar.zst` is 439,458 bytes,
+SHA256 `72688b7703bddae564f3737189daa68e0a85f3d67e1e2d292ab798ac28a10564`.
+Nine payload files / 16 directories / three metadata entries match pkgrel2/3
+payload bytes, modes and ownership. BUILDINFO recipe SHA256 is
+`3e585a76b9ce850261f9f3f7b32e768c09eae271a98af9644ecae3b6d5397ffd`.
+This single `makepkg -R -d` repackage did not compile/link or run a daemon again;
+real three-patch production source and binary are unchanged. The 47-file /
+1,013,918-byte candidate recovery archive passed both author and independent
+root readback by SHA, size, mode and owner. Repackage tracking is
+partial (four gaps, three unresolved events); independent 32-test tracking is
+partial (zero gaps, 327 unresolved events). Raw tracking evidence remains retained.
+The candidate is uninstalled, unsigned and unpublished, with no hardware claim.

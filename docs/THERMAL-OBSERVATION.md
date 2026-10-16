@@ -179,3 +179,32 @@ pkgrel3 仅扩展构建测试门禁并重新封装，三个生产补丁和 daemo
 PackageKit 自然恢复 inactive/PID0 后，新只读 preflight4 完整通过了开始/结束的
 boot、六个运行模块身份、五份保护配置、服务/进程和 hook 核对；没有停止 PackageKit 或刷新 pin。
 它只证明当次检查的一致性，不能阻止将来的 D-Bus 再激活，也不代表安装/激活已获资格。
+
+
+## 2026-10-16：首个合格的同步 MSR/ACPI 实机窗口
+
+v8 实机前只读检查首先拒绝了 CPU 覆盖：身份读取器对 `/proc/cpuinfo` 只调用一次 read，
+首块正常短读只含 2 个 CPU，完整 seqfile 实际包含 24 个。此时未进入 trace 或 MSR 读取。
+v9 改为在累计预算内循环到 EOF，保留 finally 关闭；89 项独立离线回归及本机身份/BTF/配置/
+运行模块/PID/空追踪/锁核验通过。离线信号夹具不等于真实 tracefs 强制信号恢复测试。
+
+随后唯一一次固定 3 秒采样成功：CPU0 的 29 个只读 MSR 样本、30 条 ACPI 事件，
+wrapper/supervisor/backend 均有效，before/after guards 一致，资源清理完成。
+29 次 target_raw 均为 `0x05640000`：TjMax 100、offset 5、导出的限制值 95°C。
+这是温度限制寄存器的读数，不是实际 CPU 温度；没有采到 offset 变化，不能排除样本间变化或同值写入。
+整次 reader 调用 0.783–1.702 ms；含额外身份检查的调用窗口 4.358–9.031 ms，无 cadence holes。
+全 backend CPU 时间 1.554 秒包含准备/解析/清理，不能当作采样期空闲开销验收。
+
+原始事件为 attempt 3 entry/3 return、parse 3/3、port 9/9，handler 0；
+路径只有 `\_SB.ECTZ._TMP`、`\_TZ.TZ00._TMP`、`\_SB.AC0._PSR`。
+端口写为 8 次 `(0x186d,0x40,8)` 和 1 次 `(0x80,0xb2,8)`，后者不是端口 0xb2。
+24 CPU 的 overrun/commit overrun/dropped 均零，8 probe miss 均零，配对完整。
+实际 owned-instance clock 开始/结束均为 mono；没有凭 global local 推断时钟。
+启用和停止各自的完整调用窗口推得 trace-enabled 时长约 3.000130–3.041091 秒；
+外层总耗时 5.680 秒，不能写成整次调用恰好 3 秒。
+
+本次未启用 `msr:write_msr`，alignment_qualified 仍为 false，未作写入者归因；
+没有 Q71、没有因果结论或散热改善结论。当前只读确认内核有 `msr:write_msr` 接口，
+后续须单独核实际格式/过滤/覆盖后才能采集；其覆盖仍不能排除 SMM 或未插桩 WRMSR。
+原实机跟踪 partial（0 gaps / 92 unresolved，33 paths）保留，不由成功回执抹掉。
+温控 pkgrel4 的 32 项公开回归全部通过，候选仍未安装；stock 服务及保护配置保持原样。
