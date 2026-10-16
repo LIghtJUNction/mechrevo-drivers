@@ -4,6 +4,31 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
+## 2026-10-16 r112 候选包与完整回归（未安装）
+
+固定功能源码 `e389631bbaac7bdfb8deacc68c54e4c4f908b6ba` 的干净副本完整运行803项测试，
+86.994秒、全部通过、无跳过，结束时受跟踪源码无改动。使用已有 Node/TypeScript 工具链，
+TCC 原生/服务测试通过模拟 IO 执行，没有启动生产 daemon 或执行硬件控制。
+日志 SHA256 `32bef997a8b6b29ae48339232b9384f448a96c9ca067f9a38b37207eed302257`。
+跟踪 `3aa5aea0` 为 partial：3个 path-disappeared gaps、1486 unresolved，
+具体gap位于测试临时模拟 sys/proc 路径；命令成功不补回历史。
+
+候选 `4.24.0.r112.ge389631-1`，214706字节，SHA256：
+`fe4dd0d7735146f3eedb65d32acfcab928d0c5b085aca99c0dcb5635a556c0ad`。
+作者与根代理独立解包核对87份载荷及3份元数据的字节、模式、root归属；
+56份驱动源码与固定Git逐字节一致，dkms.conf只替换版本占位符。
+私有DKMS在7.2.7/7.2.9 headers各编译28模块，实际日志均为 `W=1 -j2`，每套保留5条既有警告。
+56份模块通过指定私有公钥证书的CMS密码学验签；实际内容篡改、签名篡改、错误证书3负例均拒绝。
+私有测试证书不代表系统信任或Secure Boot验收。namcap无错误，保留两条既有配方警告。
+构包跟踪partial：1个payload staging权限gap、0 unresolved；双内核及签名验证跟踪完整。
+
+该候选没有安装、加载或发布AUR，未修改EFI。系统保护状态起止核对一致；
+磁盘安装与主启动镜像仍r106，运行核心r37/WMIr60/传感器r76，硬件验收仍9/20。
+候选证据位于 `.local-tests/fan-port-iteration/driver-candidate-fan-recovery/`，
+完整回归位于 `.local-tests/fan-port-iteration/root-full-init/target-dirty/full-suite/`。
+统一 Backups 的 `driver-candidate-r112-20261016/` 保存候选包等41份载荷，
+根代理独立核对全部字节、散列、权限和归属；不重复保存构建对象、私钥或镜像。
+
 ## 2026-10-16 universal 部分设速失败恢复（最新源码，未安装）
 
 源码 `e389631bbaac7bdfb8deacc68c54e4c4f908b6ba`，`uniwill_keyboard.h` SHA-256：
