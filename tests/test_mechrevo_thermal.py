@@ -1,10 +1,12 @@
 """Exercise read-only observation, fault ordering, and the real sysfs/ioctl adapter."""
 import copy
+from types import SimpleNamespace
 import importlib.util
 import io
 import json
 import os
 import signal
+import stat
 from pathlib import Path
 import subprocess
 import sys
@@ -302,6 +304,27 @@ class ThermalSystemAdapter(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.requests = []
+        self.msr_backing_identity = None
+        self.msr_type = (0o20600, os.makedev(202, 0))
+        real_stat, real_fstat = os.stat, os.fstat
+        def character(info):
+            mode, device = self.msr_type
+            return SimpleNamespace(st_mode=mode, st_rdev=device, st_dev=info.st_dev, st_ino=info.st_ino)
+        def node_stat(name, *args, **kwargs):
+            info = real_stat(name, *args, **kwargs)
+            if (name == "msr" and kwargs.get("dir_fd") is not None
+                    and not stat.S_ISLNK(info.st_mode) and self.msr_backing_identity is not None):
+                return character(info)
+            return info
+        def descriptor_stat(fd):
+            info = real_fstat(fd)
+            if self.msr_backing_identity == (info.st_dev, info.st_ino):
+                return character(info)
+            return info
+        self.stat_patch = mock.patch.object(THERMAL.os, "stat", side_effect=node_stat)
+        self.stat_patch.start(); self.addCleanup(self.stat_patch.stop)
+        self.fstat_patch = mock.patch.object(THERMAL.os, "fstat", side_effect=descriptor_stat)
+        self.fstat_patch.start(); self.addCleanup(self.fstat_patch.stop)
         def ioctl(fd, request, buffer, mutate):
             self.requests.append(request)
             buffer[0] = {"available": 1, "ec_cpu_c": 77, "ec_gpu_c": 55,
@@ -369,7 +392,9 @@ class ThermalSystemAdapter(unittest.TestCase):
                     ("energy", 2), ("ec", 4), ("rapl", 8), ("fan_rpm", 6 if with_rpm else 1),
                     ("package_after", 1), ("throttle_details", 3)]
         if with_msr:
-            expected.append(("thermal_msr", 3))
+            # Release and boot qualification reads occur before and after the
+            # three fixed preads, all inside the same measured MSR window.
+            expected.append(("thermal_msr", 7))
         self.assertEqual(list(sample["read_windows"]), [name for name, _ in expected])
         previous, position = sample["monotonic_s"], 0
         for name, count in expected:
@@ -578,8 +603,15 @@ class ThermalSystemAdapter(unittest.TestCase):
         self.system.read_thermal_msr = True
         self.write("/proc/cpuinfo", "processor : 0\nvendor_id : GenuineIntel\n"
                    "cpu family : 6\nmodel : 151\ncpuid level : 32\nflags : msr dtherm pts pln\n")
+        self.write("/proc/sys/kernel/osrelease", "7.2.9-arch1-1")
+        self.write("/proc/sys/kernel/random/boot_id", "11111111-2222-3333-4444-555555555555")
+        self.write("/sys/module/msr/parameters/allow_writes", "off")
+        self.write("/sys/kernel/notes", "synthetic built-in kernel notes")
+        self.write("/usr/lib/modules/7.2.9-arch1-1/modules.builtin", "kernel/arch/x86/kernel/msr.ko")
         self.write("/dev/cpu/0/msr", "")
         path = self.system.path("/dev/cpu/0/msr")
+        info = path.stat()
+        self.msr_backing_identity = (info.st_dev, info.st_ino)
         # This is a regular isolated fixture, never the host MSR device.
         with path.open("r+b") as stream:
             for offset, value in ((0x19c, 1 | 2 | 1024), (0x1b1, 4 | 8 | 2048), (0x1a2, 0x12345678)):
@@ -593,8 +625,9 @@ class ThermalSystemAdapter(unittest.TestCase):
                 mock.patch.object(THERMAL.os, "pread", wraps=os.pread) as read:
             self.system.open_sensors()
             result = self.system.sample()["thermal_msr"]
-        self.assertEqual(opened.call_args_list[0].args,
-                         (self.system.path("/dev/cpu/0/msr"), os.O_RDONLY | os.O_CLOEXEC))
+        device_open = next(call for call in opened.call_args_list if call.args[0] == "msr")
+        self.assertEqual(device_open.args, ("msr", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW))
+        self.assertIsNotNone(device_open.kwargs["dir_fd"])
         self.assertEqual([call.args[1:] for call in read.call_args_list], [(8, 0x19c), (8, 0x1b1), (8, 0x1a2)])
         core, package = result["core_status"]["status"], result["package_status"]["status"]
         self.assertTrue(core["internal_thermal_active"])
@@ -662,13 +695,219 @@ class ThermalSystemAdapter(unittest.TestCase):
         with mock.patch.object(THERMAL.os, "open", side_effect=PermissionError("denied")):
             with self.assertRaises(PermissionError): self.system.open_sensors()
         self.write("/dev/cpu/0/msr", "")
+        info = self.system.path("/dev/cpu/0/msr").stat()
+        self.msr_backing_identity = (info.st_dev, info.st_ino)
         self.system.open_sensors()
         for raw in (b"", b"\0"*7):
+            if self.system.msr_fd is None:
+                self.system.open_sensors()
             with mock.patch.object(THERMAL.os, "pread", return_value=raw):
                 with self.assertRaisesRegex(THERMAL.ObservationError, "Short thermal MSR"):
                     self.system.sample()
+        self.system.open_sensors()
         with mock.patch.object(THERMAL.os, "pread", side_effect=OSError("MSR unavailable")):
             with self.assertRaises(OSError): self.system.sample()
+
+    def assert_msr_fds_closed(self, descriptors):
+        self.assertIsNone(self.system.msr_fd)
+        self.assertIsNone(self.system.fd)
+        self.assertEqual(self.system.msr_descriptors, [])
+        for fd in descriptors:
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+
+    def test_regular_wrong_major_and_wrong_cpu_msr_nodes_are_refused_before_read(self):
+        self.qualify_msr_fixture()
+        for identity in ((0o100600, os.makedev(202, 0)),
+                         (0o20600, os.makedev(203, 0)), (0o20600, os.makedev(202, 1))):
+            with self.subTest(identity=identity), \
+                    mock.patch.object(THERMAL.os, "pread") as read:
+                self.msr_type = identity
+                with self.assertRaisesRegex(THERMAL.ObservationError, "character device 202:0"):
+                    self.system.open_sensors()
+                read.assert_not_called()
+                self.assertEqual(self.system.msr_descriptors, [])
+
+    def test_msr_leaf_and_parent_symlinks_refused_without_reading_targets(self):
+        self.qualify_msr_fixture()
+        node = self.system.path("/dev/cpu/0/msr")
+        saved = node.with_name("saved-msr")
+        node.rename(saved); node.symlink_to(saved.name)
+        with mock.patch.object(THERMAL.os, "pread") as read:
+            with self.assertRaisesRegex(THERMAL.ObservationError, "character device"):
+                self.system.open_sensors()
+            read.assert_not_called()
+        node.unlink(); saved.rename(node)
+        parent = node.parent
+        saved_parent = parent.with_name("saved-cpu0")
+        parent.rename(saved_parent); parent.symlink_to(saved_parent.name)
+        with mock.patch.object(THERMAL.os, "pread") as read:
+            with self.assertRaises(OSError):
+                self.system.open_sensors()
+            read.assert_not_called()
+        self.assertEqual(self.system.msr_descriptors, [])
+
+    def test_missing_support_or_loaded_module_refused_before_device_open(self):
+        self.qualify_msr_fixture()
+        mutations = (("/sys/module/msr/initstate", "live"),
+                     ("/usr/lib/modules/7.2.9-arch1-1/modules.builtin", "other.ko"),
+                     ("/sys/kernel/notes", ""), ("/proc/sys/kernel/random/boot_id", "bad"),
+                     ("/proc/sys/kernel/osrelease", "../bad"))
+        for name, content in mutations:
+            path = self.system.path(name)
+            before = path.read_bytes() if path.exists() else None
+            self.write(name, content)
+            with self.subTest(name=name), mock.patch.object(THERMAL.os, "open") as opened:
+                with self.assertRaises(THERMAL.ObservationError):
+                    self.system.open_sensors()
+                opened.assert_not_called()
+            if before is None: path.unlink()
+            else: path.write_bytes(before)
+        module = self.system.path("/sys/module/msr")
+        module.rename(module.with_name("missing-msr"))
+        with mock.patch.object(THERMAL.os, "open") as opened:
+            with self.assertRaises(FileNotFoundError): self.system.open_sensors()
+            opened.assert_not_called()
+
+    def test_symlinked_support_manifest_module_and_dangling_initstate_refused_before_open(self):
+        self.qualify_msr_fixture()
+        for logical in ("/usr/lib/modules/7.2.9-arch1-1/modules.builtin", "/sys/module/msr"):
+            path = self.system.path(logical); saved = path.with_name(path.name+"-saved")
+            path.rename(saved); path.symlink_to(saved.name)
+            with self.subTest(logical=logical), mock.patch.object(THERMAL.os, "open") as opened:
+                with self.assertRaises(THERMAL.ObservationError): self.system.open_sensors()
+                opened.assert_not_called()
+            path.unlink(); saved.rename(path)
+        self.system.path("/sys/module/msr/initstate").symlink_to("missing-initstate")
+        with mock.patch.object(THERMAL.os, "open") as opened:
+            with self.assertRaisesRegex(THERMAL.ObservationError, "Loaded-only"):
+                self.system.open_sensors()
+            opened.assert_not_called()
+
+    def test_default_path_does_not_probe_msr_support_or_validate_nodes(self):
+        with mock.patch.object(self.system, "msr_support_identity", side_effect=AssertionError("MSR support probe")), \
+                mock.patch.object(self.system, "open_thermal_msr", side_effect=AssertionError("MSR open")):
+            self.system.open_sensors()
+            self.system.sample()
+
+    def test_changed_opened_msr_identity_is_rejected_and_parent_fds_closed(self):
+        self.qualify_msr_fixture()
+        original, opened, actual_open = THERMAL.os.fstat, [], THERMAL.os.open
+        def changed(fd):
+            value = original(fd)
+            if stat.S_ISCHR(value.st_mode):
+                return SimpleNamespace(st_mode=value.st_mode, st_dev=value.st_dev,
+                                       st_ino=value.st_ino+1, st_rdev=value.st_rdev)
+            return value
+        def opening(*args, **kwargs):
+            fd = actual_open(*args, **kwargs); opened.append(fd); return fd
+        with mock.patch.object(THERMAL.os, "fstat", side_effect=changed), \
+                mock.patch.object(THERMAL.os, "open", side_effect=opening), \
+                mock.patch.object(THERMAL.os, "pread") as read:
+            with self.assertRaisesRegex(THERMAL.ObservationError, "device identity changed"):
+                self.system.open_sensors()
+            read.assert_not_called()
+        self.assert_msr_fds_closed(opened)
+
+    def test_msr_open_permission_failure_closes_all_previously_opened_directories(self):
+        self.qualify_msr_fixture()
+        original, opened = THERMAL.os.open, []
+        def opening(name, *args, **kwargs):
+            if name == "msr": raise PermissionError("injected MSR open permission")
+            fd = original(name, *args, **kwargs); opened.append(fd); return fd
+        with mock.patch.object(THERMAL.os, "open", side_effect=opening):
+            with self.assertRaisesRegex(PermissionError, "MSR open permission"):
+                self.system.open_sensors()
+        self.assertEqual(len(opened), 3)
+        self.assert_msr_fds_closed(opened)
+
+    def test_support_boot_and_path_changes_during_read_discard_values_close_all_fds(self):
+        self.qualify_msr_fixture()
+        original_read = os.pread
+        cases = ("boot", "notes", "manifest", "loaded", "modulegone", "parent", "device")
+        for mode in cases:
+            with self.subTest(mode=mode):
+                self.system.open_sensors()
+                descriptors = self.system.msr_descriptors + [self.system.fd]
+                path = saved = before = None
+                def mutate(fd, count, offset):
+                    nonlocal path, saved, before
+                    raw = original_read(fd, count, offset)
+                    if offset == 0x1a2:
+                        if mode in ("boot", "notes", "manifest", "loaded"):
+                            logical, text = {"boot":("/proc/sys/kernel/random/boot_id", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                                "notes":("/sys/kernel/notes", "changed notes"),
+                                "manifest":("/usr/lib/modules/7.2.9-arch1-1/modules.builtin", "kernel/arch/x86/kernel/msr.ko\nextra.ko"),
+                                "loaded":("/sys/module/msr/initstate", "live")}[mode]
+                            path = self.system.path(logical)
+                            before = path.read_bytes() if path.exists() else None
+                            self.write(logical, text)
+                        else:
+                            path = self.system.path({"modulegone":"/sys/module/msr", "parent":"/dev/cpu/0", "device":"/dev/cpu/0/msr"}[mode])
+                            saved = path.with_name(path.name+"-old")
+                            path.rename(saved)
+                            if mode == "parent": path.mkdir()
+                            elif mode == "device": path.write_bytes(saved.read_bytes())
+                    return raw
+                with mock.patch.object(THERMAL.os, "pread", side_effect=mutate):
+                    with self.assertRaises((THERMAL.ObservationError, FileNotFoundError)):
+                        self.system.thermal_msr()
+                self.assert_msr_fds_closed(descriptors)
+                if saved is not None:
+                    if path.exists():
+                        if path.is_dir(): path.rmdir()
+                        else: path.unlink()
+                    saved.rename(path)
+                elif before is None: path.unlink()
+                else: path.write_bytes(before)
+
+    def test_support_change_between_samples_refused_before_any_new_pread(self):
+        self.qualify_msr_fixture(); self.system.open_sensors()
+        self.system.thermal_msr()
+        self.write("/sys/module/msr/initstate", "live")
+        descriptors = self.system.msr_descriptors + [self.system.fd]
+        with mock.patch.object(THERMAL.os, "pread") as read:
+            with self.assertRaisesRegex(THERMAL.ObservationError, "Loaded-only"):
+                self.system.thermal_msr()
+            read.assert_not_called()
+        self.assert_msr_fds_closed(descriptors)
+
+    def test_msr_close_failure_attempts_every_fd_retains_original_read_error_in_invalid_capture(self):
+        self.qualify_msr_fixture(); self.system.open_sensors()
+        descriptors = self.system.msr_descriptors + [self.system.fd]
+        target, original_close, closes = self.system.msr_fd, os.close, []
+        def close(fd):
+            closes.append(fd); original_close(fd)
+            if fd == target: raise OSError("injected actual close report")
+        fake = FakeSystem(); fake.cap = 35000000; fake.power["desired_limit_uw"] = fake.cap
+        fake.sample, fake.close = self.system.sample, self.system.close
+        with mock.patch.object(THERMAL.os, "close", side_effect=close), \
+                mock.patch.object(THERMAL.os, "pread", return_value=b"bad"):
+            result = THERMAL.observe(1, 1, fake, fake.clock, fake.sleep)
+        self.assertFalse(result["complete"]); self.assertFalse(result["valid"])
+        self.assertIn("actual close report", result["errors"][0])
+        self.assertIn("Short thermal MSR", result["errors"][0])
+        self.assertIn("elapsed_s", result)
+        self.assertCountEqual(closes, descriptors)
+        self.assert_msr_fds_closed(descriptors)
+
+    def test_final_close_failure_preserves_prior_samples_and_returns_invalid_capture(self):
+        self.qualify_msr_fixture(); self.system.open_sensors()
+        descriptors = self.system.msr_descriptors + [self.system.fd]
+        target, original_close, closes = self.system.msr_fd, os.close, []
+        def close(fd):
+            closes.append(fd); original_close(fd)
+            if fd == target: raise OSError("injected final close report")
+        fake = FakeSystem(); fake.cap = 35000000; fake.power["desired_limit_uw"] = fake.cap
+        fake.sample, fake.close = self.system.sample, self.system.close
+        with mock.patch.object(THERMAL.os, "close", side_effect=close):
+            result = THERMAL.observe(1, 1, fake, fake.clock, fake.sleep)
+        self.assertFalse(result["complete"]); self.assertFalse(result["valid"])
+        self.assertEqual(len(result["samples"]), 2)
+        self.assertIn("final close report", result["errors"][0])
+        self.assertEqual(result["elapsed_s"], 1)
+        self.assertCountEqual(closes, descriptors)
+        self.assert_msr_fds_closed(descriptors)
 
     def test_bad_temperature_is_not_reported_as_valid(self):
         self.system.open_sensors()

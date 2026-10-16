@@ -5,6 +5,7 @@
 import argparse
 import array
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -106,6 +107,11 @@ class System:
         self.rpm_interface_seen = False
         self.read_thermal_msr = read_thermal_msr
         self.msr_fd = None
+        self.msr_descriptors = []
+        self.msr_directories = []
+        self.msr_parent = None
+        self.msr_node_identity = None
+        self.msr_support = None
 
     def qualify_thermal_msr(self):
         # Linux exposes these CPUID capabilities as /proc/cpuinfo flags:
@@ -130,19 +136,104 @@ class System:
                 or not {"msr", "dtherm", "pts", "pln"} <= set(record.get("flags", "").split())):
             raise ObservationError("CPU0 is not qualified for thermal MSR readings")
 
+    def msr_support_identity(self):
+        # Built-in support cannot disappear between this check and open(). A
+        # loaded-only module could unload and make chrdev_open request modules.
+        # This repeats the power diagnostic's conservative qualification, while
+        # this observer retains descriptors and rechecks across many samples.
+        module = self.path("/sys/module/msr").lstat()
+        if not stat.S_ISDIR(module.st_mode):
+            raise ObservationError("Existing MSR support is not a directory")
+        initstate = self.path("/sys/module/msr/initstate")
+        if initstate.exists() or initstate.is_symlink():
+            raise ObservationError("Loaded-only MSR support refused to prevent possible autoload")
+        release = self.text("/proc/sys/kernel/osrelease")
+        if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{1,100}", release):
+            raise ObservationError("Invalid kernel release for MSR qualification")
+        builtin = self.path("/usr/lib/modules/" + release + "/modules.builtin")
+        if not stat.S_ISREG(builtin.lstat().st_mode):
+            raise ObservationError("MSR built-in manifest is not a regular file")
+        raw = builtin.read_bytes()
+        if b"kernel/arch/x86/kernel/msr.ko" not in raw.splitlines():
+            raise ObservationError("MSR support is not proven built-in; refusing possible autoload")
+        notes = self.path("/sys/kernel/notes").read_bytes()
+        if not notes:
+            raise ObservationError("Missing kernel identity for MSR qualification")
+        boot = self.text("/proc/sys/kernel/random/boot_id")
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot):
+            raise ObservationError("Invalid boot identity for MSR qualification")
+        return (boot, release, hashlib.sha256(raw).digest(), hashlib.sha256(notes).digest(),
+                module.st_dev, module.st_ino)
+
+    @staticmethod
+    def msr_node(info):
+        return stat.S_ISCHR(info.st_mode) and (os.major(info.st_rdev), os.minor(info.st_rdev)) == (202, 0)
+
+    @staticmethod
+    def msr_identity(info):
+        return info.st_dev, info.st_ino, info.st_rdev
+
+    def check_msr_identity(self):
+        if self.msr_fd is None or self.msr_support_identity() != self.msr_support:
+            raise ObservationError("Boot or MSR support identity changed")
+        opened = os.fstat(self.msr_fd)
+        named = os.stat("msr", dir_fd=self.msr_parent, follow_symlinks=False)
+        if (not self.msr_node(opened) or not self.msr_node(named)
+                or self.msr_identity(opened) != self.msr_node_identity
+                or self.msr_identity(named) != self.msr_node_identity):
+            raise ObservationError("MSR device identity changed")
+        for logical, device, inode in self.msr_directories:
+            current = self.path(logical).lstat()
+            if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (device, inode):
+                raise ObservationError("MSR parent directory identity changed")
+
+    def open_thermal_msr(self):
+        if self.msr_descriptors:
+            raise ObservationError("MSR descriptors are already open")
+        self.msr_support = self.msr_support_identity()
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            parent = None
+            for name, logical in ((str(self.path("/dev")), "/dev"), ("cpu", "/dev/cpu"), ("0", "/dev/cpu/0")):
+                fd = os.open(name, flags, dir_fd=parent)
+                self.msr_descriptors.append(fd)
+                info = os.fstat(fd)
+                self.msr_directories.append((logical, info.st_dev, info.st_ino))
+                parent = fd
+            self.msr_parent = parent
+            before = os.stat("msr", dir_fd=parent, follow_symlinks=False)
+            if not self.msr_node(before):
+                raise ObservationError("Expected existing CPU0 MSR character device 202:0")
+            self.msr_node_identity = self.msr_identity(before)
+            fd = os.open("msr", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=parent)
+            self.msr_descriptors.append(fd)
+            self.msr_fd = fd
+            self.check_msr_identity()
+        except BaseException:
+            self.close()
+            raise
+
     def thermal_msr(self):
-        result = {}
-        for name, offset in THERMAL_MSRS.items():
-            raw = os.pread(self.msr_fd, 8, offset)
-            if len(raw) != 8:
-                raise ObservationError(f"Short thermal MSR read at {offset:#x}: {len(raw)} bytes")
-            value = int.from_bytes(raw, "little")
-            entry = {"offset": offset, "raw": value}
-            if name != "temperature_target":
-                entry["status"] = {key: bool(value & (1 << bit))
-                                   for key, bit in THERMAL_STATUS_BITS.items()}
-            result[name] = entry
-        return result
+        # The fd is intentionally long-lived. Never trust a previous sample's
+        # support/path identity for a new group, or publish values after changes.
+        try:
+            self.check_msr_identity()
+            result = {}
+            for name, offset in THERMAL_MSRS.items():
+                raw = os.pread(self.msr_fd, 8, offset)
+                if len(raw) != 8:
+                    raise ObservationError(f"Short thermal MSR read at {offset:#x}: {len(raw)} bytes")
+                value = int.from_bytes(raw, "little")
+                entry = {"offset": offset, "raw": value}
+                if name != "temperature_target":
+                    entry["status"] = {key: bool(value & (1 << bit))
+                                       for key, bit in THERMAL_STATUS_BITS.items()}
+                result[name] = entry
+            self.check_msr_identity()
+            return result
+        except BaseException:
+            self.close()
+            raise
 
     def throttle_details(self):
         result = {}
@@ -210,7 +301,7 @@ class System:
             raise ObservationError("This host/BIOS is not qualified for these EC readings")
         if self.read_thermal_msr:
             self.qualify_thermal_msr()
-            self.msr_fd = os.open(self.path("/dev/cpu/0/msr"), os.O_RDONLY | os.O_CLOEXEC)
+            self.open_thermal_msr()
         candidates = [p for p in self.path("/sys/class/hwmon").glob("hwmon*")
                       if (p / "name").read_text().strip() == "coretemp"
                       and (p / "temp1_label").read_text().strip() == "Package id 0"]
@@ -317,12 +408,26 @@ class System:
         return result
 
     def close(self):
-        if self.msr_fd is not None:
-            os.close(self.msr_fd)
-            self.msr_fd = None
+        # Clear ownership before close so a reported close failure cannot make a
+        # later cleanup accidentally close a reused descriptor number.
+        prior_error = sys.exc_info()[1]
+        descriptors = list(reversed(self.msr_descriptors))
         if self.fd is not None:
-            os.close(self.fd)
-            self.fd = None
+            descriptors.append(self.fd)
+        self.msr_fd, self.fd = None, None
+        self.msr_descriptors, self.msr_directories = [], []
+        self.msr_parent, self.msr_node_identity, self.msr_support = None, None, None
+        errors = []
+        for fd in descriptors:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                errors.append(str(exc))
+        if errors:
+            detail = "Descriptor close failed: " + "; ".join(errors)
+            if prior_error is not None:
+                detail += "; preceding read/check failure: " + str(prior_error)
+            raise ObservationError(detail) from prior_error
 
 
 def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.sleep, checkpoint=None):
@@ -414,7 +519,11 @@ def observe(seconds, interval, system=None, clock=time.monotonic, sleeper=time.s
     except (ObservationError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
         result["errors"].append(str(exc) or type(exc).__name__)
     finally:
-        system.close()
+        try:
+            system.close()
+        except (ObservationError, OSError) as exc:
+            result["errors"].append(str(exc))
+            result["complete"] = result["valid"] = False
         result["elapsed_s"] = clock() - start
     return result
 
