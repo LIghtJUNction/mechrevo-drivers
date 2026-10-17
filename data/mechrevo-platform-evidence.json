@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "model_id": "gm6px0x",
+      "title": "旷世 16 Pro GM6PX0X",
+      "platform": "uniwill",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "Kuangshi16Pro Series GM6PX0X",
+        "board_name": "GM6PX0X"
+      },
+      "qualified_bios": ["N.1.09MRO07"],
+      "evidence_level": "hardware-partial",
+      "sources": ["docs/hardware/GM6PX0X.md", "src/mechrevo_ec_sensors.c"]
+    },
+    {
+      "model_id": "gx4hrxl",
+      "title": "无界 14X GX4HRXL 平台线索",
+      "platform": "uniwill",
+      "identity": {"manufacturer": "MECHREVO", "board_name": "GX4HRXL"},
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://github.com/minortex/mech-forza-kmod/tree/00769343a82f66bcbf44f58924d88b7035066b71",
+        "https://github.com/sund3RRR/mechrevo14X-linux/tree/8b516120e67d7cb2c7fc87b9fc3cf472813a29e1"
+      ]
+    },
+    {
+      "model_id": "jiaolong-x6xr55xk",
+      "title": "蛟龙 16 Pro 2025 主板匹配线索",
+      "platform": "uniwill",
+      "identity": {"manufacturer": "MECHREVO", "board_name": "JIAOLONG Series-X6xR55xK"},
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": ["https://github.com/sklynic/pkgbuild-mechrevo-driver-dkms-16-pro/tree/cf71e4cc1b2d8d4ebdf68a98ca00910087f1678d"]
+    }
+  ]
+}

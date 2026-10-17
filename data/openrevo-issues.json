@@ -1,0 +1,720 @@
+{
+  "schema_version": 1,
+  "fetched_at": "2026-10-17T21:31:49Z",
+  "api_url": "https://api.github.com/repos/faintonce/open-revo/issues?state=open&per_page=100",
+  "count": 77,
+  "upstream_state": "open",
+  "scope": "公开GitHub issue，不含PR；不含附件、原始设备日志或完整用户正文。",
+  "snapshot_validation": {
+    "pages_fetched": 1,
+    "all_pages_followed": true,
+    "raw_item_count": 77,
+    "excluded_pull_requests": 0,
+    "duplicate_numbers": 0,
+    "curated_numbers_match_snapshot": true
+  },
+  "categories": {
+    "identity-capabilities": "识别、能力与适配边界",
+    "power-fans-policy": "功耗、风扇、电池与电源策略",
+    "rgb-backlight": "RGB与背光",
+    "display-color": "校色与屏幕",
+    "recovery-side-effects": "恢复与写入副作用",
+    "telemetry-lifecycle-performance": "遥测、后台性能与生命周期",
+    "ui-workflow-packaging": "界面、快捷操作、启动、更新、导出与文档"
+  },
+  "issues": [
+    {
+      "number": 115,
+      "title": "[Bug]: 机械革命17kscpu功耗锁不住80w只有65w",
+      "url": "https://github.com/faintonce/open-revo/issues/115",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "报告目标功耗、实际回读和限制原因；在17KS对应硬件验证80W请求的支持边界，不伪报已锁定。"
+    },
+    {
+      "number": 114,
+      "title": "[Feature]: 建议把水冷的智能控制调整为不关闭水泵",
+      "url": "https://github.com/faintonce/open-revo/issues/114",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "提供水泵固定、风扇独立调节策略；温度在阈值附近波动时不反复启停，实机核对水泵状态。"
+    },
+    {
+      "number": 113,
+      "title": "[Feature]: 屏幕亮度自定义预设",
+      "url": "https://github.com/faintonce/open-revo/issues/113",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "支持保存和重新应用自定义亮度；校验范围，保存失败不得显示成功。"
+    },
+    {
+      "number": 112,
+      "title": "[Bug]: 翼龙15pro 8845hs+4070版本状态总览显示的gpu状态功耗不准",
+      "url": "https://github.com/faintonce/open-revo/issues/112",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "核显与独显以稳定设备ID分别展示功耗等指标；枚举顺序变化不串卡，不混合来源。"
+    },
+    {
+      "number": 111,
+      "title": "[Bug]: 机械革命钛钽plus 11800h 3060 所有版本充电上限锁不住",
+      "url": "https://github.com/faintonce/open-revo/issues/111",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "钛钽PLUS对应型号明确充电阈值支持状态，写后回读并验证真实充电停止；不承诺修复非控制台掉电。"
+    },
+    {
+      "number": 110,
+      "title": "[Bug]: 无法熄灯",
+      "url": "https://github.com/faintonce/open-revo/issues/110",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "闲置超时与合盖事件正确关闭背光，活动恢复遵循原设定；在耀世16Ultra实机验收。"
+    },
+    {
+      "number": 109,
+      "title": "[Feature]: UI字体有点显小了",
+      "url": "https://github.com/faintonce/open-revo/issues/109",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "支持可读字体缩放；在27寸2K与不同DPI下核对文字、按钮和布局。"
+    },
+    {
+      "number": 108,
+      "title": "[Bug]: 24蛟龙16pro风扇控制异常",
+      "url": "https://github.com/faintonce/open-revo/issues/108",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "风扇曲线及手动升降均有回读与状态依据；验证CPU/GPU双通道，明确固件保护下限。"
+    },
+    {
+      "number": 107,
+      "title": "[Bug]: 迷你窗口布局有问题 下面的两个按钮显示不出来",
+      "url": "https://github.com/faintonce/open-revo/issues/107",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "小屏、DPI变化和屏幕底边场景下内容可滚动，底部按钮可见可操作；溢出依据实际视口。"
+    },
+    {
+      "number": 106,
+      "title": "[Bug]: 耀世15pro i9-13900hx4060睡眠唤醒后cpu/gpu功率异常",
+      "url": "https://github.com/faintonce/open-revo/issues/106",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "睡眠唤醒后重新探测能力和真实功耗状态；恢复失败可见，在对应耀世15Pro重复睡眠负载验收。"
+    },
+    {
+      "number": 105,
+      "title": "[Feature]:解除离电限制开启下拔电后可自定义模式切换的建议",
+      "url": "https://github.com/faintonce/open-revo/issues/105",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "允许显式配置离电后的性能模式；AC断开和恢复按策略切换，未知供电状态不盲目提高功耗。"
+    },
+    {
+      "number": 104,
+      "title": "[Bug]: MECHREVO 深海泰坦 X3-S (GK7MR0R, 20系/RTX2060) 无法匹配任何机型清单，永久落入 MockHAL (SAFE MOCK)",
+      "url": "https://github.com/faintonce/open-revo/issues/104",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "明确GK7MR0R的匹配和后端探测原因；没有通路时显示不可用而非真实模拟值，不按前缀推断写协议。"
+    },
+    {
+      "number": 103,
+      "title": "[Bug]: 耀世16pro没有A面灯效设置",
+      "url": "https://github.com/faintonce/open-revo/issues/103",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "耀世16Pro2024的A面灯能力来自独立证据；有支持则可设置并回读，无支持明确说明。"
+    },
+    {
+      "number": 102,
+      "title": "[Bug]: Fn 功能键错位（v0.9.1 功能已正常）",
+      "url": "https://github.com/faintonce/open-revo/issues/102",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "保留无界14XA逐项Fn键映射回归；区分0.8.8/0.8.9历史报告与上游0.9.1已恢复反馈。"
+    },
+    {
+      "number": 100,
+      "title": "[Bug]: 校色文件异常",
+      "url": "https://github.com/faintonce/open-revo/issues/100",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "校色变更可恢复，视频及桌面显示分别核对；没有对应屏幕证据不提供假定校色文件。"
+    },
+    {
+      "number": 99,
+      "title": "键盘灯光控制问题",
+      "url": "https://github.com/faintonce/open-revo/issues/99",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "灯效设置立即生效且亮度调整不是必要条件；拔插电源不意外重置用户灯效，逐效果实机验收。"
+    },
+    {
+      "number": 98,
+      "title": "[Bug]: cpu占用率异常",
+      "url": "https://github.com/faintonce/open-revo/issues/98",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "后台降低采样，避免无必要唤醒独显；记录CPU/内存和GPU活动并验证界面切换响应。"
+    },
+    {
+      "number": 97,
+      "title": "[Feature]: 希望添加快捷键",
+      "url": "https://github.com/faintonce/open-revo/issues/97",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "可绑定模式及面板快捷键，冲突和注册失败明确显示；重启后配置保留。"
+    },
+    {
+      "number": 96,
+      "title": "[Bug]: 用100W PD充电时电源管理界面显示正在使用电池供电",
+      "url": "https://github.com/faintonce/open-revo/issues/96",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "外部电源在线与电池充放电分开报告；100W PD证据冲突显示未知，不直接误报仅电池供电。"
+    },
+    {
+      "number": 94,
+      "title": "[Bug]: 睡眠守护中忽略系统所需策略的开关貌似无效",
+      "url": "https://github.com/faintonce/open-revo/issues/94",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "对当前电源计划的AC/DC目标项进行读改回读，开关语义一致，失败不显示已生效。"
+    },
+    {
+      "number": 93,
+      "title": "[Bug]: 24款翼龙15pro性能模式切换无效",
+      "url": "https://github.com/faintonce/open-revo/issues/93",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "模式切换后读取实际硬件状态；对应翼龙15Pro验证各档负载表现，不以UI标签代替生效。"
+    },
+    {
+      "number": 92,
+      "title": "[Bug]:蛟龙16pro 锁定充电上限导致性能模式灯效错乱",
+      "url": "https://github.com/faintonce/open-revo/issues/92",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "充电阈值操作不生成性能指示灯写入；对应蛟龙16Pro核对模式与灯色映射。"
+    },
+    {
+      "number": 91,
+      "title": "[Bug]: 键盘灯光不熄灭",
+      "url": "https://github.com/faintonce/open-revo/issues/91",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "闲置超时后背光真实熄灭且活动后恢复；在耀世16Pro与Windows10实机验证。"
+    },
+    {
+      "number": 88,
+      "title": "[Feature]: 添加风扇转速同步功能",
+      "url": "https://github.com/faintonce/open-revo/issues/88",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "风扇同步模式有明确曲线选择及双通道输出；独立与同步切换不遗留旧目标。"
+    },
+    {
+      "number": 86,
+      "title": "[Bug]: 无界14Pro会被辨识成蛟龙16Pro",
+      "url": "https://github.com/faintonce/open-revo/issues/86",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "无界14Pro7840HS不匹配蛟龙16Pro；歧义匹配拒绝写入，展示识别依据与能力。"
+    },
+    {
+      "number": 85,
+      "title": "[Bug]: 来电自动开机失效",
+      "url": "https://github.com/faintonce/open-revo/issues/85",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "AC自动开机写前保留可恢复原值并回读；恢复官方控制后状态可核验，不猜测EC位。"
+    },
+    {
+      "number": 84,
+      "title": "[Bug]:重启或者休眠回来后屏幕色彩校正就会失效，但是app里开关还是处于打开状态",
+      "url": "https://github.com/faintonce/open-revo/issues/84",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "重启和睡眠后区分用户意图与实际校色状态；恢复失败明确显示而非只保留打开开关。"
+    },
+    {
+      "number": 82,
+      "title": "[Bug]: 键盘关闭背光闪烁情况",
+      "url": "https://github.com/faintonce/open-revo/issues/82",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "关闭背光后不被后台刷新意外重开；记录命令序列并在耀世16Pro反复观察。"
+    },
+    {
+      "number": 81,
+      "title": "[Bug]: 状态灯不对，Fn+F5无法切换触控板",
+      "url": "https://github.com/faintonce/open-revo/issues/81",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "26款蛟龙16Pro的性能灯及Fn触摸板映射按型号验证，操作失败有可见状态。"
+    },
+    {
+      "number": 80,
+      "title": "[Feature]: 使用软件后出现异常问题，如何退回？",
+      "url": "https://github.com/faintonce/open-revo/issues/80",
+      "category": "recovery-side-effects",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "提供变更记录与可恢复原值；恢复结果逐项回读，未知或恢复失败不得声称完全退回。"
+    },
+    {
+      "number": 79,
+      "title": "[Bug]: 切换屏幕刷新率会自动打开屏幕色彩校正",
+      "url": "https://github.com/faintonce/open-revo/issues/79",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "刷新率修改不触发未启用的校色操作；校色开关与实际状态一致，单项变更可回归。"
+    },
+    {
+      "number": 78,
+      "title": "[Bug]: 高负载时键盘灯光闪烁",
+      "url": "https://github.com/faintonce/open-revo/issues/78",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "高负载下灯光更新不竞争硬件访问且不意外熄灭；以压力下命令时序与实机录像核验。"
+    },
+    {
+      "number": 77,
+      "title": "[Feature]: 重构后台查询机制并尽快开放源码",
+      "url": "https://github.com/faintonce/open-revo/issues/77",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "后台查询使用适合常驻的API，单提供者最多一个查询，失败退避并可取消，避免高频外部进程。"
+    },
+    {
+      "number": 76,
+      "title": "[Bug]: RGB灯光欢迎模式设置不了",
+      "url": "https://github.com/faintonce/open-revo/issues/76",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "欢迎灯效保存、预览与重启后的实际效果一致；保存失败不得保留成功状态。"
+    },
+    {
+      "number": 75,
+      "title": "[Bug]: Intel 平台 PPM 开启时，混合显卡模式最高睿频被限制为小核频率",
+      "url": "https://github.com/faintonce/open-revo/issues/75",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "Intel大小核睿频上限分别读取并明确单位；PPM在混合和独显模式下不误用小核上限。"
+    },
+    {
+      "number": 73,
+      "title": "[Bug]: 调整为均衡/狂暴/自定义后，CPU异常高温高频",
+      "url": "https://github.com/faintonce/open-revo/issues/73",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "空闲与负载分别验证各性能模式的系统电源策略及频率；不将报告中未复现的根因当结论。"
+    },
+    {
+      "number": 72,
+      "title": "[Bug]: 无法开机自启",
+      "url": "https://github.com/faintonce/open-revo/issues/72",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "自启动设置后读取真实注册状态，重启登录核验；权限或任务创建失败明确显示。"
+    },
+    {
+      "number": 71,
+      "title": "[Bug]: 托盘退出后无可见主进程，但替换新版文件后双击无法直接启动",
+      "url": "https://github.com/faintonce/open-revo/issues/71",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "退出取消后台任务并释放句柄及单实例锁；替换文件后可直接启动，不残留阻塞子进程。"
+    },
+    {
+      "number": 70,
+      "title": "[Feature]: 增加更新功能",
+      "url": "https://github.com/faintonce/open-revo/issues/70",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "更新检查区分网络错误、无更新和新版本；下载校验与原子替换可恢复，版本比较不混淆压缩包扩展名。"
+    },
+    {
+      "number": 69,
+      "title": "[BUG]：灯光问题",
+      "url": "https://github.com/faintonce/open-revo/issues/69",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "欢迎模式、Logo颜色及海岸灯带效果分通道验证，保存与实际回读一致，不假定灯区通用。"
+    },
+    {
+      "number": 68,
+      "title": "[Feature]: 后台webview占用资源太多了，希望后台时能自动杀掉webview进程",
+      "url": "https://github.com/faintonce/open-revo/issues/68",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "隐藏界面降低渲染和采样开销；恢复窗口仍能获取最新状态，测量后台内存与CPU。"
+    },
+    {
+      "number": 67,
+      "title": "[Bug]: 锁充电上限、屏幕色彩切换、A面logo灯关闭均失效",
+      "url": "https://github.com/faintonce/open-revo/issues/67",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "分别核验PD在线、充电阈值、校色及Logo能力；逐项回读，不用一个成功标志覆盖多项失败。"
+    },
+    {
+      "number": 66,
+      "title": "[Bug]: 高性能电源模式切换异常",
+      "url": "https://github.com/faintonce/open-revo/issues/66",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义模式的Windows电源策略与用户选择和提示一致；逐模式测试，关闭功能时不改电源方案。"
+    },
+    {
+      "number": 64,
+      "title": "[Bug]: 24款翼龙15pro官方控制台无法重新接管屏幕校色和电池充电上限",
+      "url": "https://github.com/faintonce/open-revo/issues/64",
+      "category": "recovery-side-effects",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "接管前保留颜色关联和充电设置；恢复后由官方控制台接管，并验证关联及充电状态。"
+    },
+    {
+      "number": 63,
+      "title": "[Feature]: 电池循环次数.电源推荐方案及非透明UI",
+      "url": "https://github.com/faintonce/open-revo/issues/63",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "循环次数缺失显示不可用，支持可读非透明外观；离电策略与Windows电源模式关系明确。"
+    },
+    {
+      "number": 62,
+      "title": "[Bug]: 更新open-revo-v0.8.6.2后充电上限功能失效与存在文字显示bug",
+      "url": "https://github.com/faintonce/open-revo/issues/62",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "重启后重新验证实际充电阈值，配置迁移与失败恢复可测试；乱码和充电问题分别跟踪历史反馈。"
+    },
+    {
+      "number": 61,
+      "title": "[Feature]: 屏幕色彩增强的管理功能",
+      "url": "https://github.com/faintonce/open-revo/issues/61",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "色彩方案支持导入导出、删除和重命名，非法文件和同名冲突安全失败且保留现有方案。"
+    },
+    {
+      "number": 60,
+      "title": "[feature]: 显卡设置默认覆盖msi afterbunner。能否默认不开启显卡设置，尤其是在应用未开启任何显卡设置的条件下",
+      "url": "https://github.com/faintonce/open-revo/issues/60",
+      "category": "recovery-side-effects",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "关闭GPU调节时启动及模式切换均不写GPU参数；第三方调节保持不变，以后端命令记录核验。"
+    },
+    {
+      "number": 58,
+      "title": "[bug]: 狂暴模式与官方狂暴模式性能释放差异",
+      "url": "https://github.com/faintonce/open-revo/issues/58",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "对应极光Pro在相同供电、散热与负载下比较官方和本项目模式；记录实际限制与回读，不猜功耗值。"
+    },
+    {
+      "number": 57,
+      "title": "[Feature]: 监控悬浮窗 和 快捷键",
+      "url": "https://github.com/faintonce/open-revo/issues/57",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "面板显示带单位的CPU/GPU即时功耗，快捷键可配置；不可用读数不显示零。"
+    },
+    {
+      "number": 56,
+      "title": "[Bug]: 翼龙15Pro2024是双显三模被识别为双显双模",
+      "url": "https://github.com/faintonce/open-revo/issues/56",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "显卡模式列表来自精确型号的已验证能力；未验证iGPU模式不开放危险切换。"
+    },
+    {
+      "number": 52,
+      "title": "[Bug]: 显卡功耗读取异常",
+      "url": "https://github.com/faintonce/open-revo/issues/52",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "按设备与来源验证GPU功耗单位、可用性和有效边界；异常值不冒充真实功耗，NVAPI/NVML不串来源。"
+    },
+    {
+      "number": 51,
+      "title": "[Feature]: 性能监控 悬浮面板",
+      "url": "https://github.com/faintonce/open-revo/issues/51",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "性能面板快捷键可配置并处理冲突；指标绑定对应设备且采样不可用时明确显示。"
+    },
+    {
+      "number": 49,
+      "title": "[Feature]: 锁定充电上限数额回退",
+      "url": "https://github.com/faintonce/open-revo/issues/49",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "充电上限与主动放电能力分开；不支持主动放电时明确说明，不将阈值设置伪装成放电功能。"
+    },
+    {
+      "number": 48,
+      "title": "[Feature]: 全屏模式CUP信息显示不完整+缺少快捷开关+海岸灯条不工作",
+      "url": "https://github.com/faintonce/open-revo/issues/48",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "长CPU名称不截断；触摸板切换键与触摸板状态独立，海岸灯条先确认硬件连接与能力。"
+    },
+    {
+      "number": 46,
+      "title": "[Bug] 校色状态“未校准”的判断与 Windows 系统色彩管理不明确",
+      "url": "https://github.com/faintonce/open-revo/issues/46",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "分别显示配置文件安装、显示器关联、曲线加载和本项目开关状态，提供由系统管理及恢复路径。"
+    },
+    {
+      "number": 45,
+      "title": "[Feature]: 选择性禁用 自定义 调度模式",
+      "url": "https://github.com/faintonce/open-revo/issues/45",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "可从模式循环排除不支持或未启用的自定义方案；按键循环不重新启用已排除方案。"
+    },
+    {
+      "number": 44,
+      "title": "[Bug]: miniled控光算法导致的大面积光晕",
+      "url": "https://github.com/faintonce/open-revo/issues/44",
+      "category": "display-color",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "MiniLED算法与面板能力分开验证，以相同测试图对比实际光晕；未验证面板不写控制参数。"
+    },
+    {
+      "number": 39,
+      "title": "[Bug]: 无界14X 8845HS 功能异常",
+      "url": "https://github.com/faintonce/open-revo/issues/39",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "无界14XA按准确型号提供能力；CPU/GPU读数、风扇通道、功耗支持与界面型号分别验证。"
+    },
+    {
+      "number": 36,
+      "title": "[Docs]: 文档中明确可支持的型号和功能边界",
+      "url": "https://github.com/faintonce/open-revo/issues/36",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "支持清单按型号、功能、操作系统及验证级别记录，未验证或不支持功能可见且不可误操作。"
+    },
+    {
+      "number": 35,
+      "title": "[Bug]: 无法恢复官方控制台",
+      "url": "https://github.com/faintonce/open-revo/issues/35",
+      "category": "recovery-side-effects",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "保存接管前服务及配置状态；恢复官方控制台逐步验证，失败保留恢复材料和准确原因。"
+    },
+    {
+      "number": 34,
+      "title": "[Bug]: 无界15X 8845HS 只能切换办公/均衡模式，Fn等功能映射异常",
+      "url": "https://github.com/faintonce/open-revo/issues/34",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "无界15XA的背光档位、灯区、Fn及温度字段按独立证据建模；PD模式限制明确来源，不猜字段单位。"
+    },
+    {
+      "number": 30,
+      "title": "[Bug]: 30系机械革命切换核显模式黑屏，无法进入Windows/bios",
+      "url": "https://github.com/faintonce/open-revo/issues/30",
+      "category": "recovery-side-effects",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "未验证的GPU/MUX切换在精确型号能力校验前拒绝；保留恢复依据，不能以模拟测试证明黑屏根因已修复。"
+    },
+    {
+      "number": 29,
+      "title": "[Bug]: 电源重新断开后重新插入键盘灯光自动切换",
+      "url": "https://github.com/faintonce/open-revo/issues/29",
+      "category": "rgb-backlight",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "电源状态变化保留明确选择的灯效；只在策略显式要求时切换，并回读实际效果。"
+    },
+    {
+      "number": 28,
+      "title": "[Feature]: 为40系机型增加狂暴模式显卡OC开关",
+      "url": "https://github.com/faintonce/open-revo/issues/28",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "GPU超频能力及范围按具体型号验证；未启用时零写入，退出模式按已记录原值恢复。"
+    },
+    {
+      "number": 27,
+      "title": "[Bug]: README.md 开发版本部署 ISSUE",
+      "url": "https://github.com/faintonce/open-revo/issues/27",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "文档使用真实仓库和存在的目录；Windows/Linux从干净检出按记录命令构建并验证。"
+    },
+    {
+      "number": 24,
+      "title": "[Feature]: 性能模式的更多快捷按钮",
+      "url": "https://github.com/faintonce/open-revo/issues/24",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "用户自定义方案可直接选择并保持顺序；无效或不支持方案显示原因而非假成功。"
+    },
+    {
+      "number": 22,
+      "title": "[Feature]: 换个更好看的图标",
+      "url": "https://github.com/faintonce/open-revo/issues/22",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "图标在托盘、高DPI及深浅背景下可辨认，透明背景与尺寸资源正确。"
+    },
+    {
+      "number": 20,
+      "title": "[Feature]: 记住窗口显示模式",
+      "url": "https://github.com/faintonce/open-revo/issues/20",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "显示模式持久化并在重新启动后恢复；损坏配置有明确回退且不影响硬件设置。"
+    },
+    {
+      "number": 19,
+      "title": "[Bug]:数据采集问题PL4功耗低很多导致CPU性能释放低",
+      "url": "https://github.com/faintonce/open-revo/issues/19",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "PL1/PL2/PL4的单位及范围各有型号证据，回读不混淆字段；不直接采纳报告中的420W为通用值。"
+    },
+    {
+      "number": 18,
+      "title": "[Bug]: 使用机型数据收集专用版一键导出至桌面失败",
+      "url": "https://github.com/faintonce/open-revo/issues/18",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "报告导出支持显式路径及系统桌面位置，覆盖重定向目录、中文空格和权限失败，不伪报成功。"
+    },
+    {
+      "number": 12,
+      "title": "[Bug/RFC]: 卸载官方控制台后 \\.\\ACPIDriver 缺失导致 UI 主线程死锁（托盘无响应根因分析与纯净自愈方案）",
+      "url": "https://github.com/faintonce/open-revo/issues/12",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "缺失ACPI驱动快速报告不可用，探测不阻塞UI，无无限同步重试；安装驱动不是普通探测的隐式副作用。"
+    },
+    {
+      "number": 8,
+      "title": "[Bug]: 控制台CPU负载和频率与实际数据差异巨大",
+      "url": "https://github.com/faintonce/open-revo/issues/8",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "CPU负载与频率明确采样来源、时间和单位；计数器重置或缺失不产生伪数据。"
+    },
+    {
+      "number": 7,
+      "title": "[Bug]: 24年蛟龙16pro 7745 4070 无法使用",
+      "url": "https://github.com/faintonce/open-revo/issues/7",
+      "category": "identity-capabilities",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "正确辨别宝龙达蛟龙16Pro及后端能力；不把其无法使用直接归为与缺驱动死锁相同根因。"
+    },
+    {
+      "number": 6,
+      "title": "[Bug]: 前端页面渲染丢失",
+      "url": "https://github.com/faintonce/open-revo/issues/6",
+      "category": "telemetry-lifecycle-performance",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "快速重复开关托盘窗口不丢失渲染；硬件探测失败时窗口仍可操作并显示错误。"
+    },
+    {
+      "number": 5,
+      "title": "[Bug]: 自定义方案CPU始终跑满限制的功耗",
+      "url": "https://github.com/faintonce/open-revo/issues/5",
+      "category": "power-fans-policy",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义模式的功耗上限不变成强制最低负载；空闲和负载分别核验电源策略，不凭报告猜根因。"
+    },
+    {
+      "number": 3,
+      "title": "[Feature]: 多个自定义方案，可以在托盘右键切换",
+      "url": "https://github.com/faintonce/open-revo/issues/3",
+      "category": "ui-workflow-packaging",
+      "status": "upstream-report-unverified",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义方案可在快捷入口直接切换并隐藏不用的默认方案；持久化且验证切换后的实际状态。"
+    }
+  ]
+}
