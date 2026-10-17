@@ -1,0 +1,27 @@
+--- a/src/nvidia/inc/kernel/platform/acpi_common.h
++++ b/src/nvidia/inc/kernel/platform/acpi_common.h
+@@ -90,6 +90,8 @@
+ #define ACPI_NOTIFY_BACKLIGHT_OFF           0xC1
+ #define ACPI_NOTIFY_BACKLIGHT_ON            0xC2
+ 
++#define ACPI_NOTIFY_OEM_POWER_BUDGET        0xC5
++
+ #define ACPI_NOTIFY_POWER_LEVEL_D1          0xD1
+ #define ACPI_NOTIFY_POWER_LEVEL_D2          0xD2
+ #define ACPI_NOTIFY_POWER_LEVEL_D3          0xD3
+--- a/src/nvidia/arch/nvalloc/unix/src/osapi.c
++++ b/src/nvidia/arch/nvalloc/unix/src/osapi.c
+@@ -2193,9 +2193,12 @@
+             RmHandleDNotifierEvent(nv, event_type);
+             break;
+ 
++        case ACPI_NOTIFY_OEM_POWER_BUDGET:
++            NV_PRINTF(LEVEL_INFO, "Handled SBIOS OEM 0x%x power notification\n", event_type);
++            break;
++
+         default:
+             NV_PRINTF(LEVEL_INFO, "No support for 0x%x event\n", event_type);
+-            NV_ASSERT(0);
+             break;
+     }
+ 
