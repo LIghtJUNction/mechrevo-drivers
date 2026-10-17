@@ -15,7 +15,8 @@ class TccPackaging(unittest.TestCase):
     def tearDown(self):self.temp.cleanup()
     def invoke(self,function,env=None):
         script='source "$1"; srcdir="$2"; pkgdir="$3"; startdir="$4"; '+function
-        return subprocess.run(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD'),str(self.src),str(self.pkg),str(RECIPE)],env=env,text=True,capture_output=True)
+        e=(os.environ if env is None else env).copy();e['LC_ALL']='C'
+        return subprocess.run(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD'),str(self.src),str(self.pkg),str(RECIPE)],env=e,text=True,capture_output=True)
     def test_metadata_and_each_local_source_checksum_are_exact(self):
         script=r'source "$1"; printf "%s\0" "$pkgname" "$pkgver" "$pkgrel" "${source[@]}" "${sha256sums[@]}"'
         r=subprocess.check_output(['/usr/bin/bash','-c',script,'bash',str(RECIPE/'PKGBUILD')]);fields=r.decode().rstrip('\0').split('\0');self.assertEqual(fields[:3],['tuxedo-control-center-mechrevo','3.0.10','6']);sources=fields[3:11];sums=fields[11:];self.assertEqual(len(sums),8);self.assertEqual(sources[1:],PATCHES+['electron-builder-dir.json']);self.assertEqual(sums[0],'d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532')

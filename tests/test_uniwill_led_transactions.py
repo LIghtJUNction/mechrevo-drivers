@@ -45,7 +45,7 @@ class UniwillLedTransactions(unittest.TestCase):
     def setUpClass(cls):
         (ROOT / '.local-tests').mkdir(exist_ok=True)
         cls.temporary = tempfile.TemporaryDirectory(prefix='uniwill-led-transactions-',
-                                                    dir=ROOT / '.local-tests')
+                                                    dir=os.environ.get('MECHREVO_TEST_TMPDIR', str(ROOT / '.local-tests')))
         cls.addClassCleanup(cls.temporary.cleanup)
         path = Path(cls.temporary.name)
         source, keyboard, foundation = HEADER.read_text(), KEYBOARD.read_text(), FOUNDATION.read_text()

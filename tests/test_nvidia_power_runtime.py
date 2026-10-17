@@ -1,6 +1,7 @@
 """Run the real NVIDIA power driver functions with userspace EC/DMI mocks."""
 
 from pathlib import Path
+import os
 import re
 import subprocess
 import tempfile
@@ -29,7 +30,7 @@ def function(source, name):
 class NvidiaPowerRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
+        parent = Path(os.environ.get("MECHREVO_TEST_TMPDIR", ROOT / ".local-tests"))
         parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
