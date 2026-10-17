@@ -1,5 +1,5 @@
 //! A quiet, responsive desktop surface built around real device readings.
-use crate::{reading_text, Controller, DisplayMode, JobKind, Preferences, Theme};
+use crate::{appearance, reading_text, Controller, DisplayMode, JobKind, Preferences, Theme};
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
 use mechrevo_console_core::{CapabilityStatus, PowerProfile, SensorReading, Service};
 use std::{
@@ -9,7 +9,6 @@ use std::{
 
 const BACKGROUND: Color32 = Color32::from_rgb(23, 24, 24);
 const PANEL: Color32 = Color32::from_rgb(31, 32, 31);
-const SIDEBAR: Color32 = Color32::from_rgb(19, 20, 20);
 const FOREGROUND: Color32 = Color32::from_rgb(241, 239, 231);
 const SUBTLE: Color32 = Color32::from_rgb(164, 165, 157);
 const GREEN: Color32 = Color32::from_rgb(167, 192, 140);
@@ -302,6 +301,7 @@ impl DesktopApp {
 
     // @mark mechrevo.console_ui role=presentation
     pub fn render(&mut self, root: &mut egui::Ui) -> RenderMetrics {
+        appearance::install_fonts(root.ctx());
         self.configure(root.ctx());
         self.tick(root.ctx());
         self.history.observe(
@@ -311,160 +311,70 @@ impl DesktopApp {
         if std::mem::take(&mut self.display_settings_requested) {
             self.display_settings_open = true;
         }
-        let wide = root.available_width() >= 920.0 && root.available_height() >= 460.0;
+        let backdrop_rect = root.max_rect();
+        appearance::paint_backdrop(root, backdrop_rect);
+        let outer = if root.available_width() >= 900.0 {
+            40.0
+        } else {
+            16.0
+        };
         let mut metrics = RenderMetrics::default();
-        egui::Frame::new()
-            .fill(root.visuals().panel_fill)
-            .show(root, |ui| {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    if wide {
-                        let sidebar_height = ui.available_height();
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(184.0, sidebar_height),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.set_width(184.0);
-                                egui::Frame::new()
-                                    .fill(if ui.visuals().dark_mode {
-                                        SIDEBAR
-                                    } else {
-                                        Color32::from_rgb(230, 231, 222)
-                                    })
-                                    .inner_margin(18.0)
-                                    .show(ui, |ui| {
-                                        ui.set_min_height((sidebar_height - 36.0).max(0.0));
-                                        self.sidebar(ui);
-                                    });
-                            },
-                        );
-                    }
-                    let width = ui.available_width().max(1.0);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(width, ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(width);
-                            let margin = if width > 600.0 { 26.0 } else { 16.0 };
-                            egui::Frame::new().inner_margin(margin).show(ui, |ui| {
-                                metrics = self.main_content(ui, wide);
-                            });
-                        },
-                    );
-                });
+        egui::Frame::new().inner_margin(outer).show(root, |ui| {
+            let width = ui.available_width().clamp(1.0, 1000.0);
+            let side = ((ui.available_width() - width) * 0.5).max(0.0);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(side);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(width);
+                        metrics = self.main_content(ui);
+                    },
+                );
             });
+        });
         self.last_metrics = metrics;
         metrics
     }
 
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
-            icon(ui.painter(), rect, Icon::Brand, foreground(ui));
-            ui.label(RichText::new("控制台").size(18.0).strong());
-        });
-        ui.add_space(30.0);
-        self.navigation(ui, false);
-        ui.add_space(28.0);
-        ui.separator();
-        ui.add_space(12.0);
-        ui.label(RichText::new("当前电脑").small().color(secondary(ui)));
-        let name = self
-            .controller
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.identity.board_name.as_deref())
-            .unwrap_or("正在识别");
-        ui.label(RichText::new(name).strong());
-        let platform = self
-            .controller
-            .snapshot
-            .as_ref()
-            .map(|s| platform_label(&s.platform))
-            .unwrap_or("—");
-        ui.label(RichText::new(platform).small().color(secondary(ui)));
-        let spare = (ui.available_height() - 116.0).max(16.0);
-        ui.add_space(spare);
-        if ui
-            .add_sized(
-                [ui.available_width(), 36.0],
-                egui::Button::new("显示设置").frame(false),
-            )
-            .clicked()
-        {
-            self.display_settings_open = !self.display_settings_open;
-        }
-        ui.label(RichText::new("0.1 · 开发预览").small().color(secondary(ui)));
-    }
-
-    fn navigation(&mut self, ui: &mut egui::Ui, compact: bool) {
-        let entries = [
-            (Section::Dashboard, "概览", Icon::Overview),
-            (Section::Sensors, "传感器", Icon::Sensor),
-            (Section::Catalog, "型号目录", Icon::Catalog),
-        ];
-        let mut render = |ui: &mut egui::Ui| {
-            for (section, label, glyph) in entries {
-                let width = if compact {
-                    ((ui.available_width() - 20.0) / 3.0).max(80.0)
-                } else {
-                    ui.available_width()
-                };
-                let selected = self.section == section;
-                let t = ui.ctx().animate_bool_with_time(
-                    ui.scope_id().with(("navigation", label)),
-                    selected,
-                    if self.motion_enabled { 0.18 } else { 0.0 },
-                );
-                let fill = if ui.visuals().dark_mode {
-                    Color32::from_rgb(
-                        (26.0 + 21.0 * t) as u8,
-                        (27.0 + 23.0 * t) as u8,
-                        (26.0 + 18.0 * t) as u8,
-                    )
-                } else {
-                    Color32::from_rgb(
-                        (230.0 - 15.0 * t) as u8,
-                        (231.0 - 12.0 * t) as u8,
-                        (222.0 - 15.0 * t) as u8,
-                    )
-                };
-                let response = ui.add_sized(
-                    [width, 42.0],
-                    egui::Button::new(format!("     {label}"))
-                        .fill(fill)
-                        .stroke(Stroke::NONE),
-                );
-                let color = if selected {
+    fn navigation(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (section, label) in [
+            (Section::Dashboard, "概览"),
+            (Section::Sensors, "传感器"),
+            (Section::Catalog, "型号目录"),
+        ] {
+            let selected = self.section == section;
+            let t = ui.ctx().animate_bool_with_time(
+                ui.scope_id().with(("navigation", label)),
+                selected,
+                if self.motion_enabled { 0.2 } else { 0.0 },
+            );
+            let fill = if ui.visuals().dark_mode {
+                Color32::from_white_alpha((5.0 + 13.0 * t) as u8)
+            } else {
+                Color32::from_black_alpha((3.0 + 8.0 * t) as u8)
+            };
+            let response = ui.add(
+                egui::Button::new(RichText::new(label).size(13.0).color(if selected {
                     foreground(ui)
                 } else {
                     secondary(ui)
-                };
-                icon(
-                    ui.painter(),
-                    Rect::from_center_size(
-                        egui::pos2(response.rect.left() + 18.0, response.rect.center().y),
-                        Vec2::splat(18.0),
-                    ),
-                    glyph,
-                    color,
-                );
-                if response.clicked() {
-                    self.section = section;
-                }
+                }))
+                .selected(selected)
+                .fill(fill)
+                .stroke(Stroke::NONE)
+                .corner_radius(20.0),
+            );
+            if response.clicked() {
+                self.section = section;
             }
-        };
-        if compact {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                render(ui);
-            });
-        } else {
-            render(ui);
         }
     }
 
-    fn main_content(&mut self, ui: &mut egui::Ui, sidebar: bool) -> RenderMetrics {
+    fn main_content(&mut self, ui: &mut egui::Ui) -> RenderMetrics {
         let mut bottom_marker = Rect::NOTHING;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("console-content")
@@ -475,30 +385,34 @@ impl DesktopApp {
         self.bottom_requested = false;
         let output = scroll.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            if !sidebar {
-                self.navigation(ui, true);
-                ui.add_space(16.0);
-            }
-            self.header(ui, sidebar);
+            self.header(ui);
             if self.display_settings_open {
                 self.display_settings(ui);
             }
             self.feedback(ui);
-            ui.add_space(14.0);
+            ui.add_space(if ui.available_width() > 600.0 {
+                20.0
+            } else {
+                18.0
+            });
+            self.editorial_heading(ui);
+            ui.add_space(20.0);
             match self.section {
                 Section::Dashboard => self.dashboard(ui),
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
             }
-            ui.add_space(26.0);
+            ui.add_space(30.0);
             ui.separator();
+            ui.add_space(6.0);
             bottom_marker = ui
                 .label(
-                    RichText::new("只读监测 · 系统控制需先预览，再应用并回读")
-                        .small()
+                    RichText::new("开发预览 0.1  /  只读监测 · 系统控制需预览、应用并回读")
+                        .size(11.0)
                         .color(secondary(ui)),
                 )
                 .rect;
+            ui.add_space(6.0);
         });
         RenderMetrics {
             content_size: output.content_size,
@@ -508,91 +422,168 @@ impl DesktopApp {
         }
     }
 
-    fn header(&mut self, ui: &mut egui::Ui, sidebar: bool) {
-        let title = match self.section {
-            Section::Dashboard => "概览",
-            Section::Sensors => "传感器",
-            Section::Catalog => "型号目录",
-        };
+    fn header(&mut self, ui: &mut egui::Ui) {
+        let wide = ui.available_width() >= 760.0;
+        let width = ui.available_width();
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(title).size(28.0).strong());
-            ui.add_space(12.0);
-            let status = if self.controller.busy() {
-                "正在更新"
-            } else if self.controller.snapshot.is_some() {
-                "读数已更新"
-            } else {
-                "等待采集"
-            };
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    rect.center(),
-                    3.0,
-                    if self.controller.busy() {
-                        amber(ui)
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
+            icon(ui.painter(), rect, Icon::Brand, foreground(ui));
+            ui.label(
+                RichText::new("MECHREVO")
+                    .font(appearance::number_font(12.0))
+                    .strong(),
+            );
+            ui.add_space(if wide { 20.0 } else { 6.0 });
+            self.navigation(ui);
+            if wide {
+                // The actions remain direct children of this row. A nested
+                // wrapping row would inherit the remaining sliver of width.
+                ui.add_space((width - 650.0).max(10.0));
+                self.header_actions(ui);
+            }
+        });
+        if !wide {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| self.header_actions(ui));
+        }
+        ui.add_space(14.0);
+        ui.separator();
+    }
+
+    fn header_actions(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let response = ui.add_enabled(
+            !self.controller.busy() && self.controller.worker_available,
+            egui::Button::new(RichText::new("刷新").size(12.0))
+                .min_size(Vec2::new(80.0, 34.0))
+                .frame(false),
+        );
+        let rect = Rect::from_center_size(
+            egui::pos2(response.rect.left() + 15.0, response.rect.center().y),
+            Vec2::splat(13.0),
+        );
+        let rotation = if self.controller.busy() && self.motion_enabled {
+            ui.input(|i| i.time) as f32 * 3.0
+        } else {
+            0.0
+        };
+        refresh_icon(ui.painter(), rect, secondary(ui), rotation);
+        if response.clicked() {
+            let _ = self.controller.refresh();
+        }
+        let auto = self.preferences.auto_refresh;
+        let response = ui
+            .add(
+                egui::Button::new(RichText::new("自动采样").size(12.0).color(secondary(ui)))
+                    .min_size(Vec2::new(94.0, 34.0))
+                    .selected(auto)
+                    .fill(if ui.visuals().dark_mode {
+                        Color32::from_white_alpha(7)
                     } else {
-                        green(ui)
+                        Color32::from_black_alpha(4)
+                    })
+                    .stroke(Stroke::new(0.7, divider(ui)))
+                    .corner_radius(18.0),
+            )
+            .on_hover_text("每 3 秒只读采集；预览操作期间暂停");
+        ui.painter().circle_filled(
+            egui::pos2(response.rect.left() + 12.0, response.rect.center().y),
+            2.5,
+            if auto { green(ui) } else { secondary(ui) },
+        );
+        if response.clicked() {
+            self.preferences.auto_refresh = !auto;
+        }
+        if ui
+            .add(egui::Button::new(RichText::new("显示设置").size(12.0)).frame(false))
+            .clicked()
+        {
+            self.display_settings_open = !self.display_settings_open;
+        }
+    }
+
+    fn editorial_heading(&self, ui: &mut egui::Ui) {
+        let wide = ui.available_width() >= 660.0;
+        let (title, subtitle, eyebrow) = match self.section {
+            Section::Dashboard => ("Control.", "从容，掌控。", "YOUR DEVICE, AT A GLANCE"),
+            Section::Sensors => ("Observe.", "每个读数，都有来处。", "LIVE TELEMETRY"),
+            Section::Catalog => (
+                "Discover.",
+                "找到属于你的那一台。",
+                "THE MECHREVO COLLECTION",
+            ),
+        };
+        ui.label(
+            RichText::new(eyebrow)
+                .font(appearance::number_font(10.0))
+                .color(secondary(ui)),
+        );
+        ui.add_space(2.0);
+        if wide {
+            let width = ui.available_width();
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 24.0;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width * 0.62 - 12.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(width * 0.62 - 12.0);
+                        ui.label(RichText::new(title).font(appearance::display_font(60.0)));
+                        ui.label(RichText::new(subtitle).size(15.0).color(secondary(ui)));
                     },
                 );
-                ui.label(RichText::new(status).small().color(secondary(ui)));
-            });
-        });
-        if self.section == Section::Dashboard {
-            let product = self
-                .controller
-                .snapshot
-                .as_ref()
-                .and_then(|s| s.identity.product_name.as_deref())
-                .unwrap_or("设备信息将在采集后显示");
-            let single_line = product.split_whitespace().collect::<Vec<_>>().join(" ");
-            ui.add(egui::Label::new(RichText::new(single_line).color(secondary(ui))).truncate())
-                .on_hover_text(product);
-        } else {
-            ui.label(
-                RichText::new(match self.section {
-                    Section::Sensors => "真实读数与采集来源",
-                    _ => "查找官方产品，不代表硬件控制已兼容",
-                })
-                .color(secondary(ui)),
-            );
-        }
-        ui.add_space(12.0);
-        ui.horizontal_wrapped(|ui| {
-            let response = ui.add_enabled(
-                !self.controller.busy() && self.controller.worker_available,
-                egui::Button::new("     刷新读数"),
-            );
-            let rect = Rect::from_center_size(
-                egui::pos2(response.rect.left() + 19.0, response.rect.center().y),
-                Vec2::splat(15.0),
-            );
-            let rotation = if self.controller.busy() && self.motion_enabled {
-                ui.input(|i| i.time) as f32 * 3.0
-            } else {
-                0.0
-            };
-            refresh_icon(ui.painter(), rect, secondary(ui), rotation);
-            if response.clicked() {
-                let _ = self.controller.refresh();
-            }
-            ui.toggle_value(&mut self.preferences.auto_refresh, "实时采样")
-                .on_hover_text("每 3 秒只读采集；预览操作期间暂停");
-            if !sidebar && ui.button("显示设置").clicked() {
-                self.display_settings_open = !self.display_settings_open;
-            }
-            if let Some(last) = self.controller.last_refresh {
-                ui.label(
-                    RichText::new(if last.elapsed().as_secs() < 2 {
-                        "刚刚更新".into()
-                    } else {
-                        format!("{} 秒前更新", last.elapsed().as_secs())
-                    })
-                    .small()
-                    .color(secondary(ui)),
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width * 0.38 - 12.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Max),
+                    |ui| {
+                        ui.set_width(width * 0.38 - 12.0);
+                        ui.add_space(18.0);
+                        self.device_caption(ui);
+                    },
                 );
+            });
+        } else {
+            let title_size = 54.0_f32.min((ui.available_width() / 4.3).max(25.0));
+            ui.label(RichText::new(title).font(appearance::display_font(title_size)));
+            ui.label(RichText::new(subtitle).size(17.0).color(secondary(ui)));
+            ui.add_space(14.0);
+            self.device_caption(ui);
+        }
+    }
+
+    fn device_caption(&self, ui: &mut egui::Ui) {
+        let snapshot = self.controller.snapshot.as_ref();
+        let product = snapshot
+            .and_then(|s| s.identity.product_name.as_deref())
+            .unwrap_or("设备信息将在采集后显示");
+        ui.add(egui::Label::new(RichText::new(product).size(13.0)).truncate())
+            .on_hover_text(product);
+        let platform = snapshot.map(|s| platform_label(&s.platform)).unwrap_or("—");
+        let board = snapshot
+            .and_then(|s| s.identity.board_name.as_deref())
+            .unwrap_or("型号待识别");
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("{platform}  /  {board}"))
+                    .size(11.0)
+                    .color(secondary(ui)),
+            )
+            .truncate(),
+        )
+        .on_hover_text(format!("{platform} · {board}"));
+        let status = if self.controller.busy() {
+            "正在采集"
+        } else if let Some(last) = self.controller.last_refresh {
+            if last.elapsed().as_secs() < 2 {
+                "刚刚更新"
+            } else {
+                "已采集"
             }
-        });
+        } else {
+            "等待采集"
+        };
+        ui.label(RichText::new(status).size(11.0).color(secondary(ui)));
     }
 
     fn display_settings(&mut self, ui: &mut egui::Ui) {
@@ -643,51 +634,23 @@ impl DesktopApp {
     }
 
     fn dashboard(&mut self, ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        if width >= 720.0 {
-            let controls_width = 290.0_f32.min(width * 0.38);
-            let main_width = width - controls_width - 18.0;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 18.0;
-                ui.allocate_ui_with_layout(
-                    Vec2::new(main_width, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_width(main_width);
-                        self.thermal_panel(ui);
-                        ui.add_space(18.0);
-                        self.power_source(ui);
-                    },
-                );
-                ui.allocate_ui_with_layout(
-                    Vec2::new(controls_width, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_width(controls_width);
-                        surface(ui, |ui| {
-                            self.power_controls(ui);
-                            ui.add_space(18.0);
-                            ui.separator();
-                            ui.add_space(12.0);
-                            self.brightness_controls(ui);
-                        });
-                    },
-                );
+        self.thermal_panel(ui);
+        ui.add_space(18.0);
+        if ui.available_width() >= 660.0 {
+            ui.columns(2, |columns| {
+                surface(&mut columns[0], |ui| self.power_controls(ui));
+                surface(&mut columns[1], |ui| self.brightness_controls(ui));
             });
         } else {
-            self.thermal_panel(ui);
-            ui.add_space(18.0);
-            surface(ui, |ui| {
-                self.power_controls(ui);
-                ui.add_space(18.0);
-                ui.separator();
-                ui.add_space(12.0);
-                self.brightness_controls(ui);
-            });
-            ui.add_space(18.0);
-            self.power_source(ui);
+            surface(ui, |ui| self.power_controls(ui));
+            ui.add_space(14.0);
+            surface(ui, |ui| self.brightness_controls(ui));
         }
-        ui.add_space(22.0);
+        ui.add_space(24.0);
+        self.power_source(ui);
+        ui.add_space(24.0);
+        ui.separator();
+        ui.add_space(14.0);
         self.identity(ui);
         egui::CollapsingHeader::new("接口能力与限制")
             .id_salt("hardware-capabilities")
@@ -704,53 +667,88 @@ impl DesktopApp {
         let cpu = primary_temperature(readings, "CPU");
         let gpu = primary_temperature(readings, "GPU");
         surface(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 7.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("温度与散热").size(17.0).strong());
-                ui.label(RichText::new("本次会话").small().color(secondary(ui)));
+                ui.label(RichText::new("温度与散热").size(13.0).color(secondary(ui)));
+                ui.label(
+                    RichText::new("/  THERMALS")
+                        .font(appearance::number_font(10.0))
+                        .color(secondary(ui)),
+                );
             });
-            ui.add_space(10.0);
-            if ui.available_width() >= 320.0 {
-                ui.columns(2, |columns| {
-                    let cpu_color = green(&columns[0]);
-                    let gpu_color = amber(&columns[1]);
-                    temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
-                    temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+            ui.add_space(14.0);
+            let width = ui.available_width();
+            if width >= 720.0 {
+                let left = width * 0.46 - 14.0;
+                let right = width - left - 28.0;
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 28.0;
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(left, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(left);
+                            ui.columns(2, |columns| {
+                                let cpu_color = green(&columns[0]);
+                                let gpu_color = amber(&columns[1]);
+                                temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
+                                temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+                            });
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(right, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(right);
+                            self.temperature_chart(ui, cpu, gpu);
+                        },
+                    );
                 });
             } else {
-                temperature_metric(ui, "CPU", cpu, green(ui));
-                ui.add_space(10.0);
-                temperature_metric(ui, "GPU", gpu, amber(ui));
+                if width >= 280.0 {
+                    ui.columns(2, |columns| {
+                        let cpu_color = green(&columns[0]);
+                        let gpu_color = amber(&columns[1]);
+                        temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
+                        temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+                    });
+                } else {
+                    temperature_metric(ui, "CPU", cpu, green(ui));
+                    ui.add_space(10.0);
+                    temperature_metric(ui, "GPU", gpu, amber(ui));
+                }
+                ui.add_space(8.0);
+                self.temperature_chart(ui, cpu, gpu);
             }
             ui.add_space(10.0);
-            self.temperature_chart(ui, cpu, gpu);
-            ui.add_space(6.0);
             ui.separator();
-            ui.add_space(6.0);
+            ui.add_space(10.0);
             let fans = fan_readings(readings);
             if fans.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     small_icon(ui, Icon::Fan);
-                    ui.label("风扇转速");
-                    ui.label(RichText::new("未采集").color(secondary(ui)));
+                    ui.label(RichText::new("风扇转速").size(12.0).color(secondary(ui)));
+                    ui.label(RichText::new("未采集").size(12.0).color(secondary(ui)));
+                });
+            } else if ui.available_width() >= 520.0 {
+                let count = fans.len().min(3);
+                ui.columns(count, |columns| {
+                    for (column, fan) in columns.iter_mut().zip(&fans) {
+                        fan_metric(column, fan);
+                    }
                 });
             } else {
                 for fan in fans.iter().take(3) {
-                    ui.horizontal_wrapped(|ui| {
-                        small_icon(ui, Icon::Fan);
-                        ui.label(&fan.label);
-                        ui.label(RichText::new(reading_text(fan)).strong());
-                    })
-                    .response
-                    .on_hover_text(format!("{} · {}", fan.device_id, fan.source.path));
+                    fan_metric(ui, fan);
                 }
-                if fans.len() > 3 {
-                    ui.label(
-                        RichText::new(format!("还有 {} 个风扇读数，见传感器页", fans.len() - 3))
-                            .small()
-                            .color(secondary(ui)),
-                    );
-                }
+            }
+            if fans.len() > 3 {
+                ui.label(
+                    RichText::new(format!("另有 {} 个风扇读数，见传感器页", fans.len() - 3))
+                        .small()
+                        .color(secondary(ui)),
+                );
             }
         });
     }
@@ -775,7 +773,7 @@ impl DesktopApp {
             .max()
             .unwrap_or(0);
         let width = ui.available_width().max(1.0);
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 115.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 108.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
         let plot = rect.shrink2(Vec2::new(2.0, 12.0));
         if count < 2 {
@@ -818,8 +816,15 @@ impl DesktopApp {
                     Stroke::new(1.0, divider(ui)),
                 );
                 painter.text(
-                    egui::pos2(plot.right(), y - 3.0),
-                    egui::Align2::RIGHT_BOTTOM,
+                    egui::pos2(
+                        plot.right() - 2.0,
+                        if portion == 1.0 { y + 3.0 } else { y - 3.0 },
+                    ),
+                    if portion == 1.0 {
+                        egui::Align2::RIGHT_TOP
+                    } else {
+                        egui::Align2::RIGHT_BOTTOM
+                    },
                     format!("{:.0}°C", low + (high - low) * f64::from(portion)),
                     FontId::proportional(10.0),
                     secondary(ui),
@@ -935,25 +940,23 @@ impl DesktopApp {
             .unwrap_or("未采集");
         ui.label(RichText::new(format!("当前  {}", profile_label(current))).color(secondary(ui)));
         let mut selected = self.controller.selected_profile;
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = 5.0;
             for (profile, label) in [
                 (PowerProfile::PowerSaver, "节能"),
                 (PowerProfile::Balanced, "平衡"),
                 (PowerProfile::Performance, "性能"),
             ] {
-                let supported = self
-                    .controller
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| mechrevo_console_core::profile_available(s, profile));
-                if ui
-                    .add_enabled(
-                        supported,
-                        egui::Button::selectable(selected == profile, label),
-                    )
-                    .on_disabled_hover_text("系统未提供此策略")
-                    .clicked()
+                let supported = self.controller.snapshot.as_ref().is_some_and(|s| {
+                    s.capabilities.iter().any(|cap| {
+                        cap.id == "power_profile" && cap.status == CapabilityStatus::Available
+                    }) && mechrevo_console_core::profile_available(s, profile)
+                });
+                if supported
+                    && ui
+                        .add(egui::Button::selectable(selected == profile, label))
+                        .clicked()
                 {
                     selected = profile;
                 }
@@ -977,27 +980,29 @@ impl DesktopApp {
                 .color(green(ui)),
             );
         }
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    reason.is_none() && !self.controller.busy(),
-                    egui::Button::new("预览更改"),
-                )
-                .clicked()
-            {
-                let _ = self.controller.preview_profile();
-            }
-            if self.controller.preview.is_some()
-                && ui
+        if reason.is_none() || self.controller.preview.is_some() {
+            ui.horizontal_wrapped(|ui| {
+                if ui
                     .add_enabled(
                         reason.is_none() && !self.controller.busy(),
-                        primary_button(ui, "应用并回读"),
+                        egui::Button::new("预览更改"),
                     )
                     .clicked()
-            {
-                let _ = self.controller.apply_preview();
-            }
-        });
+                {
+                    let _ = self.controller.preview_profile();
+                }
+                if self.controller.preview.is_some()
+                    && ui
+                        .add_enabled(
+                            reason.is_none() && !self.controller.busy(),
+                            primary_button(ui, "应用并回读"),
+                        )
+                        .clicked()
+                {
+                    let _ = self.controller.apply_preview();
+                }
+            });
+        }
         if let Some(plan) = &self.controller.preview {
             egui::CollapsingHeader::new("操作范围").show(ui, |ui| {
                 ui.label(&plan.scope);
@@ -1035,6 +1040,7 @@ impl DesktopApp {
                 Some(d.id.as_str()) == self.controller.selected_brightness_device.as_deref()
             })
         });
+        let has_device = device.is_some();
         let levels = device
             .map(|d| d.supported_percentages.clone())
             .unwrap_or_default();
@@ -1057,25 +1063,30 @@ impl DesktopApp {
             );
         }
         let mut percent = self.controller.requested_brightness;
-        if levels.is_empty() {
-            let label = ui.label(format!("目标亮度  {percent}%"));
-            ui.scope(|ui| {
-                slider_style(ui);
-                ui.add_enabled(
-                    device.is_some(),
-                    egui::Slider::new(&mut percent, 0..=100)
-                        .trailing_fill(true)
-                        .handle_shape(egui::style::HandleShape::Circle)
-                        .show_value(false),
-                )
-                .labelled_by(label.id);
-            });
-        } else {
-            ui.horizontal_wrapped(|ui| {
-                for level in &levels {
-                    ui.selectable_value(&mut percent, *level, format!("{level}%"));
-                }
-            });
+        let adjustable = device.is_some_and(|device| {
+            device.status == CapabilityStatus::Available && device.readable && device.writable
+        });
+        if adjustable {
+            if levels.is_empty() {
+                let label = ui.label(format!("目标亮度  {percent}%"));
+                ui.scope(|ui| {
+                    slider_style(ui);
+                    ui.add_enabled(
+                        adjustable,
+                        egui::Slider::new(&mut percent, 0..=100)
+                            .trailing_fill(true)
+                            .handle_shape(egui::style::HandleShape::Circle)
+                            .show_value(false),
+                    )
+                    .labelled_by(label.id);
+                });
+            } else {
+                ui.horizontal_wrapped(|ui| {
+                    for level in &levels {
+                        ui.selectable_value(&mut percent, *level, format!("{level}%"));
+                    }
+                });
+            }
         }
         self.controller.set_brightness_target(percent);
         let reason = self
@@ -1094,47 +1105,51 @@ impl DesktopApp {
                 .color(green(ui)),
             );
         }
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    reason.is_none() && !self.controller.busy(),
-                    egui::Button::new("预览亮度"),
-                )
-                .clicked()
-            {
-                let _ = self.controller.preview_brightness();
-            }
-            if self.controller.brightness_preview.is_some()
-                && ui
+        if reason.is_none() || self.controller.brightness_preview.is_some() {
+            ui.horizontal_wrapped(|ui| {
+                if ui
                     .add_enabled(
                         reason.is_none() && !self.controller.busy(),
-                        primary_button(ui, "应用并回读"),
+                        egui::Button::new("预览亮度"),
                     )
                     .clicked()
-            {
-                let _ = self.controller.apply_brightness_preview();
-            }
-        });
-        egui::CollapsingHeader::new("背光设备详情")
-            .id_salt("brightness-details")
-            .show(ui, |ui| {
-                if let Some(snapshot) = &self.controller.snapshot {
-                    for device in &snapshot.brightness {
-                        ui.label(&device.id);
-                        ui.label(format!(
-                            "请求值 {:?} · 驱动报告值 {:?} · 上限 {:?}",
-                            device.control_value, device.actual_value, device.maximum
-                        ));
-                        evidence(ui, &device.source.backend, &device.source.path);
-                    }
+                {
+                    let _ = self.controller.preview_brightness();
                 }
-                if let Some(applied) = &self.controller.brightness_applied {
-                    ui.label(format!(
-                        "驱动报告 actual_brightness：{:?}；可能延迟，并非实测亮度。",
-                        applied.actual_value
-                    ));
+                if self.controller.brightness_preview.is_some()
+                    && ui
+                        .add_enabled(
+                            reason.is_none() && !self.controller.busy(),
+                            primary_button(ui, "应用并回读"),
+                        )
+                        .clicked()
+                {
+                    let _ = self.controller.apply_brightness_preview();
                 }
             });
+        }
+        if has_device || self.controller.brightness_applied.is_some() {
+            egui::CollapsingHeader::new("背光设备详情")
+                .id_salt("brightness-details")
+                .show(ui, |ui| {
+                    if let Some(snapshot) = &self.controller.snapshot {
+                        for device in &snapshot.brightness {
+                            ui.label(&device.id);
+                            ui.label(format!(
+                                "请求值 {:?} · 驱动报告值 {:?} · 上限 {:?}",
+                                device.control_value, device.actual_value, device.maximum
+                            ));
+                            evidence(ui, &device.source.backend, &device.source.path);
+                        }
+                    }
+                    if let Some(applied) = &self.controller.brightness_applied {
+                        ui.label(format!(
+                            "驱动报告 actual_brightness：{:?}；可能延迟，并非实测亮度。",
+                            applied.actual_value
+                        ));
+                    }
+                });
+        }
     }
 
     fn power_source(&self, ui: &mut egui::Ui) {
@@ -1401,23 +1416,7 @@ fn divider(ui: &egui::Ui) -> Color32 {
     }
 }
 fn surface<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(if ui.visuals().dark_mode {
-            PANEL
-        } else {
-            Color32::from_rgb(250, 249, 243)
-        })
-        .corner_radius(14.0)
-        .inner_margin(if ui.available_width() < 300.0 {
-            16.0
-        } else {
-            20.0
-        })
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            contents(ui)
-        })
-        .inner
+    appearance::glass(ui, contents)
 }
 fn slider_style(ui: &mut egui::Ui) {
     let dark = ui.visuals().dark_mode;
@@ -1453,8 +1452,19 @@ fn primary_button(ui: &egui::Ui, label: &str) -> egui::Button<'static> {
     .stroke(Stroke::NONE)
 }
 fn unavailable(ui: &mut egui::Ui, reason: &str) {
-    ui.label(RichText::new("此电脑暂不可调").small().color(secondary(ui)))
-        .on_hover_text(reason);
+    let concise = reason.split(['。', '；', '\n']).next().unwrap_or(reason);
+    let summary: String = concise.chars().take(38).collect();
+    let summary = if concise.chars().count() > 38 {
+        format!("{summary}…")
+    } else {
+        summary
+    };
+    ui.label(RichText::new(summary).size(12.0).color(secondary(ui)));
+    egui::CollapsingHeader::new(RichText::new("查看原因").size(11.0).color(secondary(ui)))
+        .id_salt(reason)
+        .show(ui, |ui| {
+            ui.label(RichText::new(reason).small().color(secondary(ui)));
+        });
 }
 fn evidence(ui: &mut egui::Ui, backend: &str, path: &str) {
     ui.add(
@@ -1560,36 +1570,74 @@ fn temperature_metric(
     color: Color32,
 ) {
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(7.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 3.0, color);
-        ui.label(RichText::new(label).color(secondary(ui)));
+        ui.painter().circle_filled(rect.center(), 2.5, color);
+        ui.label(
+            RichText::new(label)
+                .font(appearance::number_font(12.0))
+                .color(secondary(ui)),
+        );
     });
     let value = reading
         .and_then(measured)
-        .map(|v| format!("{v:.0}°C"))
+        .map(|v| format!("{v:.0}"))
         .unwrap_or_else(|| "—".into());
-    ui.label(RichText::new(value).size(42.0).strong())
-        .on_hover_text(
-            reading
-                .map(|r| format!("{} · {} · {}", r.label, r.device_id, r.source.path))
-                .unwrap_or_else(|| "尚无温度读数".into()),
-        );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        ui.label(RichText::new(value).font(appearance::number_font(56.0)))
+            .on_hover_text(
+                reading
+                    .map(|r| format!("{} · {} · {}", r.label, r.device_id, r.source.path))
+                    .unwrap_or_else(|| "尚无温度读数".into()),
+            );
+        if reading.and_then(measured).is_some() {
+            ui.label(
+                RichText::new("°C")
+                    .font(appearance::number_font(18.0))
+                    .color(secondary(ui)),
+            );
+        }
+    });
     ui.label(
         RichText::new(if reading.and_then(measured).is_some() {
             "当前最高读数"
         } else {
             "未采集"
         })
-        .small()
+        .size(10.0)
         .color(secondary(ui)),
     );
+}
+fn fan_metric(ui: &mut egui::Ui, reading: &SensorReading) {
+    let visible_label = reading
+        .label
+        .strip_prefix("mechrevo_ec:")
+        .map(str::trim)
+        .unwrap_or(&reading.label);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 7.0;
+        small_icon(ui, Icon::Fan);
+        ui.add(
+            egui::Label::new(RichText::new(visible_label).size(11.0).color(secondary(ui)))
+                .truncate(),
+        )
+        .on_hover_text(&reading.label);
+        let value = measured(reading)
+            .map(|v| format!("{v:.0}"))
+            .unwrap_or_else(|| "—".into());
+        ui.label(RichText::new(value).font(appearance::number_font(18.0)))
+            .on_hover_text(format!("{} · {}", reading.device_id, reading.source.path));
+        ui.label(
+            RichText::new(&reading.unit)
+                .font(appearance::number_font(9.0))
+                .color(secondary(ui)),
+        );
+    });
 }
 #[derive(Clone, Copy)]
 enum Icon {
     Brand,
-    Overview,
-    Sensor,
-    Catalog,
     Fan,
     Power,
     Sun,
@@ -1612,40 +1660,6 @@ fn icon(p: &egui::Painter, rect: Rect, glyph: Icon, color: Color32) {
                 ((0.9, 0.15), (0.9, 0.85)),
             ] {
                 p.line_segment([point(a.0, a.1), point(b.0, b.1)], Stroke::new(2.5, color));
-            }
-        }
-        Icon::Overview => {
-            for (x, y) in [(0.06, 0.06), (0.57, 0.06), (0.06, 0.57), (0.57, 0.57)] {
-                p.rect_stroke(
-                    Rect::from_min_size(point(x, y), Vec2::new(w * 0.34, h * 0.34)),
-                    2.0,
-                    s,
-                    egui::StrokeKind::Inside,
-                );
-            }
-        }
-        Icon::Sensor => {
-            p.line(
-                vec![
-                    point(0.0, 0.6),
-                    point(0.22, 0.6),
-                    point(0.37, 0.15),
-                    point(0.58, 0.9),
-                    point(0.75, 0.45),
-                    point(1.0, 0.45),
-                ],
-                s,
-            );
-        }
-        Icon::Catalog => {
-            p.rect_stroke(
-                Rect::from_min_max(point(0.13, 0.07), point(0.87, 0.93)),
-                2.0,
-                s,
-                egui::StrokeKind::Inside,
-            );
-            for y in [0.32, 0.52, 0.72] {
-                p.line_segment([point(0.31, y), point(0.69, y)], s);
             }
         }
         Icon::Fan => {

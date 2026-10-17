@@ -32,6 +32,12 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.source.write_text("pub fn probe() {}\n")
         (self.root / "data/mechrevo-catalog.json").write_text('{"models": []}\n')
         (self.root / "data/mechrevo-platform-evidence.json").write_text('{"platforms": []}\n')
+        self.fonts = [self.root / "console" / name for name in verify.GUI_EMBEDDED_FONTS]
+        self.fonts[0].parent.mkdir(parents=True)
+        for font in self.fonts:
+            font.write_bytes(b"fixture font: " + font.name.encode())
+        self.font_license = self.fonts[0].parent / "OFL.txt"
+        self.font_license.write_text("fixture font license\n")
         self.calls = []
         self.windows_installed = True
         self.failure = None
@@ -80,7 +86,9 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 6)
+        self.assertEqual(len(result["source_before"]["files"]), 9)
+        for asset in (*self.fonts, self.font_license):
+            self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
         self.assertEqual({row["name"] for row in result["commands"]}, {"fmt", "test", "clippy", "windows"})
         for row in result["commands"] + result["prerequisites"]:
             self.assertEqual((row["status"], row["exit_code"]), ("passed", 0))
@@ -202,6 +210,48 @@ class ConsoleVerificationTests(unittest.TestCase):
                 self.assertEqual(result["exit_code"], 2)
                 self.assertFalse(result["source_unchanged"])
                 self.assertNotEqual(result["source_before"]["sha256"], result["source_after"]["sha256"])
+
+    def test_embedded_font_or_other_asset_edits_make_run_incomplete(self):
+        for asset in (self.fonts[0], self.font_license):
+            with self.subTest(asset=asset.name):
+                self.mutate = lambda: asset.write_bytes(asset.read_bytes() + b" changed")
+                result = self.run_verifier()
+                self.assertEqual(result["exit_code"], 2)
+                self.assertFalse(result["source_unchanged"])
+                self.assertNotEqual(result["source_before"]["sha256"], result["source_after"]["sha256"])
+                self.assertTrue(all(row["status"] == "passed" for row in result["commands"]))
+
+    def test_each_missing_embedded_font_is_named_and_blocks_checks(self):
+        for font in self.fonts:
+            with self.subTest(font=font.name):
+                original = font.read_bytes()
+                font.unlink()
+                try:
+                    result = self.run_verifier()
+                    self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
+                    relative = str(font.relative_to(self.root))
+                    self.assertIn(relative, result["source_before"]["missing"])
+                    self.assertIn(relative, result["incomplete_reasons"][0])
+                finally:
+                    font.write_bytes(original)
+
+    def test_symlink_gui_asset_and_asset_directory_are_rejected(self):
+        original = self.directory / "actual-font.ttf"
+        original.write_bytes(self.fonts[0].read_bytes())
+        self.fonts[0].unlink()
+        self.fonts[0].symlink_to(original)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source input", result["fatal_error"])
+        self.assertEqual(self.calls, [])
+        self.fonts[0].unlink()
+        self.fonts[0].write_bytes(original.read_bytes())
+        extra = self.fonts[0].parent.parent / "linked-assets"
+        extra.symlink_to(self.directory, target_is_directory=True)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source input", result["fatal_error"])
+        self.assertEqual(self.calls, [])
 
     def test_missing_lock_and_zero_commands_are_incomplete(self):
         result = self.run_verifier(checks=())

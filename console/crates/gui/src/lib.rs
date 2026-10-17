@@ -17,6 +17,8 @@ use std::{
 };
 
 #[cfg(feature = "gui")]
+mod appearance;
+#[cfg(feature = "gui")]
 pub mod desktop;
 
 pub trait Backend: Send + 'static {

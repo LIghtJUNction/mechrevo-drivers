@@ -10,7 +10,7 @@ use mechrevo_console_core::{
 };
 use mechrevo_console_gui::{
     desktop::{DesktopApp, RenderMetrics, Section},
-    Backend, Controller, DisplayMode, Preferences,
+    Backend, Controller, DisplayMode, Preferences, Theme,
 };
 use serde_json::json;
 use std::{collections::HashMap, path::Path, sync::Arc};
@@ -32,7 +32,11 @@ impl Backend for FixtureBackend {
 }
 
 fn fixture(case: &str) -> DesktopApp {
-    let long = "VeryLongUnbrokenHardwareIdentifier0123456789".repeat(5);
+    let long = if case == "representative" {
+        "GM6PX0X".to_owned()
+    } else {
+        "VeryLongUnbrokenHardwareIdentifier0123456789".repeat(5)
+    };
     let source_path = if case == "multi_gpu" {
         format!("fixture://{long}/hwmon/{long}/temp1_input")
     } else {
@@ -138,6 +142,7 @@ impl Harness {
     fn new(physical: [u32; 2], dpi: f32, fonts: Arc<SystemFontProvider>) -> Self {
         let ctx = Context::default();
         ctx.add_font_provider(fonts);
+        ctx.enable_accesskit();
         // A tofu/replacement glyph must fail the same layout regression that draws it.
         ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Panic);
         Self {
@@ -149,6 +154,13 @@ impl Harness {
         }
     }
     fn frame(&mut self, app: &mut DesktopApp) -> (RenderMetrics, FullOutput) {
+        self.frame_with_events(app, vec![])
+    }
+    fn frame_with_events(
+        &mut self,
+        app: &mut DesktopApp,
+        events: Vec<egui::Event>,
+    ) -> (RenderMetrics, FullOutput) {
         let mut input = RawInput {
             screen_rect: Some(Rect::from_min_size(
                 pos2(0.0, 0.0),
@@ -158,6 +170,7 @@ impl Harness {
                 ),
             )),
             time: Some(self.frame_number as f64 * 0.1),
+            events,
             ..Default::default()
         };
         input
@@ -407,6 +420,280 @@ fn responsive_layout_and_last_action_are_accessible_at_every_dpi() {
     }
     assert_eq!(verified, 80);
     println!("Verified {verified} rendered layouts: 4 DPI scales x 2 logical window sizes (native physical pixels = logical size x DPI) x 10 states/views; Chinese missing-glyph policy=Panic; long source paths wrap; empty telemetry is safe; last marker reachable.");
+}
+
+#[test]
+fn light_theme_and_representative_desktop_views_remain_accessible() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let capture = std::env::var_os("MECHREVO_GUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+    if let Some(path) = &capture {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let mut verified = 0;
+    for (theme, name) in [(Theme::Dark, "dark"), (Theme::Light, "light")] {
+        for (section, view) in [
+            (Section::Dashboard, "dashboard"),
+            (Section::Sensors, "sensors"),
+            (Section::Catalog, "catalog"),
+        ] {
+            let mut app = fixture("representative");
+            app.preferences.theme = theme;
+            app.select_section(section);
+            let mut harness = Harness::new([1120, 760], 1.0, fonts.clone());
+            assert_layout(
+                &format!("desktop1120x760-{name}-{view}"),
+                &mut app,
+                &mut harness,
+                capture.as_deref(),
+                false,
+            );
+            assert_eq!(
+                harness.ctx.global_style().visuals.dark_mode,
+                theme == Theme::Dark
+            );
+            verified += 1;
+        }
+    }
+    for dpi in [1.0, 1.25, 1.5, 2.0] {
+        for (case, scale) in [("long_names", 1.0), ("large_compact", 1.6)] {
+            let mut app = fixture(case);
+            app.preferences.theme = Theme::Light;
+            let mut harness = Harness::new(
+                [(360.0 * dpi) as u32, (280.0 * dpi) as u32],
+                dpi,
+                fonts.clone(),
+            );
+            assert_layout(
+                &format!(
+                    "light-minimum-dpi{}-text{}",
+                    (dpi * 100.0) as u32,
+                    (scale * 100.0) as u32
+                ),
+                &mut app,
+                &mut harness,
+                capture.as_deref(),
+                true,
+            );
+            assert!(!harness.ctx.global_style().visuals.dark_mode);
+            verified += 1;
+        }
+    }
+    assert_eq!(verified, 14);
+    println!("Verified {verified} additional layouts: six 1120x760 desktop views in dark/light themes and eight minimum-window light-theme DPI/text-size combinations; actual bundled display/number fonts and Chinese fallback rendered under missing-glyph Panic.");
+}
+
+fn accessible_control(
+    output: &FullOutput,
+    label: &str,
+    role: egui::accesskit::Role,
+) -> (egui::accesskit::NodeId, Rect) {
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let (id, node) = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.role() == role && node.label() == Some(label))
+        .unwrap_or_else(|| panic!("Accessible {role:?} '{label}' is missing"));
+    let bounds = node.bounds().expect("interactive control needs bounds");
+    (
+        *id,
+        Rect::from_min_max(
+            pos2(bounds.x0 as f32, bounds.y0 as f32),
+            pos2(bounds.x1 as f32, bounds.y1 as f32),
+        ),
+    )
+}
+
+fn click(harness: &mut Harness, app: &mut DesktopApp, position: egui::Pos2) -> FullOutput {
+    harness.frame_with_events(
+        app,
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    harness.frame_with_events(
+        app,
+        vec![egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    harness.frame(app).1
+}
+
+fn key(harness: &mut Harness, app: &mut DesktopApp, key: egui::Key) -> FullOutput {
+    for pressed in [true, false] {
+        harness.frame_with_events(
+            app,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+    }
+    harness.frame(app).1
+}
+
+fn assert_page_title(output: &FullOutput, title: &str) {
+    assert!(
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == egui::accesskit::Role::Label
+                && node.value() == Some(title)),
+        "navigation did not render the requested page heading '{title}'"
+    );
+}
+
+fn assert_selected_navigation(output: &FullOutput, selected: &str) {
+    let nodes = &output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes;
+    for label in ["概览", "传感器", "型号目录"] {
+        let (_, node) = nodes
+            .iter()
+            .find(|(_, node)| {
+                node.role() == egui::accesskit::Role::Button && node.label() == Some(label)
+            })
+            .unwrap();
+        assert_eq!(
+            node.toggled(),
+            Some(if label == selected {
+                egui::accesskit::Toggled::True
+            } else {
+                egui::accesskit::Toggled::False
+            }),
+            "navigation must expose its current page to assistive technology: '{label}'"
+        );
+    }
+}
+
+#[test]
+fn wrapped_navigation_accepts_pointer_and_keyboard_at_minimum_window_size() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    for dpi in [1.0, 2.0] {
+        for text_scale in [1.0, 1.6] {
+            let physical = [(360.0 * dpi) as u32, (280.0 * dpi) as u32];
+            let mut app = fixture("representative");
+            app.preferences.text_scale = text_scale;
+            let mut harness = Harness::new(physical, dpi, fonts.clone());
+            let mut output = harness.frame(&mut app).1;
+            for _ in 0..3 {
+                output = harness.frame(&mut app).1;
+            }
+            let client = Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(
+                    physical[0] as f32 / output.pixels_per_point,
+                    physical[1] as f32 / output.pixels_per_point,
+                ),
+            );
+            let mut bounds = Vec::new();
+            for label in ["概览", "传感器", "型号目录"] {
+                let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
+                assert!(client.expand(1.0).contains_rect(rect), "DPI={dpi} text={text_scale}: navigation '{label}' is clipped: {rect:?} outside {client:?}");
+                assert!(
+                    bounds
+                        .iter()
+                        .all(|previous: &Rect| !previous.intersects(rect)),
+                    "wrapped navigation buttons overlap"
+                );
+                bounds.push(rect);
+            }
+            // These are pointer events at actual accessible button bounds, not a
+            // direct mutation of the section field or a synthetic click result.
+            for label in ["型号目录", "传感器", "概览"] {
+                let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
+                output = click(&mut harness, &mut app, rect.center());
+                assert_selected_navigation(&output, label);
+            }
+            let (sensor_id, _) =
+                accessible_control(&output, "传感器", egui::accesskit::Role::Button);
+            let mut focused_sensor = false;
+            for _ in 0..24 {
+                output = key(&mut harness, &mut app, egui::Key::Tab);
+                if output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .focus
+                    == sensor_id
+                {
+                    focused_sensor = true;
+                    break;
+                }
+            }
+            assert!(
+                focused_sensor,
+                "DPI={dpi} text={text_scale}: keyboard focus never reached sensor navigation"
+            );
+            output = key(&mut harness, &mut app, egui::Key::Enter);
+            assert_selected_navigation(&output, "传感器");
+        }
+    }
+    // At minimum size the page heading can validly be below the scroll viewport.
+    // Also verify actual page content changes in a window where headings fit.
+    let mut app = fixture("representative");
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let mut output = harness.frame(&mut app).1;
+    for _ in 0..3 {
+        output = harness.frame(&mut app).1;
+    }
+    for (label, title) in [
+        ("型号目录", "Discover."),
+        ("传感器", "Observe."),
+        ("概览", "Control."),
+    ] {
+        let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
+        output = click(&mut harness, &mut app, rect.center());
+        assert_selected_navigation(&output, label);
+        assert_page_title(&output, title);
+    }
+}
+
+#[test]
+fn reducing_motion_through_visible_setting_disables_transitions() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let mut app = fixture("representative");
+    app.open_display_settings();
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let mut output = harness.frame(&mut app).1;
+    for _ in 0..3 {
+        output = harness.frame(&mut app).1;
+    }
+    assert!(harness.ctx.global_style().animation_time > 0.0);
+    let (_, bounds) = accessible_control(&output, "界面过渡动画", egui::accesskit::Role::CheckBox);
+    assert!(Rect::from_min_size(pos2(0.0, 0.0), vec2(1120.0, 760.0)).contains_rect(bounds));
+    output = click(&mut harness, &mut app, bounds.center());
+    let (_, node) = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("界面过渡动画"))
+        .unwrap();
+    assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::False));
+    assert_eq!(harness.ctx.global_style().animation_time, 0.0);
 }
 
 fn assert_source_details_expand(label: &str, app: &mut DesktopApp, harness: &mut Harness) {

@@ -22,6 +22,10 @@ from typing import Callable, TextIO
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_TARGET = "x86_64-pc-windows-gnu"
 DEFAULT_TIMEOUT = 900.0
+GUI_EMBEDDED_FONTS = (
+    "crates/gui/assets/fonts/CormorantGaramond-Italic.ttf",
+    "crates/gui/assets/fonts/Manrope.ttf",
+)
 TEST_LOG_MAX_BYTES = 16 * 1024 * 1024
 TEST_LOG_MAX_LINE_BYTES = 4096
 TEST_SUMMARY = re.compile(
@@ -59,11 +63,18 @@ def artifact_base(root: Path, env: dict[str, str]) -> Path:
 
 
 def source_snapshot(root: Path) -> dict[str, object]:
-    """Hash source bytes and manifests; this is not an atomic filesystem snapshot."""
+    """Hash source, embedded GUI assets, and manifests; not an atomic snapshot."""
     console = checked_directory(root / "console")
     required = (console / "Cargo.toml", console / "Cargo.lock", root / "data/mechrevo-catalog.json",
-                root / "data/mechrevo-platform-evidence.json")
+                root / "data/mechrevo-platform-evidence.json",
+                *(console / name for name in GUI_EMBEDDED_FONTS))
     paths = set(console.rglob("*.rs")) | set(console.rglob("Cargo.toml")) | set(required)
+    assets = console / "crates/gui/assets"
+    if assets.is_symlink():
+        raise ValueError("Symlink source directory is not allowed: " + str(assets))
+    # Include licenses and future asset types as well as the fonts used by include_bytes!.
+    # Keep symlink entries in the set so the common validation below rejects them.
+    paths.update(path for path in assets.rglob("*") if path.is_symlink() or not path.is_dir())
     files: dict[str, str] = {}
     missing: list[str] = []
     for path in sorted(paths):
