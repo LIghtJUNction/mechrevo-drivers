@@ -355,9 +355,6 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 				return status;
 			copy_result = copy_to_user((int32_t *) arg, &result, sizeof(result));
 			break;
-	}
-
-	switch (cmd) {
 		case W_CL_FANSPEED:
 			copy_result = copy_from_user(&argument, (int32_t *) arg, sizeof(argument));
 			if (copy_result)
@@ -436,6 +433,8 @@ static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned 
 			if (status)
 				return status;
 			break;
+		default:
+			return -ENOTTY;
 	}
 
 	return copy_result ? -EFAULT : 0;
@@ -723,9 +722,6 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			}*/
 			break;
 #endif
-	}
-
-	switch (cmd) {
 		case W_UW_FANSPEED:
 		case W_UW_FANSPEED2:
 			// Get fan speed argument
@@ -793,6 +789,8 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			pr_info("addr_low %0#2x\n", reg_write_return.bytes.addr_low);*/
 			break;
 #endif
+		default:
+			return -ENOTTY;
 	}
 
 	return copy_result ? -EFAULT : 0;
@@ -800,9 +798,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 
 static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	long status;
-	// u32 result = 0;
-	u32 copy_result = 0;
+	u32 copy_result;
 
 	const char *module_version = THIS_MODULE->version;
 	switch (cmd) {
@@ -818,16 +814,26 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			id_check_uniwill = uniwill_identify();
 			copy_result = copy_to_user((void *) arg, (void *) &id_check_uniwill, sizeof(id_check_uniwill));
 			break;
+#ifdef DEBUG
+		/* These historical Uniwill commands use Clevo ioctl magic values. */
+		case R_TF_BC:
+		case W_TF_BC:
+			return uniwill_ioctl_interface(file, cmd, arg);
+#endif
+		default:
+			switch (_IOC_TYPE(cmd)) {
+				case MAGIC_READ_CL:
+				case MAGIC_WRITE_CL:
+					return clevo_ioctl_interface(file, cmd, arg);
+				case MAGIC_READ_UW:
+				case MAGIC_WRITE_UW:
+					return uniwill_ioctl_interface(file, cmd, arg);
+				default:
+					return -ENOTTY;
+			}
 	}
-	if (copy_result)
-		return -EFAULT;
 
-	status = clevo_ioctl_interface(file, cmd, arg);
-	if (status != 0) return status;
-	status = uniwill_ioctl_interface(file, cmd, arg);
-	if (status != 0) return status;
-
-	return 0;
+	return copy_result ? -EFAULT : 0;
 }
 
 static struct file_operations fops_dev = {

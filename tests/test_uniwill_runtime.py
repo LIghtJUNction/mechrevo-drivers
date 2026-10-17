@@ -242,8 +242,14 @@ class UniwillRuntime(unittest.TestCase):
     def test_invalid_profiles_remain_einval_for_every_capability_combination(self):
         self.check_case("profile_invalid_capability_matrix")
 
-    def test_disabled_mode_enable_and_unknown_commands_remain_noops(self):
-        self.check_case("unchanged_noop_dispatch")
+    def test_disabled_mode_enable_remains_noop_without_accessing_its_argument(self):
+        self.check_case("mode_enable_noop")
+
+    def test_unknown_commands_return_enotty_without_user_copy_or_hardware_access(self):
+        self.check_case("unknown_commands")
+
+    def test_all_uniwill_commands_reject_wrong_direction_size_and_type(self):
+        self.check_case("malformed_commands")
 
     def test_debug_partial_input_copy_fault_prevents_ec_access(self):
         self.check_case("debug_copy_from_faults", debug_only=True)

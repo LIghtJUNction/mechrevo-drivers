@@ -132,7 +132,7 @@ reset 成功而 enable 失败可能留下清位状态，不能声称回滚或应
 可选背光错误会报告并继续其他初始化；移除只恢复已知的初始启用状态，并保留寄存器其他位。
 背光 helper 的 PM 错误沿回调返回。
 
-`test_clevo_ioctl_runtime.py` 的 17 项实际 C 测试在普通及 DEBUG 构建下覆盖真实 ioctl 入口，
+`test_clevo_ioctl_runtime.py` 的 19 项实际 C 测试在普通及 DEBUG 构建下覆盖真实 ioctl 入口，
 检查原 errno、用户复制失败、输出缓冲区保持及原有机型特例。
 Clevo 读取失败后不复制无效结果，写入复制失败后不执行固件操作。
 GM6PX0X 没有 Clevo 接口；该机只能检查软件拒绝路径，不能作为 Clevo 功能验收。

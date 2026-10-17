@@ -26,20 +26,37 @@ fan speeds in each of the three packed byte positions, the unchanged integer
 thresholds and ignored fourth fan byte, and all 256 performance-profile low
 bytes. They also check the webcam low-bit no-op workaround, prerequisite GET and
 SET failures, existing DMI exclusions (including the asymmetric Gen4 read/write
-policy), the 100 ms delay only after a successful manual SET, and the existing
-zero return for unknown or unused debug commands.
+policy), and the 100 ms delay only after a successful manual SET.
+
+Unknown commands and commands with an incorrect direction, size or type return
+`-ENOTTY` before copying user data or calling firmware. Each handler matches the
+complete command value. The outer entry selects one handler and returns its
+signed result directly; the three generic reads do not enter either handler.
+The two historical `DEBUG` commands, `R_TF_BC` and `W_TF_BC`, keep their Clevo
+magic values but route to Uniwill. The read alias retains its original `_IOW`
+encoding. Ordinary builds reject both aliases. Uniwill's `W_UW_MODE_ENABLE`
+remains a successful no-op, and `W_UW_FANAUTO` still accepts no argument.
 
 All test commands enter through the actual `fop_ioctl`, with only its Uniwill
 handler stubbed. The existing copy and transport cases verify that Clevo errors
-remain negative through that function and stop dispatch; the success and unknown
-command cases check payloads and continued routing. Changing the outer
-function's local `status` from `long` to `u32` must fail these tests even when the
-inner Clevo function is already fixed.
+remain negative through that function. Successful Clevo commands never enter the
+Uniwill handler. The Clevo and Uniwill suites cover malformed encodings of all
+45 ordinary public commands, plus the two historical debug aliases. The public
+header is unchanged; these tests do not establish 32-bit userspace compatibility
+with a 64-bit kernel, for which the driver has no `compat_ioctl` entry.
 
 Run:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p test_clevo_ioctl_runtime.py -v
+```
+
+The complete affected domain runs through the repository verification runner as
+an ordinary user:
+
+```sh
+mkdir -p .local-tests
+python3 -B scripts/verify.py --domain driver
 ```
 
 For a pre-fix sensitivity run, point `CLEVO_IO_SOURCE_ROOT` at an unchanged source
