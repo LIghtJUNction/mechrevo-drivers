@@ -79,11 +79,15 @@ static void msleep(unsigned int duration)
 
 /* @DRIVER_CLEVO_IOCTL@ */
 
-static int uniwill_calls;
+static int uniwill_calls, uniwill_status;
+static unsigned int uniwill_command;
+static unsigned long uniwill_argument;
 static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	++uniwill_calls;
-	return 0;
+	uniwill_command = cmd;
+	uniwill_argument = arg;
+	return uniwill_status;
 }
 static u32 id_check_clevo, id_check_uniwill;
 static u32 clevo_identify(void) { return 1; }
@@ -120,6 +124,9 @@ static void reset(void)
 	input_copies = output_copies = 0;
 	input_size = output_size = 0;
 	method_calls = sleeps = uniwill_calls = 0;
+	uniwill_status = 0;
+	uniwill_command = 0;
+	uniwill_argument = 0;
 	sleep_duration = 0;
 	memset(statuses, 0, sizeof(statuses));
 	memset(methods, 0, sizeof(methods));
@@ -143,7 +150,7 @@ static void read_success(void)
 			assert(value == payloads[p]);
 			assert(method_calls == 1 && methods[0] == read_methods[c]);
 			assert(arguments[0] == 0 && output_copies == 1 && output_size == sizeof(u32));
-			assert(input_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+			assert(input_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 		}
 }
 
@@ -188,7 +195,7 @@ static void interface_strings(void)
 		assert(strcmp(value, missing ? "" : interface_name) == 0);
 		assert(output_size == (missing ? 1 : sizeof(interface_name)));
 		assert(interface_calls == 1 && output_copies == 1 && method_calls == 0);
-		assert(input_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+		assert(input_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 	}
 }
 
@@ -281,7 +288,7 @@ static void fan_mapping(void)
 			assert(ioctl_value(W_CL_FANSPEED, &value) == 0);
 			assert(method_calls == 1 && methods[0] == CLEVO_CMD_SET_FANSPEED_VALUE);
 			assert(arguments[0] == expected && sleeps == 1 && sleep_duration == 100);
-			assert(input_size == sizeof(u32) && output_copies == 0 && uniwill_calls == 1);
+			assert(input_size == sizeof(u32) && output_copies == 0 && uniwill_calls == 0);
 		}
 }
 
@@ -311,7 +318,7 @@ static void write_payloads(void)
 			assert(ioctl_value(commands[c], &value) == 0);
 			assert(method_calls == 1 && methods[0] == expected_methods[c]);
 			assert(arguments[0] == payloads[p] && input_size == sizeof(u32));
-			assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+			assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 		}
 }
 
@@ -323,7 +330,7 @@ static void performance_profile(void)
 		assert(ioctl_value(W_CL_PERF_PROFILE, &value) == 0);
 		assert(method_calls == 1 && methods[0] == CLEVO_CMD_OPT);
 		assert(arguments[0] == (((u32)CLEVO_CMD_OPT_SUB_SET_PERF_PROF << 24) | profile));
-		assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+		assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 	}
 }
 
@@ -349,7 +356,7 @@ static void webcam_noop(void)
 		results[0] = 0x87654320 | (low & 1);
 		assert(ioctl_value(W_CL_WEBCAM_SW, &value) == 0);
 		assert(method_calls == 1 && methods[0] == CLEVO_CMD_GET_WEBCAM_SW);
-		assert(arguments[0] == 0 && output_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+		assert(arguments[0] == 0 && output_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 	}
 }
 
@@ -362,7 +369,7 @@ static void webcam_set(void)
 		assert(ioctl_value(W_CL_WEBCAM_SW, &value) == 0);
 		assert(method_calls == 2 && methods[0] == CLEVO_CMD_GET_WEBCAM_SW);
 		assert(methods[1] == CLEVO_CMD_SET_WEBCAM_SW && arguments[1] == payloads[p]);
-		assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+		assert(output_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 	}
 	for (size_t e = 0; e < COUNT(errors); ++e) {
 		u32 value = 0xdeadbeef;
@@ -391,9 +398,19 @@ static void webcam_dmi(void)
 		} else {
 			/* Existing Gen4 policy blocks GET ioctl but not the SET ioctl. */
 			assert(ioctl_value(W_CL_WEBCAM_SW, &value) == 0);
-			assert(input_copies == 1 && method_calls == 2 && uniwill_calls == 1);
+			assert(input_copies == 1 && method_calls == 2 && uniwill_calls == 0);
 		}
 	}
+}
+
+static void reject_command(unsigned int cmd)
+{
+	u32 value[16] = {0x12345678};
+	reset();
+	assert(ioctl_value(cmd, value) == -ENOTTY);
+	assert(clevo_ioctl_interface(NULL, cmd, (unsigned long)value) == -ENOTTY);
+	assert(value[0] == 0x12345678 && method_calls == 0 && interface_calls == 0);
+	assert(input_copies == 0 && output_copies == 0 && sleeps == 0 && uniwill_calls == 0);
 }
 
 static void unknown_commands(void)
@@ -401,15 +418,54 @@ static void unknown_commands(void)
 	const unsigned int commands[] = {
 		0, 0xffffffff, _IOR(MAGIC_READ_CL, 0xfe, int32_t *),
 		_IOW(MAGIC_WRITE_CL, 0xfe, int32_t *),
-		/* Unused debug Clevo commands are declared but never handled. */
-		_IOW(MAGIC_READ_CL, 0x91, uint32_t *), _IOW(MAGIC_WRITE_CL, 0x91, uint32_t *)
+		_IOR(IOCTL_MAGIC, 0xfe, int32_t *)
+	};
+	for (size_t c = 0; c < COUNT(commands); ++c)
+		reject_command(commands[c]);
+}
+
+static void malformed_commands(void)
+{
+	const unsigned int commands[] = {
+		R_MOD_VERSION, R_HWCHECK_CL, R_HWCHECK_UW, R_CL_HW_IF_STR,
+		R_CL_FANINFO1, R_CL_FANINFO2, R_CL_FANINFO3,
+		R_CL_WEBCAM_SW, R_CL_FLIGHTMODE_SW, R_CL_TOUCHPAD_SW,
+		W_CL_FANSPEED, W_CL_FANAUTO, W_CL_WEBCAM_SW,
+		W_CL_FLIGHTMODE_SW, W_CL_TOUCHPAD_SW, W_CL_PERF_PROFILE
 	};
 	for (size_t c = 0; c < COUNT(commands); ++c) {
-		u32 value = 0x12345678;
+		/* Keep the command number but corrupt one encoded field at a time. */
+		reject_command(commands[c] ^ ((unsigned int)_IOC_READ << _IOC_DIRSHIFT));
+		reject_command(commands[c] ^ (1U << _IOC_SIZESHIFT));
+		reject_command(_IOC(_IOC_DIR(commands[c]), 0xff,
+				    _IOC_NR(commands[c]), _IOC_SIZE(commands[c])));
+	}
+}
+
+static void debug_command_routing(void)
+{
+	/* Freeze the historical encoding, including the read command's _IOW. */
+	const unsigned int commands[] = {
+		_IOW(MAGIC_READ_CL, 0x91, uint32_t *),
+		_IOW(MAGIC_WRITE_CL, 0x91, uint32_t *)
+	};
+	for (size_t c = 0; c < COUNT(commands); ++c) {
+		u32 value[10] = {0x51, 0x07, 0x34};
 		reset();
-		assert(ioctl_value(commands[c], &value) == 0);
-		assert(value == 0x12345678 && method_calls == 0 && interface_calls == 0);
-		assert(input_copies == 0 && output_copies == 0 && sleeps == 0 && uniwill_calls == 1);
+		uniwill_status = -EIO;
+#ifdef DEBUG
+		assert(ioctl_value(commands[c], value) == -EIO);
+		assert(uniwill_calls == 1 && uniwill_command == commands[c]);
+		assert(uniwill_argument == (unsigned long)value);
+#else
+		assert(ioctl_value(commands[c], value) == -ENOTTY);
+		assert(uniwill_calls == 0);
+#endif
+		assert(clevo_ioctl_interface(NULL, commands[c], (unsigned long)value) == -ENOTTY);
+		assert(method_calls == 0 && interface_calls == 0);
+		assert(input_copies == 0 && output_copies == 0 && sleeps == 0);
+		reject_command(commands[c] ^ ((unsigned int)_IOC_READ << _IOC_DIRSHIFT));
+		reject_command(commands[c] ^ (1U << _IOC_SIZESHIFT));
 	}
 }
 
@@ -434,5 +490,7 @@ int main(int argc, char **argv)
 	CASE(webcam_set)
 	CASE(webcam_dmi)
 	CASE(unknown_commands)
+	CASE(malformed_commands)
+	CASE(debug_command_routing)
 	assert(!"Unknown testcase");
 }

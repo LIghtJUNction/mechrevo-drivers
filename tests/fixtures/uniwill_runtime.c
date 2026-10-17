@@ -210,6 +210,16 @@ static void reset_mode_access(void)
 	ec_reads = ec_writes = mode_calls = mode_update_calls = 0;
 }
 
+static void reject_command(unsigned int cmd)
+{
+	u32 value[16] = {0xdeadbeef};
+	assert(IOCTL(cmd, value) == -ENOTTY);
+	assert(uniwill_ioctl_interface(NULL, cmd, (unsigned long)value) == -ENOTTY);
+	assert(value[0] == 0xdeadbeef && input_copies == 0 && copy_attempts == 0);
+	assert(ec_reads == 0 && ec_writes == 0 && fan_calls == 0 && fan_auto_calls == 0);
+	assert(mode_calls == 0 && mode_update_calls == 0 && clevo_calls == 0);
+}
+
 int main(int argc, char **argv)
 {
 	assert(argc == 2);
@@ -302,8 +312,8 @@ int main(int argc, char **argv)
 		interface_status = -ENODEV;
 		assert(IOCTL(R_UW_HW_IF_STR, value) == -EFAULT);
 		assert(value == 0xdeadbeef && copies == 0 && copy_attempts == 15);
-		/* Generic output faults return before invoking either hardware dispatch. */
-		assert(clevo_calls == 12);
+		/* Neither generic nor Uniwill commands invoke the Clevo dispatch. */
+		assert(clevo_calls == 0);
 	} else if (strcmp(test, "read_metadata_success") == 0) {
 		char text[32];
 		assert(IOCTL(R_MOD_VERSION, text) == 0 && strcmp(text, "test") == 0);
@@ -342,6 +352,8 @@ int main(int argc, char **argv)
 		}
 		assert(fan_calls == 512 && input_copies == 512);
 		assert(IOCTL(W_UW_FANAUTO, value) == 0 && fan_auto_calls == 1);
+		assert(fop_ioctl(NULL, W_UW_FANAUTO, 0) == 0 && fan_auto_calls == 2);
+		assert(input_copies == 512);
 	} else if (strcmp(test, "fan_write_out_of_range") == 0) {
 		const u32 invalid_values[] = {256, UINT32_MAX};
 		for (size_t i = 0; i < COUNT(invalid_values); ++i) {
@@ -599,11 +611,40 @@ int main(int argc, char **argv)
 			}
 		}
 		assert(ec_reads == 0 && ec_writes == 0 && mode_update_calls == 0 && mode_calls == 0);
-	} else if (strcmp(test, "unchanged_noop_dispatch") == 0) {
+	} else if (strcmp(test, "mode_enable_noop") == 0) {
 		assert(IOCTL(W_UW_MODE_ENABLE, value) == 0);
-		assert(IOCTL(0xffffffffU, value) == 0);
-		assert(input_copies == 0 && ec_reads == 0 && ec_writes == 0);
+		assert(fop_ioctl(NULL, W_UW_MODE_ENABLE, 0) == 0);
+		assert(value == 0xdeadbeef && input_copies == 0 && copy_attempts == 0);
+		assert(ec_reads == 0 && ec_writes == 0 && fan_calls == 0 && fan_auto_calls == 0);
 		assert(mode_calls == 0 && mode_update_calls == 0);
+	} else if (strcmp(test, "unknown_commands") == 0) {
+		const unsigned int commands[] = {
+			0, 0xffffffff, _IOR(IOCTL_MAGIC, 0xfe, int32_t *),
+			_IOR(MAGIC_READ_UW, 0xfe, int32_t *),
+			_IOW(MAGIC_WRITE_UW, 0xfe, int32_t *)
+		};
+		for (size_t i = 0; i < COUNT(commands); ++i)
+			reject_command(commands[i]);
+		const unsigned int foreign_commands[] = {R_MOD_VERSION, R_CL_FANINFO1, W_CL_FANSPEED};
+		for (size_t i = 0; i < COUNT(foreign_commands); ++i)
+			assert(uniwill_ioctl_interface(NULL, foreign_commands[i], 0) == -ENOTTY);
+	} else if (strcmp(test, "malformed_commands") == 0) {
+		const unsigned int commands[] = {
+			R_UW_HW_IF_STR, R_UW_MODEL_ID, R_UW_FANSPEED, R_UW_FANSPEED2,
+			R_UW_FAN_TEMP, R_UW_FAN_TEMP2, R_UW_MODE, R_UW_MODE_ENABLE,
+			R_UW_FANS_OFF_AVAILABLE, R_UW_FANS_MIN_SPEED,
+			R_UW_TDP0, R_UW_TDP1, R_UW_TDP2,
+			R_UW_TDP0_MIN, R_UW_TDP1_MIN, R_UW_TDP2_MIN,
+			R_UW_TDP0_MAX, R_UW_TDP1_MAX, R_UW_TDP2_MAX, R_UW_PROFS_AVAILABLE,
+			W_UW_FANSPEED, W_UW_FANSPEED2, W_UW_MODE, W_UW_MODE_ENABLE,
+			W_UW_FANAUTO, W_UW_TDP0, W_UW_TDP1, W_UW_TDP2, W_UW_PERF_PROF
+		};
+		for (size_t i = 0; i < COUNT(commands); ++i) {
+			reject_command(commands[i] ^ ((unsigned int)_IOC_READ << _IOC_DIRSHIFT));
+			reject_command(commands[i] ^ (1U << _IOC_SIZESHIFT));
+			reject_command(_IOC(_IOC_DIR(commands[i]), 0xff,
+					    _IOC_NR(commands[i]), _IOC_SIZE(commands[i])));
+		}
 #ifdef DEBUG
 	} else if (strcmp(test, "debug_copy_from_faults") == 0) {
 		u32 args[10] = {0x51, 0x07, 0x34};
@@ -637,5 +678,6 @@ int main(int argc, char **argv)
 	} else {
 		return 2;
 	}
+	assert(clevo_calls == 0);
 	return 0;
 }

@@ -121,8 +121,14 @@ class ClevoIoctlRuntime(unittest.TestCase):
     def test_disabled_webcam_dmi_models_keep_read_write_policy(self):
         self.check_case("webcam_dmi")
 
-    def test_unknown_and_unused_debug_commands_keep_existing_behavior(self):
+    def test_unknown_commands_return_enotty_without_user_copy_or_hardware_access(self):
         self.check_case("unknown_commands")
+
+    def test_all_clevo_and_generic_commands_reject_wrong_direction_size_and_type(self):
+        self.check_case("malformed_commands")
+
+    def test_debug_aliases_only_route_to_uniwill_in_debug_builds(self):
+        self.check_case("debug_command_routing")
 
 
 if __name__ == "__main__":
