@@ -2,6 +2,7 @@
 //! Exercise the actual desktop renderer without a window server or hardware access.
 //! Optional PNG captures are generated from egui's own meshes and font atlas; fixtures
 //! never enter the application startup path. Set MECHREVO_GUI_CAPTURE_DIR to capture.
+//! MECHREVO_GUI_CAPTURE_MATCH optionally selects comma-separated filename substrings.
 use eframe::egui::{self, pos2, vec2, ColorImage, Context, FullOutput, RawInput, Rect, TextureId};
 use egui_system_font_provider::SystemFontProvider;
 use mechrevo_console_core::{
@@ -32,10 +33,15 @@ impl Backend for FixtureBackend {
 
 fn fixture(case: &str) -> DesktopApp {
     let long = "VeryLongUnbrokenHardwareIdentifier0123456789".repeat(5);
+    let source_path = if case == "multi_gpu" {
+        format!("fixture://{long}/hwmon/{long}/temp1_input")
+    } else {
+        "fixture://只读测试".into()
+    };
     let sensor = |id: String, label: String, device: String, value: Option<f64>| {
         json!({
             "id":id, "label":label, "device_id":device, "kind":"temperature", "value":value,
-            "unit":"°C", "source":{"backend":"fixture-only", "path":"fixture://只读测试", "device_id":device},
+            "unit":"°C", "source":{"backend":"fixture-only", "path":source_path, "device_id":device},
             "status":if value.is_some() { "available" } else { "unavailable" },
             "reason":if value.is_some() { None } else { Some("当前设备没有提供温度读数；不会把未知数值显示成零。") }
         })
@@ -58,7 +64,7 @@ fn fixture(case: &str) -> DesktopApp {
             },
         ));
     }
-    let snapshot: Snapshot = serde_json::from_value(json!({
+    let mut snapshot: Snapshot = serde_json::from_value(json!({
         "platform":"fixture-only / 非真实硬件", "identity":{
             "manufacturer":"机械革命 / TEST FIXTURE", "product_name":format!("旷世水冷 {long}"),
             "product_version":"测试型号", "board_name":format!("TEST-BOARD-{long}"),
@@ -77,6 +83,18 @@ fn fixture(case: &str) -> DesktopApp {
         "power_policy":{"scope":"操作系统 / 不修改 OEM 固件", "current":"balanced", "options":["balanced", "performance", "power-saver"], "source":null},
         "diagnostics":[{"code":"fixture_only", "message":format!("诊断信息包含长路径：{long}，需要完整换行展示。")}]
     })).unwrap();
+    if case == "no_telemetry" {
+        // Missing hardware identity and a wholly empty sensor inventory are
+        // different from individual GPU readings being unavailable.
+        snapshot.identity = Default::default();
+        snapshot.telemetry.clear();
+        snapshot.power_policy.current = None;
+        snapshot.power_policy.options.clear();
+        for capability in &mut snapshot.capabilities {
+            capability.status = mechrevo_console_core::CapabilityStatus::Unavailable;
+            capability.options.clear();
+        }
+    }
     let mut controller = Controller::new(FixtureBackend(snapshot.clone())).unwrap();
     controller.snapshot = Some(snapshot);
     if case == "error" {
@@ -179,6 +197,21 @@ impl Harness {
         (metrics.unwrap(), output)
     }
     fn capture(&self, output: FullOutput, path: &Path) {
+        // Limit optional PNG artifacts without skipping a render or assertion.
+        if let Ok(filter) = std::env::var("MECHREVO_GUI_CAPTURE_MATCH") {
+            let patterns: Vec<_> = filter
+                .split(',')
+                .map(str::trim)
+                .filter(|pattern| !pattern.is_empty())
+                .collect();
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if !patterns.is_empty() && !patterns.iter().any(|pattern| filename.contains(pattern)) {
+                return;
+            }
+        }
         let [width, height] = self.physical;
         let mut pixels = vec![[27, 29, 34, 255]; (width * height) as usize];
         for primitive in self.ctx.tessellate(output.shapes, output.pixels_per_point) {
@@ -333,7 +366,13 @@ fn responsive_layout_and_last_action_are_accessible_at_every_dpi() {
                 assert_layout(&label, &mut app, &mut harness, capture.as_deref(), true);
                 verified += 1;
             }
-            for case in ["settings_open", "sensor_sources", "catalog"] {
+            for case in [
+                "settings_open",
+                "sensor_sources",
+                "catalog",
+                "empty_dashboard",
+                "empty_sensors",
+            ] {
                 let label = format!(
                     "logical{}x{}-physical{}x{}-dpi{}-{case}",
                     logical[0],
@@ -342,28 +381,55 @@ fn responsive_layout_and_last_action_are_accessible_at_every_dpi() {
                     physical[1],
                     (dpi * 100.0) as u32
                 );
-                let mut app = fixture(if case == "sensor_sources" {
-                    "multi_gpu"
-                } else {
-                    "long_names"
+                let mut app = fixture(match case {
+                    "sensor_sources" => "multi_gpu",
+                    "empty_dashboard" | "empty_sensors" => "no_telemetry",
+                    _ => "long_names",
                 });
                 match case {
                     "settings_open" => {
                         app.preferences.text_scale = 1.6;
                         app.open_display_settings();
                     }
-                    "sensor_sources" => app.select_section(Section::Sensors),
+                    "sensor_sources" | "empty_sensors" => app.select_section(Section::Sensors),
                     "catalog" => app.select_section(Section::Catalog),
+                    "empty_dashboard" => {}
                     _ => unreachable!(),
                 }
                 let mut harness = Harness::new(physical, dpi, fonts.clone());
+                if case == "sensor_sources" {
+                    assert_source_details_expand(&label, &mut app, &mut harness);
+                }
                 assert_layout(&label, &mut app, &mut harness, capture.as_deref(), false);
                 verified += 1;
             }
         }
     }
-    assert_eq!(verified, 64);
-    println!("Verified {verified} rendered layouts: 4 DPI scales x 2 logical window sizes (native physical pixels = logical size x DPI) x 8 states/views; Chinese missing-glyph policy=Panic; last marker reachable.");
+    assert_eq!(verified, 80);
+    println!("Verified {verified} rendered layouts: 4 DPI scales x 2 logical window sizes (native physical pixels = logical size x DPI) x 10 states/views; Chinese missing-glyph policy=Panic; long source paths wrap; empty telemetry is safe; last marker reachable.");
+}
+
+fn assert_source_details_expand(label: &str, app: &mut DesktopApp, harness: &mut Harness) {
+    app.set_source_details_expanded(false);
+    let mut collapsed = RenderMetrics::default();
+    for _ in 0..4 {
+        collapsed = harness.frame(app).0;
+    }
+    assert_width(label, &collapsed);
+    // Exercise the same state change as the user-facing source-details button.
+    // The real layout must grow; a flag that never renders the paths cannot pass.
+    app.set_source_details_expanded(true);
+    let mut expanded = RenderMetrics::default();
+    for _ in 0..4 {
+        expanded = harness.frame(app).0;
+    }
+    assert_width(label, &expanded);
+    assert!(
+        expanded.content_size.y > collapsed.content_size.y + 20.0,
+        "{label}: source details did not expand the actual rendered content: collapsed={:?}, expanded={:?}",
+        collapsed.content_size,
+        expanded.content_size
+    );
 }
 
 fn assert_layout(

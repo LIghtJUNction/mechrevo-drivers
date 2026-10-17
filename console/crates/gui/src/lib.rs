@@ -102,9 +102,9 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             display_mode: DisplayMode::Standard,
-            theme: Theme::System,
+            theme: Theme::Dark,
             text_scale: 1.0,
-            auto_refresh: false,
+            auto_refresh: true,
         }
     }
 }
