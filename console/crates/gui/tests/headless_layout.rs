@@ -13,7 +13,12 @@ use mechrevo_console_gui::{
     Backend, Controller, DisplayMode, Preferences, Theme,
 };
 use serde_json::json;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 struct FixtureBackend(Snapshot);
 impl Backend for FixtureBackend {
@@ -559,6 +564,376 @@ fn assert_page_title(output: &FullOutput, title: &str) {
     );
 }
 
+fn rendered_shapes(output: &FullOutput) -> Vec<&egui::Shape> {
+    fn collect<'a>(shape: &'a egui::Shape, leaves: &mut Vec<&'a egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect(shape, leaves);
+                }
+            }
+            _ => leaves.push(shape),
+        }
+    }
+    let mut leaves = Vec::new();
+    for shape in &output.shapes {
+        collect(&shape.shape, &mut leaves);
+    }
+    leaves
+}
+
+fn rendered_text(output: &FullOutput) -> Vec<&egui::epaint::TextShape> {
+    rendered_shapes(output)
+        .into_iter()
+        .filter_map(|shape| match shape {
+            egui::Shape::Text(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+fn has_visible_text(output: &FullOutput, value: &str) -> bool {
+    rendered_text(output)
+        .iter()
+        .any(|shape| shape.galley.job.text == value)
+}
+
+fn settle(harness: &mut Harness, app: &mut DesktopApp) -> (RenderMetrics, FullOutput) {
+    for _ in 0..3 {
+        harness.frame(app);
+    }
+    harness.frame(app)
+}
+
+fn set_sample(app: &mut DesktopApp, time: Instant, cpu: f64, gpu: Option<f64>) {
+    app.controller.last_refresh = Some(time);
+    for reading in &mut app.controller.snapshot.as_mut().unwrap().telemetry {
+        match reading.id.as_str() {
+            "cpu_temp" => reading.value = Some(cpu),
+            // A wholly unavailable GPU must never leave a stale chart endpoint.
+            "gpu0_temp" | "gpu1_temp" => reading.value = gpu,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn trend_requires_real_samples_and_labels_elapsed_time_and_current_endpoints() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let mut app = fixture("representative");
+    app.preferences.auto_refresh = false;
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let start = Instant::now() - Duration::from_secs(120);
+
+    set_sample(&mut app, start, 61.0, Some(47.0));
+    let (_, output) = settle(&mut harness, &mut app);
+    assert!(has_visible_text(&output, "正在积累趋势"));
+    assert!(
+        rendered_text(&output)
+            .iter()
+            .any(|shape| shape.galley.job.text.contains("手动更新")),
+        "manual sampling should describe the collected state without a frozen relative age"
+    );
+    // settle renders the same observation four times. Repaints are not samples.
+    assert!(!has_visible_text(&output, "最近 0 秒"));
+
+    set_sample(&mut app, start + Duration::from_secs(3), 64.0, Some(49.0));
+    let (_, output) = settle(&mut harness, &mut app);
+    assert!(
+        has_visible_text(&output, "正在积累趋势"),
+        "two observations should not present an almost empty line as a mature trend"
+    );
+    assert!(!has_visible_text(&output, "最近 3 秒"));
+
+    set_sample(&mut app, start + Duration::from_secs(6), 68.0, Some(52.0));
+    let (_, output) = settle(&mut harness, &mut app);
+    assert!(!has_visible_text(&output, "正在积累趋势"));
+    for label in ["最近 6 秒", "CPU 68°C", "GPU 52°C"] {
+        assert!(
+            has_visible_text(&output, label),
+            "missing trend label '{label}'"
+        );
+        assert_page_title(&output, label);
+    }
+
+    set_sample(&mut app, start + Duration::from_secs(65), 66.0, None);
+    let (_, output) = settle(&mut harness, &mut app);
+    for label in ["最近 1 分 05 秒", "CPU 66°C", "GPU —"] {
+        assert!(
+            has_visible_text(&output, label),
+            "missing updated trend label '{label}'"
+        );
+    }
+    assert!(!has_visible_text(&output, "GPU 52°C"));
+
+    // A different device begins a new history, even if its sensor IDs match.
+    app.controller
+        .snapshot
+        .as_mut()
+        .unwrap()
+        .identity
+        .product_name = Some("另一台测试设备".into());
+    let (_, output) = settle(&mut harness, &mut app);
+    assert!(has_visible_text(&output, "正在积累趋势"));
+    assert!(!has_visible_text(&output, "最近 1 分 05 秒"));
+}
+
+#[test]
+fn temperature_digits_and_unit_do_not_shift_between_equal_length_readings() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let mut app = fixture("representative");
+    app.preferences.auto_refresh = false;
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let start = Instant::now() - Duration::from_secs(60);
+    let mut reference: Option<(Rect, f32)> = None;
+    for (sample, value) in [11.0, 22.0, 88.0, 99.0].into_iter().enumerate() {
+        set_sample(
+            &mut app,
+            start + Duration::from_secs(sample as u64 * 3),
+            value,
+            Some(49.0),
+        );
+        let (_, output) = settle(&mut harness, &mut app);
+        let text = rendered_text(&output);
+        let value = format!("{value:.0}");
+        let number = text
+            .iter()
+            .find(|shape| {
+                shape.galley.job.text == value
+                    && shape
+                        .galley
+                        .job
+                        .sections
+                        .iter()
+                        .any(|section| section.format.font_id.size >= 40.0)
+            })
+            .expect("the actual primary temperature must remain a large, visible reading");
+        let bounds = number.galley.rect.translate(number.pos.to_vec2());
+        let unit = text
+            .iter()
+            .filter(|shape| shape.galley.job.text == "°C" && shape.pos.x >= bounds.right())
+            .min_by(|a, b| {
+                a.pos
+                    .distance_sq(bounds.center())
+                    .total_cmp(&b.pos.distance_sq(bounds.center()))
+            })
+            .expect("the temperature unit should sit beside its value");
+        if let Some((previous, unit_x)) = reference {
+            assert!(
+                (bounds.width() - previous.width()).abs() <= 0.1
+                    && (bounds.left() - previous.left()).abs() <= 0.1
+                    && (unit.pos.x - unit_x).abs() <= 0.1,
+                "equal-length readings shift the numeric width or unit: {value}, previous={previous:?}, current={bounds:?}, unit {unit_x} -> {}",
+                unit.pos.x
+            );
+        } else {
+            reference = Some((bounds, unit.pos.x));
+        }
+    }
+}
+
+#[test]
+fn auto_sampling_switch_exposes_state_and_accepts_pointer_and_keyboard() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let mut app = fixture("representative");
+    app.preferences.auto_refresh = false;
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let (_, mut output) = settle(&mut harness, &mut app);
+    let (switch_id, bounds) =
+        accessible_control(&output, "自动采样", egui::accesskit::Role::Switch);
+    assert!(Rect::from_min_size(pos2(0.0, 0.0), vec2(1120.0, 760.0)).contains_rect(bounds));
+    let assert_state = |output: &FullOutput, enabled| {
+        let (_, node) = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == switch_id)
+            .expect("sampling switch must stay in the accessibility tree");
+        assert_eq!(
+            node.toggled(),
+            Some(if enabled {
+                egui::accesskit::Toggled::True
+            } else {
+                egui::accesskit::Toggled::False
+            })
+        );
+    };
+    assert_state(&output, false);
+    output = click(&mut harness, &mut app, bounds.center());
+    assert!(app.preferences.auto_refresh);
+    assert_state(&output, true);
+
+    let mut focused = false;
+    for _ in 0..24 {
+        output = key(&mut harness, &mut app, egui::Key::Tab);
+        if output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .focus
+            == switch_id
+        {
+            focused = true;
+            break;
+        }
+    }
+    assert!(focused, "keyboard focus never reached the sampling switch");
+    output = key(&mut harness, &mut app, egui::Key::Space);
+    assert!(!app.preferences.auto_refresh);
+    assert_state(&output, false);
+}
+
+#[test]
+fn overview_gives_compact_space_to_real_device_readings() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    for physical in [[1120, 760], [1280, 720]] {
+        let mut app = fixture("representative");
+        let snapshot = app.controller.snapshot.as_mut().unwrap();
+        for (id, label, value) in [
+            ("cpu_fan", "mechrevo_ec: CPU Fan", 2600.0),
+            ("gpu_fan", "mechrevo_ec: GPU Fan", 3800.0),
+        ] {
+            snapshot.telemetry.push(
+                serde_json::from_value(json!({
+                    "id":id, "label":label, "device_id":"fixture-fans", "kind":"fan_speed",
+                    "value":value, "unit":"RPM", "status":"available", "reason":null,
+                    "source":{"backend":"fixture-only", "path":"fixture://fans", "device_id":"fixture-fans"}
+                }))
+                .unwrap(),
+            );
+        }
+        let mut harness = Harness::new(physical, 1.0, fonts.clone());
+        let (metrics, output) = settle(&mut harness, &mut app);
+        assert_page_title(&output, "设备概览");
+        let text = rendered_text(&output);
+        let title = text
+            .iter()
+            .find(|shape| shape.galley.job.text == "设备概览")
+            .unwrap();
+        assert!(title
+            .galley
+            .job
+            .sections
+            .iter()
+            .all(|section| { (32.0..=36.0).contains(&section.format.font_id.size) }));
+        assert!(
+            metrics.heading_rect.is_finite() && metrics.heading_rect.height() <= 80.0,
+            "device heading consumes the compact overview: {:?}",
+            metrics.heading_rect
+        );
+        let panel = metrics.thermal_panel_rect;
+        assert!(
+            panel.is_finite() && (240.0..=290.0).contains(&panel.height()),
+            "thermal card with two actual fan readings is no longer compact: {panel:?}"
+        );
+        let (_, navigation) = accessible_control(&output, "概览", egui::accesskit::Role::Button);
+        assert!(
+            panel.top() - navigation.bottom() <= 112.0,
+            "too much space between navigation and device readings: {}",
+            panel.top() - navigation.bottom()
+        );
+        for label in ["CPU", "GPU", "2600", "3800"] {
+            assert!(
+                has_visible_text(&output, label),
+                "reading '{label}' disappeared"
+            );
+        }
+        // Compactness must not be achieved by reducing the key readings to body text.
+        for value in ["64", "49"] {
+            assert!(text.iter().any(|shape| {
+                shape.galley.job.text == value
+                    && shape
+                        .galley
+                        .job
+                        .sections
+                        .iter()
+                        .any(|section| section.format.font_id.size >= 40.0)
+            }));
+        }
+        let label_bounds = |value: &str| {
+            let shape = text
+                .iter()
+                .find(|shape| shape.galley.job.text == value)
+                .unwrap();
+            shape.galley.rect.translate(shape.pos.to_vec2())
+        };
+        let shapes = rendered_shapes(&output);
+        let heading_card = |heading: Rect| {
+            shapes
+                .iter()
+                .filter_map(|shape| match shape {
+                    egui::Shape::Rect(rect)
+                        if rect.fill.a() > 0
+                            && rect.rect.width() >= 200.0
+                            && rect.rect.height() >= 70.0
+                            && rect.rect.contains_rect(heading) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+                .expect("control heading must belong to a painted card")
+        };
+        let power_heading = label_bounds("系统电源策略");
+        let brightness_heading = label_bounds("屏幕亮度");
+        let power_card = heading_card(power_heading);
+        let brightness_card = heading_card(brightness_heading);
+        let card_gap = brightness_card.left() - power_card.right();
+        assert!(
+            (12.0..=24.0).contains(&card_gap),
+            "independent control cards must have visible breathing room: power={power_card:?}, brightness={brightness_card:?}, gap={card_gap}"
+        );
+        let cpu = label_bounds("64");
+        let gpu = label_bounds("49");
+        let cpu_fan = label_bounds("2600");
+        let gpu_fan = label_bounds("3800");
+        for (fan, own, other) in [(cpu_fan, cpu, gpu), (gpu_fan, gpu, cpu)] {
+            assert!(
+                fan.top() >= own.bottom()
+                    && (fan.center().x - own.center().x).abs()
+                        < (fan.center().x - other.center().x).abs(),
+                "a named fan should be beside its own component, not grouped under the other one"
+            );
+        }
+        println!(
+            "Compact overview {}x{}: heading {:.1}px, thermal card {:.1}px, navigation-to-card {:.1}px, control-card gap {:.1}px; named fan readings belong to their components.",
+            physical[0],
+            physical[1],
+            metrics.heading_rect.height(),
+            panel.height(),
+            panel.top() - navigation.bottom(),
+            card_gap
+        );
+
+        // A generic index provides no CPU/GPU ownership. Its reading stays on
+        // a separate row rather than being assigned by order or numeric ID.
+        app.controller.snapshot.as_mut().unwrap().telemetry.push(
+            serde_json::from_value(json!({
+                "id":"fan3", "label":"System fan 3", "device_id":"fixture-fans", "kind":"fan_speed",
+                "value":1700.0, "unit":"RPM", "status":"available", "reason":null,
+                "source":{"backend":"fixture-only", "path":"fixture://fans/3", "device_id":"fixture-fans"}
+            }))
+            .unwrap(),
+        );
+        let (_, output) = settle(&mut harness, &mut app);
+        let text = rendered_text(&output);
+        let generic = text
+            .iter()
+            .find(|shape| shape.galley.job.text == "1700")
+            .expect("unassigned fan reading must remain visible");
+        assert!(has_visible_text(&output, "System fan 3"));
+        assert!(
+            generic.pos.y > cpu_fan.bottom().max(gpu_fan.bottom()),
+            "an unassigned fan was presented as a CPU/GPU fan"
+        );
+    }
+}
+
 fn assert_selected_navigation(output: &FullOutput, selected: &str) {
     let nodes = &output
         .platform_output
@@ -658,9 +1033,9 @@ fn wrapped_navigation_accepts_pointer_and_keyboard_at_minimum_window_size() {
         output = harness.frame(&mut app).1;
     }
     for (label, title) in [
-        ("型号目录", "Discover."),
-        ("传感器", "Observe."),
-        ("概览", "Control."),
+        ("型号目录", "型号目录"),
+        ("传感器", "传感器"),
+        ("概览", "设备概览"),
     ] {
         let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
         output = click(&mut harness, &mut app, rect.center());

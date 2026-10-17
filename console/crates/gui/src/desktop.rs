@@ -9,8 +9,8 @@ use std::{
 
 const BACKGROUND: Color32 = Color32::from_rgb(23, 24, 24);
 const PANEL: Color32 = Color32::from_rgb(31, 32, 31);
-const FOREGROUND: Color32 = Color32::from_rgb(241, 239, 231);
-const SUBTLE: Color32 = Color32::from_rgb(164, 165, 157);
+const FOREGROUND: Color32 = Color32::from_rgb(246, 246, 243);
+const SUBTLE: Color32 = Color32::from_rgb(164, 167, 169);
 const GREEN: Color32 = Color32::from_rgb(167, 192, 140);
 const AMBER: Color32 = Color32::from_rgb(221, 187, 124);
 const ERROR: Color32 = Color32::from_rgb(237, 154, 140);
@@ -22,6 +22,8 @@ pub struct RenderMetrics {
     pub viewport: Rect,
     pub bottom_marker: Rect,
     pub scroll_offset: Vec2,
+    pub heading_rect: Rect,
+    pub thermal_panel_rect: Rect,
 }
 impl Default for RenderMetrics {
     fn default() -> Self {
@@ -30,6 +32,8 @@ impl Default for RenderMetrics {
             viewport: Rect::NOTHING,
             bottom_marker: Rect::NOTHING,
             scroll_offset: Vec2::ZERO,
+            heading_rect: Rect::NOTHING,
+            thermal_panel_rect: Rect::NOTHING,
         }
     }
 }
@@ -252,7 +256,7 @@ impl DesktopApp {
                     .insert(egui::TextStyle::Button, FontId::proportional(14.0));
                 style
                     .text_styles
-                    .insert(egui::TextStyle::Small, FontId::proportional(12.0));
+                    .insert(egui::TextStyle::Small, FontId::proportional(13.0));
                 for widget in [
                     &mut style.visuals.widgets.inactive,
                     &mut style.visuals.widgets.hovered,
@@ -353,9 +357,9 @@ impl DesktopApp {
                 if self.motion_enabled { 0.2 } else { 0.0 },
             );
             let fill = if ui.visuals().dark_mode {
-                Color32::from_white_alpha((5.0 + 13.0 * t) as u8)
+                Color32::from_white_alpha((18.0 * t) as u8)
             } else {
-                Color32::from_black_alpha((3.0 + 8.0 * t) as u8)
+                Color32::from_black_alpha((11.0 * t) as u8)
             };
             let response = ui.add(
                 egui::Button::new(RichText::new(label).size(13.0).color(if selected {
@@ -366,7 +370,7 @@ impl DesktopApp {
                 .selected(selected)
                 .fill(fill)
                 .stroke(Stroke::NONE)
-                .corner_radius(20.0),
+                .corner_radius(9.0),
             );
             if response.clicked() {
                 self.section = section;
@@ -375,7 +379,12 @@ impl DesktopApp {
     }
 
     fn main_content(&mut self, ui: &mut egui::Ui) -> RenderMetrics {
+        // The outer centering row has zero spacing; content widgets must not
+        // inherit that structural setting.
+        ui.spacing_mut().item_spacing.x = 10.0;
         let mut bottom_marker = Rect::NOTHING;
+        let mut heading_rect = Rect::NOTHING;
+        let mut thermal_panel_rect = Rect::NOTHING;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("console-content")
             .auto_shrink([false, false]);
@@ -390,15 +399,11 @@ impl DesktopApp {
                 self.display_settings(ui);
             }
             self.feedback(ui);
-            ui.add_space(if ui.available_width() > 600.0 {
-                20.0
-            } else {
-                18.0
-            });
-            self.editorial_heading(ui);
-            ui.add_space(20.0);
+            ui.add_space(8.0);
+            heading_rect = ui.scope(|ui| self.editorial_heading(ui)).response.rect;
+            ui.add_space(8.0);
             match self.section {
-                Section::Dashboard => self.dashboard(ui),
+                Section::Dashboard => thermal_panel_rect = self.dashboard(ui),
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
             }
@@ -408,7 +413,7 @@ impl DesktopApp {
             bottom_marker = ui
                 .label(
                     RichText::new("开发预览 0.1  /  只读监测 · 系统控制需预览、应用并回读")
-                        .size(11.0)
+                        .size(13.0)
                         .color(secondary(ui)),
                 )
                 .rect;
@@ -419,6 +424,8 @@ impl DesktopApp {
             viewport: output.inner_rect,
             bottom_marker,
             scroll_offset: output.state.clamped_offset(),
+            heading_rect,
+            thermal_panel_rect,
         }
     }
 
@@ -429,11 +436,7 @@ impl DesktopApp {
             ui.spacing_mut().item_spacing.x = 10.0;
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
             icon(ui.painter(), rect, Icon::Brand, foreground(ui));
-            ui.label(
-                RichText::new("MECHREVO")
-                    .font(appearance::number_font(12.0))
-                    .strong(),
-            );
+            ui.label(RichText::new("MECHREVO").font(appearance::display_font(19.0)));
             ui.add_space(if wide { 20.0 } else { 6.0 });
             self.navigation(ui);
             if wide {
@@ -447,7 +450,7 @@ impl DesktopApp {
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| self.header_actions(ui));
         }
-        ui.add_space(14.0);
+        ui.add_space(6.0);
         ui.separator();
     }
 
@@ -455,7 +458,7 @@ impl DesktopApp {
         ui.spacing_mut().item_spacing.x = 10.0;
         let response = ui.add_enabled(
             !self.controller.busy() && self.controller.worker_available,
-            egui::Button::new(RichText::new("刷新").size(12.0))
+            egui::Button::new(RichText::new("刷新").size(13.0))
                 .min_size(Vec2::new(80.0, 34.0))
                 .frame(false),
         );
@@ -472,31 +475,10 @@ impl DesktopApp {
         if response.clicked() {
             let _ = self.controller.refresh();
         }
-        let auto = self.preferences.auto_refresh;
-        let response = ui
-            .add(
-                egui::Button::new(RichText::new("自动采样").size(12.0).color(secondary(ui)))
-                    .min_size(Vec2::new(94.0, 34.0))
-                    .selected(auto)
-                    .fill(if ui.visuals().dark_mode {
-                        Color32::from_white_alpha(7)
-                    } else {
-                        Color32::from_black_alpha(4)
-                    })
-                    .stroke(Stroke::new(0.7, divider(ui)))
-                    .corner_radius(18.0),
-            )
+        sampling_switch(ui, &mut self.preferences.auto_refresh, self.motion_enabled)
             .on_hover_text("每 3 秒只读采集；预览操作期间暂停");
-        ui.painter().circle_filled(
-            egui::pos2(response.rect.left() + 12.0, response.rect.center().y),
-            2.5,
-            if auto { green(ui) } else { secondary(ui) },
-        );
-        if response.clicked() {
-            self.preferences.auto_refresh = !auto;
-        }
         if ui
-            .add(egui::Button::new(RichText::new("显示设置").size(12.0)).frame(false))
+            .add(egui::Button::new(RichText::new("显示设置").size(13.0)).frame(false))
             .clicked()
         {
             self.display_settings_open = !self.display_settings_open;
@@ -505,49 +487,36 @@ impl DesktopApp {
 
     fn editorial_heading(&self, ui: &mut egui::Ui) {
         let wide = ui.available_width() >= 660.0;
-        let (title, subtitle, eyebrow) = match self.section {
-            Section::Dashboard => ("Control.", "从容，掌控。", "YOUR DEVICE, AT A GLANCE"),
-            Section::Sensors => ("Observe.", "每个读数，都有来处。", "LIVE TELEMETRY"),
-            Section::Catalog => (
-                "Discover.",
-                "找到属于你的那一台。",
-                "THE MECHREVO COLLECTION",
-            ),
+        let title = match self.section {
+            Section::Dashboard => "设备概览",
+            Section::Sensors => "传感器",
+            Section::Catalog => "型号目录",
         };
-        ui.label(
-            RichText::new(eyebrow)
-                .font(appearance::number_font(10.0))
-                .color(secondary(ui)),
-        );
-        ui.add_space(2.0);
         if wide {
             let width = ui.available_width();
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 24.0;
+                ui.spacing_mut().item_spacing.x = 20.0;
                 ui.allocate_ui_with_layout(
-                    Vec2::new(width * 0.62 - 12.0, 0.0),
+                    Vec2::new(width * 0.43 - 10.0, 0.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        ui.set_width(width * 0.62 - 12.0);
-                        ui.label(RichText::new(title).font(appearance::display_font(60.0)));
-                        ui.label(RichText::new(subtitle).size(15.0).color(secondary(ui)));
+                        ui.set_width(width * 0.43 - 10.0);
+                        ui.label(RichText::new(title).size(34.0));
                     },
                 );
                 ui.allocate_ui_with_layout(
-                    Vec2::new(width * 0.38 - 12.0, 0.0),
+                    Vec2::new(width * 0.57 - 10.0, 0.0),
                     egui::Layout::top_down(egui::Align::Max),
                     |ui| {
-                        ui.set_width(width * 0.38 - 12.0);
-                        ui.add_space(18.0);
+                        ui.set_width(width * 0.57 - 10.0);
+                        ui.add_space(3.0);
                         self.device_caption(ui);
                     },
                 );
             });
         } else {
-            let title_size = 54.0_f32.min((ui.available_width() / 4.3).max(25.0));
-            ui.label(RichText::new(title).font(appearance::display_font(title_size)));
-            ui.label(RichText::new(subtitle).size(17.0).color(secondary(ui)));
-            ui.add_space(14.0);
+            ui.label(RichText::new(title).size(34.0));
+            ui.add_space(5.0);
             self.device_caption(ui);
         }
     }
@@ -557,33 +526,39 @@ impl DesktopApp {
         let product = snapshot
             .and_then(|s| s.identity.product_name.as_deref())
             .unwrap_or("设备信息将在采集后显示");
-        ui.add(egui::Label::new(RichText::new(product).size(13.0)).truncate())
-            .on_hover_text(product);
         let platform = snapshot.map(|s| platform_label(&s.platform)).unwrap_or("—");
         let board = snapshot
             .and_then(|s| s.identity.board_name.as_deref())
             .unwrap_or("型号待识别");
         ui.add(
+            egui::Label::new(RichText::new(product).size(14.0).color(label_color(ui))).truncate(),
+        )
+        .on_hover_text(format!("{product}\n{platform} · {board}"));
+        let status = if self.controller.busy() {
+            "正在采集".to_owned()
+        } else if let Some(last) = self.controller.last_refresh {
+            if !self.preferences.auto_refresh {
+                "已采集 · 手动更新".into()
+            } else {
+                let seconds = last.elapsed().as_secs();
+                if seconds < 2 {
+                    "刚刚更新".into()
+                } else {
+                    format!("{seconds} 秒前更新")
+                }
+            }
+        } else {
+            "等待采集".into()
+        };
+        ui.add(
             egui::Label::new(
-                RichText::new(format!("{platform}  /  {board}"))
-                    .size(11.0)
+                RichText::new(format!("{platform}  ·  {status}"))
+                    .size(13.0)
                     .color(secondary(ui)),
             )
             .truncate(),
         )
         .on_hover_text(format!("{platform} · {board}"));
-        let status = if self.controller.busy() {
-            "正在采集"
-        } else if let Some(last) = self.controller.last_refresh {
-            if last.elapsed().as_secs() < 2 {
-                "刚刚更新"
-            } else {
-                "已采集"
-            }
-        } else {
-            "等待采集"
-        };
-        ui.label(RichText::new(status).size(11.0).color(secondary(ui)));
     }
 
     fn display_settings(&mut self, ui: &mut egui::Ui) {
@@ -633,13 +608,19 @@ impl DesktopApp {
         });
     }
 
-    fn dashboard(&mut self, ui: &mut egui::Ui) {
-        self.thermal_panel(ui);
+    fn dashboard(&mut self, ui: &mut egui::Ui) -> Rect {
+        let thermal_rect = self.thermal_panel(ui);
         ui.add_space(18.0);
         if ui.available_width() >= 660.0 {
-            ui.columns(2, |columns| {
-                surface(&mut columns[0], |ui| self.power_controls(ui));
-                surface(&mut columns[1], |ui| self.brightness_controls(ui));
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.x = 18.0;
+                ui.columns(2, |columns| {
+                    for column in columns.iter_mut() {
+                        column.spacing_mut().item_spacing.x = 10.0;
+                    }
+                    surface(&mut columns[0], |ui| self.power_controls(ui));
+                    surface(&mut columns[1], |ui| self.brightness_controls(ui));
+                });
             });
         } else {
             surface(ui, |ui| self.power_controls(ui));
@@ -655,9 +636,10 @@ impl DesktopApp {
         egui::CollapsingHeader::new("接口能力与限制")
             .id_salt("hardware-capabilities")
             .show(ui, |ui| self.capabilities(ui));
+        thermal_rect
     }
 
-    fn thermal_panel(&self, ui: &mut egui::Ui) {
+    fn thermal_panel(&self, ui: &mut egui::Ui) -> Rect {
         let readings = self
             .controller
             .snapshot
@@ -666,91 +648,144 @@ impl DesktopApp {
             .unwrap_or(&[]);
         let cpu = primary_temperature(readings, "CPU");
         let gpu = primary_temperature(readings, "GPU");
-        surface(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("温度与散热").size(13.0).color(secondary(ui)));
+        let fans = fan_readings(readings);
+        let cpu_fans: Vec<_> = fans
+            .iter()
+            .copied()
+            .filter(|r| fan_component(r) == Some("CPU"))
+            .collect();
+        let gpu_fans: Vec<_> = fans
+            .iter()
+            .copied()
+            .filter(|r| fan_component(r) == Some("GPU"))
+            .collect();
+        let other_fans: Vec<_> = fans
+            .iter()
+            .copied()
+            .filter(|r| fan_component(r).is_none())
+            .collect();
+        ui.scope(|ui| {
+            surface(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                // Set the content minimum before advancing the cursor: egui
+                // measures this height from the current position.
+                if ui.available_width() >= 720.0 {
+                    ui.set_min_height(222.0);
+                }
                 ui.label(
-                    RichText::new("/  THERMALS")
-                        .font(appearance::number_font(10.0))
-                        .color(secondary(ui)),
+                    RichText::new("温度与散热")
+                        .size(14.0)
+                        .color(label_color(ui)),
                 );
-            });
-            ui.add_space(14.0);
-            let width = ui.available_width();
-            if width >= 720.0 {
-                let left = width * 0.46 - 14.0;
-                let right = width - left - 28.0;
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 28.0;
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(left, 0.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(left);
-                            ui.columns(2, |columns| {
-                                let cpu_color = green(&columns[0]);
-                                let gpu_color = amber(&columns[1]);
-                                temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
-                                temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
-                            });
-                        },
-                    );
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(right, 0.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(right);
-                            self.temperature_chart(ui, cpu, gpu);
-                        },
-                    );
-                });
-            } else {
-                if width >= 280.0 {
-                    ui.columns(2, |columns| {
-                        let cpu_color = green(&columns[0]);
-                        let gpu_color = amber(&columns[1]);
-                        temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
-                        temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+                ui.add_space(8.0);
+                let width = ui.available_width();
+                if width >= 720.0 {
+                    // Standard desktop view is 270 px including the material's
+                    // margins. This is a minimum, never a clip: large text and
+                    // additional sensors are free to make the panel taller.
+                    let left = width * 0.46 - 14.0;
+                    let right = width - left - 28.0;
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 28.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(left, 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(left);
+                                ui.columns(2, |columns| {
+                                    let cpu_color = green(&columns[0]);
+                                    let gpu_color = amber(&columns[1]);
+                                    temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
+                                    temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+                                    for fan in cpu_fans.iter().take(3) {
+                                        component_fan_metric(&mut columns[0], fan);
+                                    }
+                                    for fan in gpu_fans.iter().take(3) {
+                                        component_fan_metric(&mut columns[1], fan);
+                                    }
+                                });
+                            },
+                        );
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(right, 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(right);
+                                self.temperature_chart(ui, cpu, gpu);
+                            },
+                        );
                     });
                 } else {
-                    temperature_metric(ui, "CPU", cpu, green(ui));
-                    ui.add_space(10.0);
-                    temperature_metric(ui, "GPU", gpu, amber(ui));
-                }
-                ui.add_space(8.0);
-                self.temperature_chart(ui, cpu, gpu);
-            }
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-            let fans = fan_readings(readings);
-            if fans.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    small_icon(ui, Icon::Fan);
-                    ui.label(RichText::new("风扇转速").size(12.0).color(secondary(ui)));
-                    ui.label(RichText::new("未采集").size(12.0).color(secondary(ui)));
-                });
-            } else if ui.available_width() >= 520.0 {
-                let count = fans.len().min(3);
-                ui.columns(count, |columns| {
-                    for (column, fan) in columns.iter_mut().zip(&fans) {
-                        fan_metric(column, fan);
+                    if width >= 280.0 {
+                        ui.columns(2, |columns| {
+                            let cpu_color = green(&columns[0]);
+                            let gpu_color = amber(&columns[1]);
+                            temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
+                            temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
+                            for fan in cpu_fans.iter().take(3) {
+                                component_fan_metric(&mut columns[0], fan);
+                            }
+                            for fan in gpu_fans.iter().take(3) {
+                                component_fan_metric(&mut columns[1], fan);
+                            }
+                        });
+                    } else {
+                        temperature_metric(ui, "CPU", cpu, green(ui));
+                        for fan in cpu_fans.iter().take(3) {
+                            component_fan_metric(ui, fan);
+                        }
+                        ui.add_space(10.0);
+                        temperature_metric(ui, "GPU", gpu, amber(ui));
+                        for fan in gpu_fans.iter().take(3) {
+                            component_fan_metric(ui, fan);
+                        }
                     }
-                });
-            } else {
-                for fan in fans.iter().take(3) {
-                    fan_metric(ui, fan);
+                    ui.add_space(8.0);
+                    self.temperature_chart(ui, cpu, gpu);
                 }
-            }
-            if fans.len() > 3 {
-                ui.label(
-                    RichText::new(format!("另有 {} 个风扇读数，见传感器页", fans.len() - 3))
-                        .small()
-                        .color(secondary(ui)),
-                );
-            }
-        });
+                if fans.is_empty() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        small_icon(ui, Icon::Fan);
+                        ui.label(
+                            RichText::new("风扇转速未采集")
+                                .size(13.0)
+                                .color(secondary(ui)),
+                        );
+                    });
+                } else if !other_fans.is_empty() {
+                    // A generic fan1/fan2 index does not establish CPU/GPU
+                    // ownership. Keep those readings together and unassigned.
+                    ui.add_space(8.0);
+                    ui.separator();
+                    if ui.available_width() >= 520.0 {
+                        let count = other_fans.len().min(3);
+                        ui.columns(count, |columns| {
+                            for (column, fan) in columns.iter_mut().zip(&other_fans) {
+                                fan_metric(column, fan);
+                            }
+                        });
+                    } else {
+                        for fan in other_fans.iter().take(3) {
+                            fan_metric(ui, fan);
+                        }
+                    }
+                }
+                let omitted = cpu_fans.len().saturating_sub(3)
+                    + gpu_fans.len().saturating_sub(3)
+                    + other_fans.len().saturating_sub(3);
+                if omitted > 0 {
+                    ui.label(
+                        RichText::new(format!("另有 {omitted} 个风扇读数，见传感器页"))
+                            .size(13.0)
+                            .color(secondary(ui)),
+                    );
+                }
+            })
+        })
+        .response
+        .rect
     }
 
     fn temperature_chart(
@@ -772,33 +807,51 @@ impl DesktopApp {
             .map(|(s, _)| s.iter().filter(|(_, v)| v.is_some()).count())
             .max()
             .unwrap_or(0);
+        // These labels show the current readout, not the last non-missing
+        // history value. A suspended/disappeared GPU must not look live.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 14.0;
+            for (label, reading, color) in [("CPU", cpu, green(ui)), ("GPU", gpu, amber(ui))] {
+                let endpoint = reading
+                    .and_then(measured)
+                    .map(|value| format!("{label} {value:.0}°C"))
+                    .unwrap_or_else(|| format!("{label} —"));
+                ui.label(RichText::new(endpoint).size(13.0).color(color));
+            }
+        });
         let width = ui.available_width().max(1.0);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 108.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        let plot = rect.shrink2(Vec2::new(2.0, 12.0));
-        if count < 2 {
-            painter.text(
-                plot.center(),
-                egui::Align2::CENTER_CENTER,
-                if count == 1 {
-                    "等待更多采样"
-                } else {
-                    "刷新后显示温度趋势"
-                },
-                FontId::proportional(13.0),
-                secondary(ui),
-            );
+        let plot = Rect::from_min_max(
+            rect.left_top() + Vec2::new(2.0, 6.0),
+            rect.right_bottom() - Vec2::new(46.0, 6.0),
+        );
+        let times: Vec<_> = data
+            .iter()
+            .flat_map(|(samples, _)| samples.iter().map(|(time, _)| *time))
+            .collect();
+        let range = times
+            .iter()
+            .min()
+            .zip(times.iter().max())
+            .map(|(first, last)| (*first, *last));
+        if count < 3 {
+            // Keep this a semantic label, so the collection state is also
+            // available to screen readers and keyboard-only users.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new("正在积累趋势")
+                            .size(13.0)
+                            .color(secondary(ui)),
+                    );
+                });
+            });
             painter.line_segment(
                 [plot.left_bottom(), plot.right_bottom()],
                 Stroke::new(1.0, divider(ui)),
             );
-        } else {
-            let times: Vec<_> = data
-                .iter()
-                .flat_map(|(s, _)| s.iter().map(|(t, _)| *t))
-                .collect();
-            let first = times.iter().min().copied().unwrap();
-            let last = times.iter().max().copied().unwrap();
+        } else if let Some((first, last)) = range {
             let duration = last.duration_since(first).as_secs_f32().max(0.001);
             let values: Vec<_> = data
                 .iter()
@@ -817,7 +870,7 @@ impl DesktopApp {
                 );
                 painter.text(
                     egui::pos2(
-                        plot.right() - 2.0,
+                        rect.right() - 2.0,
                         if portion == 1.0 { y + 3.0 } else { y - 3.0 },
                     ),
                     if portion == 1.0 {
@@ -826,11 +879,14 @@ impl DesktopApp {
                         egui::Align2::RIGHT_BOTTOM
                     },
                     format!("{:.0}°C", low + (high - low) * f64::from(portion)),
-                    FontId::proportional(10.0),
+                    FontId::proportional(12.0),
                     secondary(ui),
                 );
             }
             for (samples, color) in &data {
+                if samples.iter().filter(|(_, value)| value.is_some()).count() < 3 {
+                    continue;
+                }
                 let mut previous = None;
                 for (time, value) in *samples {
                     let Some(value) = value else {
@@ -854,20 +910,19 @@ impl DesktopApp {
         }
         ui.horizontal_wrapped(|ui| {
             ui.label(
-                RichText::new(if count < 2 {
-                    "仅使用真实采样，不补齐历史".into()
+                RichText::new(if count < 3 {
+                    "采集至少 3 次后显示趋势".into()
+                } else if let Some((first, last)) = range {
+                    let seconds = last.duration_since(first).as_secs();
+                    if seconds >= 60 {
+                        format!("最近 {} 分 {:02} 秒", seconds / 60, seconds % 60)
+                    } else {
+                        format!("最近 {seconds} 秒")
+                    }
                 } else {
-                    format!(
-                        "最近 {} 次采样 · {}",
-                        count,
-                        if self.preferences.auto_refresh {
-                            "每 3 秒更新"
-                        } else {
-                            "手动更新"
-                        }
-                    )
+                    "正在积累趋势".into()
                 })
-                .small()
+                .size(13.0)
                 .color(secondary(ui)),
             );
         });
@@ -1384,8 +1439,83 @@ fn secondary(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
         SUBTLE
     } else {
-        Color32::from_rgb(100, 105, 91)
+        Color32::from_rgb(103, 106, 108)
     }
+}
+fn label_color(ui: &egui::Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(209, 211, 212)
+    } else {
+        Color32::from_rgb(68, 72, 75)
+    }
+}
+
+/// One focusable click target retains egui's pointer, Space/Enter and
+/// accessibility handling; its visual track is deliberately smaller.
+fn sampling_switch(ui: &mut egui::Ui, enabled: &mut bool, motion: bool) -> egui::Response {
+    let text = ui.painter().layout_no_wrap(
+        "自动采样".into(),
+        FontId::proportional(13.0),
+        label_color(ui),
+    );
+    let (rect, mut response) = ui.allocate_exact_size(
+        Vec2::new(30.0 + 8.0 + text.size().x, 34.0),
+        egui::Sense::click(),
+    );
+    if response.clicked() {
+        *enabled = !*enabled;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *enabled, "自动采样")
+    });
+    if ui.is_rect_visible(rect) {
+        let track = Rect::from_center_size(
+            egui::pos2(rect.left() + 15.0, rect.center().y),
+            Vec2::new(30.0, 17.0),
+        );
+        let fill = if *enabled {
+            if ui.visuals().dark_mode {
+                Color32::from_rgb(201, 207, 197)
+            } else {
+                Color32::from_rgb(89, 101, 81)
+            }
+        } else if ui.visuals().dark_mode {
+            Color32::from_rgb(68, 71, 73)
+        } else {
+            Color32::from_rgb(199, 202, 201)
+        };
+        ui.painter().rect_filled(track, 9.0, fill);
+        let t =
+            ui.ctx()
+                .animate_bool_with_time(response.id, *enabled, if motion { 0.16 } else { 0.0 });
+        ui.painter().circle_filled(
+            egui::pos2(
+                egui::lerp(track.left() + 8.5..=track.right() - 8.5, t),
+                track.center().y,
+            ),
+            6.0,
+            if *enabled && ui.visuals().dark_mode {
+                BACKGROUND
+            } else {
+                Color32::WHITE
+            },
+        );
+        ui.painter().galley(
+            egui::pos2(track.right() + 8.0, rect.center().y - text.size().y * 0.5),
+            text,
+            label_color(ui),
+        );
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                8.0,
+                Stroke::new(1.0, label_color(ui)),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    response
 }
 fn green(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
@@ -1459,8 +1589,8 @@ fn unavailable(ui: &mut egui::Ui, reason: &str) {
     } else {
         summary
     };
-    ui.label(RichText::new(summary).size(12.0).color(secondary(ui)));
-    egui::CollapsingHeader::new(RichText::new("查看原因").size(11.0).color(secondary(ui)))
+    ui.label(RichText::new(summary).size(13.0).color(secondary(ui)));
+    egui::CollapsingHeader::new(RichText::new("查看原因").size(13.0).color(secondary(ui)))
         .id_salt(reason)
         .show(ui, |ui| {
             ui.label(RichText::new(reason).small().color(secondary(ui)));
@@ -1548,6 +1678,21 @@ fn fan_readings(readings: &[SensorReading]) -> Vec<&SensorReading> {
         .filter(|r| matches!(r.kind.as_str(), "fan_speed" | "fan"))
         .collect()
 }
+fn fan_component(reading: &SensorReading) -> Option<&'static str> {
+    // Only the reported label can explicitly identify the cooled component.
+    // Generic fan indexes, device order and a shared hwmon path do not.
+    let has = |component: &str| {
+        reading
+            .label
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case(component))
+    };
+    match (has("CPU"), has("GPU")) {
+        (true, false) => Some("CPU"),
+        (false, true) => Some("GPU"),
+        _ => None,
+    }
+}
 fn primary_temperature<'a>(
     readings: &'a [SensorReading],
     category: &str,
@@ -1573,11 +1718,7 @@ fn temperature_metric(
         ui.spacing_mut().item_spacing.x = 6.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(7.0), egui::Sense::hover());
         ui.painter().circle_filled(rect.center(), 2.5, color);
-        ui.label(
-            RichText::new(label)
-                .font(appearance::number_font(12.0))
-                .color(secondary(ui)),
-        );
+        ui.label(RichText::new(label).size(14.0).color(label_color(ui)));
     });
     let value = reading
         .and_then(measured)
@@ -1585,12 +1726,16 @@ fn temperature_metric(
         .unwrap_or_else(|| "—".into());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
-        ui.label(RichText::new(value).font(appearance::number_font(56.0)))
-            .on_hover_text(
-                reading
-                    .map(|r| format!("{} · {} · {}", r.label, r.device_id, r.source.path))
-                    .unwrap_or_else(|| "尚无温度读数".into()),
-            );
+        ui.label(
+            RichText::new(value)
+                .font(appearance::tabular_font(52.0))
+                .color(foreground(ui)),
+        )
+        .on_hover_text(
+            reading
+                .map(|r| format!("{} · {} · {}", r.label, r.device_id, r.source.path))
+                .unwrap_or_else(|| "尚无温度读数".into()),
+        );
         if reading.and_then(measured).is_some() {
             ui.label(
                 RichText::new("°C")
@@ -1599,15 +1744,22 @@ fn temperature_metric(
             );
         }
     });
-    ui.label(
-        RichText::new(if reading.and_then(measured).is_some() {
-            "当前最高读数"
-        } else {
-            "未采集"
-        })
-        .size(10.0)
-        .color(secondary(ui)),
-    );
+    if reading.and_then(measured).is_none() {
+        ui.label(RichText::new("未采集").size(13.0).color(secondary(ui)));
+    }
+}
+fn component_fan_metric(ui: &mut egui::Ui, reading: &SensorReading) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        small_icon(ui, Icon::Fan);
+        ui.label(RichText::new("风扇").size(13.0).color(label_color(ui)))
+            .on_hover_text(format!("{} · {}", reading.label, reading.source.path));
+        let value = measured(reading)
+            .map(|v| format!("{v:.0}"))
+            .unwrap_or_else(|| "—".into());
+        ui.label(RichText::new(value).font(appearance::tabular_font(18.0)));
+        ui.label(RichText::new(&reading.unit).size(13.0).color(secondary(ui)));
+    });
 }
 fn fan_metric(ui: &mut egui::Ui, reading: &SensorReading) {
     let visible_label = reading
@@ -1619,20 +1771,20 @@ fn fan_metric(ui: &mut egui::Ui, reading: &SensorReading) {
         ui.spacing_mut().item_spacing.x = 7.0;
         small_icon(ui, Icon::Fan);
         ui.add(
-            egui::Label::new(RichText::new(visible_label).size(11.0).color(secondary(ui)))
-                .truncate(),
+            egui::Label::new(
+                RichText::new(visible_label)
+                    .size(13.0)
+                    .color(label_color(ui)),
+            )
+            .truncate(),
         )
         .on_hover_text(&reading.label);
         let value = measured(reading)
             .map(|v| format!("{v:.0}"))
             .unwrap_or_else(|| "—".into());
-        ui.label(RichText::new(value).font(appearance::number_font(18.0)))
+        ui.label(RichText::new(value).font(appearance::tabular_font(18.0)))
             .on_hover_text(format!("{} · {}", reading.device_id, reading.source.path));
-        ui.label(
-            RichText::new(&reading.unit)
-                .font(appearance::number_font(9.0))
-                .color(secondary(ui)),
-        );
+        ui.label(RichText::new(&reading.unit).size(13.0).color(secondary(ui)));
     });
 }
 #[derive(Clone, Copy)]
@@ -1825,5 +1977,22 @@ mod tests {
         assert_eq!(selected.device_id, "gpu1");
         assert_eq!(selected.value, Some(71.0));
         assert_ne!(sensor_key(&readings[0]), sensor_key(&readings[1]));
+    }
+    #[test]
+    fn fan_component_requires_an_unambiguous_reported_label() {
+        let mut fan = reading("cpu-device", Some(2400.0));
+        fan.kind = "fan_speed".into();
+        fan.unit = "RPM".into();
+        fan.source.path = "/hwmon/cpu/fan1_input".into();
+        for label in ["fan1", "mechrevo_ec:fan2", "CPU / GPU fan", "scpu fan"] {
+            fan.label = label.into();
+            assert_eq!(fan_component(&fan), None, "{label}");
+        }
+        for label in ["CPU fan", "mechrevo_ec:cpu_fan1", "CPU 风扇"] {
+            fan.label = label.into();
+            assert_eq!(fan_component(&fan), Some("CPU"), "{label}");
+        }
+        fan.label = "mechrevo_ec:GPU fan".into();
+        assert_eq!(fan_component(&fan), Some("GPU"));
     }
 }
