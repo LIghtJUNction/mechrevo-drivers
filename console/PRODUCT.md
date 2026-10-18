@@ -6,7 +6,7 @@ Native desktop: Windows and Linux. The renderer is Rust egui, not a web page.
 
 ## Users
 
-机械革命笔记本用户，需要查看温度、风扇和供电状态，并调整系统及已识别厂商驱动实际提供的控制项。Windows 与 Linux 的完整控制能力持续按[功能清单](../docs/OPENREVO-PARITY.md)推进。
+机械革命笔记本用户，需要查看温度、风扇和供电状态，并调整系统及已识别厂商驱动实际提供的控制项。Windows 与 Linux 的完整控制能力持续按 [OEM 功能覆盖](../docs/OEM-FEATURE-COVERAGE.md) 推进。
 
 ## Product Purpose
 

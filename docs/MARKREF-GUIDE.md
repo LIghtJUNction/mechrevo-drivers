@@ -54,7 +54,7 @@
 | `mechrevo.model_registry` | 全机型 DMI 与出厂规格矩阵 | `docs/MECHREVO-ALL-MODELS-MATRIX.md` | `src/tuxedo_compatibility_check/` |
 | `mechrevo.ec_bridge` | EC RAM 寻址与原子读改写 | `docs/OEM-FEATURE-COVERAGE.md` | `src/uniwill_interfaces.h` |
 | `mechrevo.power_control` | CPU PL1/PL2/PL4 硬件钳位 | `docs/POWER-CONTROL.md` | `src/tuxedo_io/tuxedo_io.c` |
-| `mechrevo.fan_curve` | 16 节点风扇曲线与 Latch 加锁 | `docs/OPEN-REVO-REVERSE-ENGINEERING.md` | `docs/models/mechrevo_factory_models.json` |
+| `mechrevo.fan_curve` | 16 节点风扇曲线与 Latch 加锁 | `docs/models/README.md` | `docs/models/mechrevo_factory_models.json` |
 | `mechrevo.battery_sentinel`| 充电阈值、AC/PD 感知与防覆盖 | `docs/CHARGING-TRANSACTIONS.md` | `src/uniwill_interfaces.h` |
 | `mechrevo.lighting` | ITE 829x USB HID 与双重关灯 | `docs/CROSS-PLATFORM-CONTROL-CENTER-DESIGN.md` | `src/ite_829x/` |
 | `mechrevo.water_cooler` | BLE 外置水冷微循环与遥测 | `docs/CROSS-PLATFORM-CONTROL-CENTER-DESIGN.md` | 控制中心 BLE 驱动器 |
