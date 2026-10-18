@@ -185,13 +185,32 @@
     "installed_binary_sha256": "4eba53d21ef8d5cde206eba5febc7e8f92d64a8c9d64a3d5bc97d384611f0ecd",
     "installed_startup_verified": true,
     "overview_visually_reviewed": true,
-    "cpu_page_navigation_verified": false,
+    "cpu_page_navigation_verified": true,
     "first_attempt": "QA object path corrected after UnknownMethod",
     "second_attempt": "Private AT-SPI Registry activation unavailable without its systemd unit; no navigation or authorization action sent",
     "app_and_compositor_reaped": true,
     "ordinary_user_authentication_tested": false,
     "gui_write_tested": false,
-    "scope": "Dedicated headless compositor startup and overview only; CPU controls have offline UI regressions but native CPU page was not accepted"
+    "scope": "Dedicated headless compositor startup, overview and two exact own-process selector actions to the unprobed CPU page; no authorization, GUI write, physical cooling or normal-close acceptance.",
+    "cpu_unprobed_state_visually_reviewed": true,
+    "third_attempt": {
+      "recorded_at_utc": "2026-10-18T09:02:50.587359+00:00",
+      "result": "passed_with_explicit_private_accessibility_registry",
+      "selectors_activated": [
+        "控制",
+        "CPU 功耗上限"
+      ],
+      "authorization_actions_activated": 0,
+      "apply_actions_activated": 0,
+      "expected_state": "Not checked; MSR/MMIO unavailable; no numeric input until explicit authorized probe",
+      "private_registry_peer_pid_verified": true,
+      "app_registry_compositor_reaped": true,
+      "sigkill_sent": false,
+      "run_receipt_sha256": "d69e4beb0d6d9df37b4678844c184303bfa1b7ecfbb8425290b5f5d656c14490",
+      "capture_receipt_sha256": "cbbb768337d4a89c3acdad1be1090b71c8336092eeaed97e9ef0bdd583a7286d",
+      "cpu_page_screenshot_sha256": "a4ac5fe1684317dab9f9cc67bfc1cad04250a0a2b55ee89e4b6e454841bc3d6c",
+      "evidence": "Private qa3/semantic-action receipts retained locally; earlier attempts preserved separately."
+    }
   },
   "file_tracking": {
     "source_watcher": "989b2f2f-64d6-4887-afe7-e83d2ef638ea",
@@ -205,6 +224,10 @@
     "installation_watcher": "9eb0fdc6-6062-4296-b6ae-124ac31afac5",
     "note": "Short-lived test fixtures and temporary unreadable makepkg pkg directory retained as gaps. Git internal state is excluded by AgentGC; source edits and final payload bytes were checked separately. Final watcher receipts follow separately.",
     "gui_first_tracking": "complete_0_gaps_0_unresolved",
-    "gui_second_tracking": "partial_10_gaps_4_unresolved"
+    "gui_second_tracking": "partial_10_gaps_4_unresolved",
+    "gui_third_tracking": "partial_2_gaps_8_unresolved",
+    "gui_third_session": "d1793113-3816-4769-9bc0-1ab0defc79a1",
+    "gui_third_final_receipt_tracking": "complete_0_gaps_0_unresolved; does not repair earlier gaps",
+    "gui_third_empty_directory_creation": "Not covered: nonexistent-root wrapper refused before creation; content edits and runs started only after watcher readiness."
   }
 }
