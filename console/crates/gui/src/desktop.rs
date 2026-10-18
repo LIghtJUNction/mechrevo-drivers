@@ -24,6 +24,8 @@ const ERROR: Color32 = Color32::from_rgb(237, 154, 140);
 const HISTORY_LIMIT: usize = 120;
 #[path = "cpu_power_ui.rs"]
 mod cpu_power_ui;
+#[path = "windows_fn_ui.rs"]
+mod windows_fn_ui;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMetrics {
@@ -61,6 +63,7 @@ pub enum ControlSection {
     #[default]
     DeviceFunctions,
     CpuPower,
+    WindowsFn,
 }
 
 #[derive(Default)]
@@ -385,7 +388,10 @@ impl DesktopApp {
             }
         }
         if self.controller.busy() {
-            if !self.controller.oem_write_state_unknown() && self.controller.cpu_power_helper_reaped
+            if self.controller.activity().is_some()
+                || (!self.controller.oem_write_state_unknown()
+                    && self.controller.cpu_power_helper_reaped
+                    && self.controller.windows_fn_lifetime_clean())
             {
                 ctx.request_repaint_after(Duration::from_millis(80));
             }
@@ -1204,6 +1210,19 @@ impl DesktopApp {
         if self.pending_close {
             ui.label(RichText::new("正在完成后台事务并等待进程退出。").color(amber(ui)));
         }
+        if !self.controller.windows_fn_lifetime_clean() {
+            ui.add(egui::Label::new(RichText::new("Windows Fn 锁辅助进程尚未确认退出，新的授权操作与关闭已阻止。请在控制页继续等待。").color(error_color(ui))).wrap());
+        } else if self.controller.windows_fn_state_unknown {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Windows Fn 锁状态未确认，新的写入已阻止。请在控制页重新授权检查。",
+                    )
+                    .color(amber(ui)),
+                )
+                .wrap(),
+            );
+        }
         if !self.controller.cpu_power_helper_reaped {
             ui.add(
                 egui::Label::new(
@@ -1335,11 +1354,19 @@ impl DesktopApp {
                 ControlSection::CpuPower,
                 "CPU 功耗上限",
             );
+            if self.controller.windows_fn_visible() {
+                ui.selectable_value(
+                    &mut self.control_section,
+                    ControlSection::WindowsFn,
+                    "Windows Fn 锁",
+                );
+            }
         });
         ui.add_space(12.0);
         match self.control_section {
             ControlSection::DeviceFunctions => self.oem_controls(ui),
             ControlSection::CpuPower => self.cpu_power_controls(ui),
+            ControlSection::WindowsFn => self.windows_fn_controls(ui),
         }
     }
 
@@ -3058,6 +3085,113 @@ mod tests {
                 output.drop_without_applying_deltas();
             }
         }
+    }
+
+    #[test]
+    fn waiting_for_an_existing_windows_helper_keeps_polling_without_idle_sampling() {
+        use mechrevo_console_core::windows_oem::{ClientHelperLifetime, Outcome, Receipt, Update};
+        use std::sync::mpsc::{self, Receiver, SyncSender};
+        struct WaitingHelper {
+            started: SyncSender<()>,
+            release: Receiver<()>,
+        }
+        impl crate::Backend for WaitingHelper {
+            fn snapshot(&mut self) -> Snapshot {
+                panic!("waiting must not sample hardware")
+            }
+            fn catalog(&mut self) -> Vec<mechrevo_console_core::CatalogModel> {
+                unreachable!()
+            }
+            fn plan(
+                &mut self,
+                _: PowerProfile,
+            ) -> Result<mechrevo_console_core::ProfilePlan, mechrevo_console_core::ControlError>
+            {
+                unreachable!()
+            }
+            fn apply(
+                &mut self,
+                _: &mechrevo_console_core::ProfilePlan,
+            ) -> Result<mechrevo_console_core::ApplyResult, mechrevo_console_core::ControlError>
+            {
+                unreachable!()
+            }
+            fn windows_fn_finish_pending(&mut self) -> Update {
+                self.started.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(2)).unwrap();
+                Update {
+                    status: None,
+                    outcome: Outcome::Observed,
+                    result: None,
+                    receipt: Receipt::default(),
+                    error: None,
+                    helper_reaped: true,
+                    helper_lifetime: ClientHelperLifetime::Reaped,
+                }
+            }
+        }
+        fn frame(ctx: &egui::Context, app: &mut DesktopApp, time: f64) -> Duration {
+            let output = ctx.run_pass(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ctx| app.tick(ctx),
+            );
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.drop_without_applying_deltas();
+            delay
+        }
+        let (started, entered) = mpsc::sync_channel(1);
+        let (release, blocked) = mpsc::sync_channel(1);
+        let mut controller = Controller::new(WaitingHelper {
+            started,
+            release: blocked,
+        })
+        .unwrap();
+        controller.windows_fn_helper_reaped = false;
+        controller.windows_fn_helper_lifetime = ClientHelperLifetime::Unknown;
+        controller.windows_fn_state_unknown = true;
+        let mut app = DesktopApp::with_controller(
+            controller,
+            Preferences {
+                auto_refresh: false,
+                ..Default::default()
+            },
+        );
+        let ctx = egui::Context::default();
+        for index in 0..5 {
+            frame(&ctx, &mut app, f64::from(index) * 0.25);
+        }
+        assert!(
+            frame(&ctx, &mut app, 1.5) > Duration::from_secs(60),
+            "an unknown idle latch must not continuously repaint"
+        );
+        app.controller.finish_windows_fn_pending().unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        for index in 0..3 {
+            assert!(
+                frame(&ctx, &mut app, 2.0 + f64::from(index) * 0.25) <= Duration::from_millis(80),
+                "a real retained-helper wait must keep draining worker replies"
+            );
+        }
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.controller.activity().is_some() && Instant::now() < deadline {
+            app.controller.poll();
+            std::thread::yield_now();
+        }
+        assert!(app.controller.windows_fn_lifetime_clean());
+        assert!(
+            app.controller.windows_fn_state_unknown,
+            "reaping is not a fresh hardware probe"
+        );
+        app.controller.request_close();
+        while !app.controller.close_ready() && Instant::now() < deadline {
+            app.controller.poll();
+            std::thread::yield_now();
+        }
+        assert!(app.controller.close_ready());
     }
 
     #[test]

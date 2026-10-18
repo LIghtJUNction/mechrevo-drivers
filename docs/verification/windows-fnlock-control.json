@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T10:49:50.960256+00:00",
+  "outcome": "source_candidate_offline_verified_no_windows_runtime_acceptance",
+  "scope": "Windows x64 Fn-lock source candidate only. Real native transport and qualification paths are implemented; offline compilation does not establish Windows installation, UAC, driver interaction or physical Fn behavior.",
+  "source": {
+    "base_commit_at_documentation": "057789e10c3df94ffa7ccd6b99de42f76d0116a1",
+    "feature_source_commit": null,
+    "feature_source_committed": false,
+    "final_input_snapshot_sha256": "2d8e7d31acbdf89ae7b02cb73afc583378af3d02c7bead0ae3e34db64ef9303f",
+    "final_verification_pending": false,
+    "scope": "Frozen runtime and verification inputs passed local suites. Feature commit identity is recorded after signing; Windows runtime acceptance remains absent.",
+    "final_input_files": 92
+  },
+  "implemented": {
+    "transport": "Fixed Win32 device path and IOCTLs, deterministically initialized 4MiB request/response buffers, strict full-DWORD byte decoding and buffer guards. No arbitrary-address/IOCTL or vendor-driver installer interface.",
+    "transaction": "Full-byte Fn-bit read-modify-write, fresh pre-write comparison, independent full-byte readback, typed outcomes and conditional recovery. Foreign/unknown state is not overwritten and writes are not retried automatically.",
+    "qualification": "Native SMBIOS/raw DSDT, unique present PnP node, running kernel-driver SCM state, PSAPI loaded-path association, protected held driver-file identity, complete disk-file digest and catalog trust. Disk hash and these associations are not loaded-memory measurement, load-time provenance or per-device kernel attachment proof.",
+    "coordination": "A validated Global writer mutex serializes this application across sessions. A protected persistent ProgramData maintenance gate blocks helpers during MSI maintenance or after uncertain maintenance failure. It is not a global OEM/firmware lock or kernel compare-and-swap.",
+    "ipc": "Ordinary-user GUI/CLI authenticate a fixed protected ProgramFilesX64 installation and nonce-bound local pipe, launch only the fixed elevated helper, verify peer/process/image identity and retain actual helper lifetime/wait state. No full-GUI elevation or arbitrary executable path.",
+    "wire": "Bounded one-shot framed JSON Probe/Apply protocol with strict recursive duplicate/unknown/missing field, type, depth and version validation; cached client observation is never fresh authorization.",
+    "cli": {
+      "probe": "mechrevo-console.exe oem windows-fn probe",
+      "preview": "mechrevo-console.exe oem windows-fn set on --dry-run",
+      "apply": "mechrevo-console.exe oem windows-fn set on|off",
+      "scope": "Explicit Probe requires UAC; windows-fn dry-run authorizes read-only Probe then previews locally without applying. Unlike this command, generic oem set --dry-run never elevates. Applied state is not automatically reset on exit; pending helper completion is waited without retrying hardware."
+    },
+    "gui": "Explicit authorized probe, cached local preview, explicit authorized apply and pending-helper completion are connected. Runtime Windows GUI, UAC and physical keyboard behavior remain unverified.",
+    "packaging": "Native Windows x64 per-machine MSI recipe, protected release manifest, asInvoker GUI/CLI and requireAdministrator helper manifests, fixed installation and no vendor-driver/service operations. Maintenance refuses an active writer instead of terminating it or resetting Fn."
+  },
+  "support": {
+    "catalog_ref": "console/resources/windows-fnlock-support.json",
+    "catalog_sha256": "d4a97cf1caa012245f91812c1fe120b6d86f353fc859fc044299a272744a5b90",
+    "candidate_contracts": 1,
+    "runtime_accepted_contracts": 0,
+    "candidate_feature_default_enabled": false,
+    "candidate_feature": "windows-fnlock-candidate",
+    "scope": "Compiled-in fixed catalog only. Candidate feature is an artifact build decision, not a runtime allowlist override or hardware acceptance. No runtime_accepted support record exists."
+  },
+  "verification": {
+    "final_rust": {
+      "status": "passed",
+      "test_count": 519,
+      "failed": 0,
+      "ignored": 0,
+      "fmt": "passed",
+      "clippy": "passed",
+      "windows_compile": "passed",
+      "source_unchanged": true,
+      "receipt_sha256": "35be51704cde62f77b9515a35dae68b576e31d72a62b8bb962b4ff38f9cdbdde",
+      "tracking_session": "ca64b21c-85d8-45a3-903d-c565f24ea470",
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "final_python_console": {
+      "status": "passed",
+      "test_count": 140,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "receipt_sha256": "8855c76950a9a08bc45f82dc73f2965524e0ef17c07bd4439101b8be83602bc1",
+      "scope": "Full console domain after Linux packaging feature and required-input changes; not hardware acceptance."
+    },
+    "first_windows_compile": {
+      "exit_code": 0,
+      "elapsed_seconds": 11.69,
+      "scope": "Earlier Windows target compile before later portable-policy/strict-enumeration/trace changes; not final-source verification or Windows execution."
+    },
+    "maintenance_dll_cross_compile": {
+      "outcome": "compiled_and_linked",
+      "compiler": "x86_64-w64-mingw32-gcc",
+      "exit_code": 0,
+      "flags": [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wno-unknown-pragmas"
+      ],
+      "source_sha256": "a4ab9c4d7e28e96c2b1cbff64886d0254654105a885664aec738815f3877047b",
+      "source_unchanged": true,
+      "dll_sha256": "833062ffc659a37c4efb709fb1f6ae2c01e024b8d2de8c475ff97b677e830147",
+      "scope": "Linux MinGW compile/link diagnostic only. Unknown MSVC pragmas were disabled; this is not MSVC, WiX/MSI build, DLL execution, installer maintenance or Windows runtime acceptance."
+    },
+    "powershell_ast_or_runtime_verified": false,
+    "msvc_build_verified": false,
+    "wix_msi_built": false,
+    "windows_runtime_verified": false,
+    "native_windows_gui_verified": false,
+    "uac_verified": false,
+    "hardware_fn_write_readback_verified": false,
+    "physical_fn_key_verified": false,
+    "restart_or_suspend_persistence_verified": false,
+    "behavior_mutations": {
+      "status": "both_detected_and_restored",
+      "count": 2,
+      "baseline_mutant_restored_exit_codes": [
+        0,
+        101,
+        0
+      ],
+      "production_targets_unchanged": true,
+      "concurrent_identity_clippy_fix_separately_recorded": true,
+      "receipt_sha256": "f91d057f57679b30adb7b1f91d7baced303ae294264b27cff556dc01ab636cfc",
+      "scope": "Production full-byte stale binding and failed-restore outcome mutations; each failed at the expected behavior assertion."
+    },
+    "earlier_failures_preserved": [
+      "Seven CLI fixture failures lacked required full driver identity; fixtures corrected without relaxing production qualification.",
+      "Two clippy rounds caught duplicate attributes, a cloned slice and an invisible test character; corrected and final whole-suite verification passed."
+    ],
+    "markref": {
+      "marks": 43,
+      "files": 286,
+      "errors": 0,
+      "warnings": 0
+    }
+  },
+  "deployment": {
+    "this_candidate_installed": false,
+    "msi_install_upgrade_repair_uninstall_verified": false,
+    "signed_windows_release_published": false,
+    "vendor_driver_or_service_changed": false,
+    "hardware_setter_executed_this_round": false,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "current_installed_linux_console": "0.1.0.r171.g00e3998-1",
+    "installed_linux_receipt_ref": "docs/verification/deployment-console-r171.json",
+    "scope": "The existing Linux r171 installation is separate from this uninstalled Windows source candidate."
+  },
+  "tracking": {
+    "source": {
+      "session": "8c225e1b-f606-4e85-852f-054ec126d677",
+      "status": "running",
+      "gap_count_observed": 0,
+      "unresolved_event_count_observed": 0,
+      "scope": "Live source watcher at documentation time, not a finalized gap-free claim. Root will record its final result."
+    }
+  },
+  "remaining": [
+    "Commit qualified source separately; no remote publication is established by this receipt.",
+    "Run PowerShell parser/native verifier, MSVC and WiX MSI build on native Windows x64.",
+    "Verify install/upgrade/rollback/Repair/removal, protected ACLs, active-writer refusal, crash gate residue and same-product repair on Windows.",
+    "Verify both UAC consent and alternate-administrator credential paths, strict peer authentication and actual helper completion on Windows.",
+    "Validate qualified OEM driver/firmware on Windows, safe Fn write/readback/recovery, physical Fn key behavior and restart/suspend boundaries."
+  ],
+  "parity_scope": "No model-wide compatibility, feature-family completion or upstream issue closure is claimed.",
+  "references": [
+    "docs/WINDOWS-FNLOCK-CONTROL-DESIGN.md",
+    "docs/verification/windows-ec-abi.json",
+    "packaging/windows/README.md"
+  ]
+}

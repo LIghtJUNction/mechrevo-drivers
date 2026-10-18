@@ -40,13 +40,19 @@ _validate_source_tree() {
     fi
     local file
     for file in console/Cargo.toml console/Cargo.lock \
-        console/crates/cli/Cargo.toml console/crates/cli/src/main.rs \
+        console/crates/cli/Cargo.toml console/crates/cli/build.rs \
+        console/crates/cli/src/main.rs \
         console/crates/cli/src/oem_helper.rs console/crates/cli/src/fan_helper.rs \
         console/crates/core/src/privilege.rs console/crates/core/src/fan_curve.rs \
         console/crates/core/src/cpu_power.rs \
         console/crates/core/src/fan_curve/linux.rs \
         console/crates/core/src/fan_curve/broker.rs console/crates/core/src/fan_curve/client.rs \
-        console/crates/gui/src/main.rs \
+        console/crates/gui/build.rs console/crates/gui/src/main.rs \
+        console/resources/windows/embed-gnu-manifest.rs \
+        console/resources/windows/console-cli.manifest \
+        console/resources/windows/console-gui.manifest \
+        console/resources/windows/console-oem-helper.manifest \
+        console/resources/windows-fnlock-support.json \
         console/resources/org.mechrevo.console.oem.policy \
         console/resources/org.mechrevo.console.fan.policy \
         console/resources/org.mechrevo.console.cpu-power.policy \
@@ -70,7 +76,7 @@ build() {
     cd "${srcdir}/mechrevo-drivers" || return 1
     cargo build --manifest-path console/Cargo.toml \
         --target-dir "${CARGO_TARGET_DIR:-${srcdir}/cargo-target}" \
-        --release --workspace --all-features --locked --offline
+        --release --workspace --features mechrevo-console-gui/gui --locked --offline
 }
 
 _validate_policy() {

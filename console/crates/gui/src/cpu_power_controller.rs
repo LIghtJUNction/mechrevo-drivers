@@ -7,6 +7,7 @@ impl Controller {
             || self.brightness_preview.is_some()
             || self.oem_preview.is_some()
             || self.fan_preview.is_some()
+            || self.windows_fn_preview.is_some()
     }
 
     pub fn cpu_power_preview_pending(&self) -> bool {

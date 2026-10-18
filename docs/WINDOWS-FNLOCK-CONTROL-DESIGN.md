@@ -1,8 +1,14 @@
 # Windows Fn 锁：客户端、受限 helper 与实机验收契约
 
-2026-10-18。这是下一轮实现约束，**不是 Windows 实现、安装或功能通过回执**。本轮不改公共 Rust 接口、不运行 Windows 程序、不安装驱动、不写硬件。Linux 亮度工作与此文档独立。
+2026-10-18。本文保留 Windows Fn 锁接入前的设计约束及当时缺口，**不是安装或 Windows 实机通过回执**。下文“需要”“首版”等表述属于设计阶段；本轮源码进展以 [Windows Fn 锁候选收据](verification/windows-fnlock-control.json) 为准，已安装的 Linux r171 与本轮 Windows 候选分开记录。
 
 首版只接 Fn 锁，完整交付授权检查、缓存预览、真实 EC 读改写、独立回读、条件恢复和安装包。不得以空实现、固定 `unsupported` 或模拟读数冒充接入；实际传输必须可由资格成立的正向分支调用。发布支持范围依据版本化实机验收记录，不能把初次开发候选写成已验收。
+
+## 后续源码进展（未安装候选）
+
+现已接入完整字节事务、真实 Win32 4MiB 设备传输、固件／PnP／SCM／PSAPI／文件摘要与 catalog 资格检查、跨会话互斥及持久维护 gate；普通用户客户端通过受保护安装位置的固定 helper、UAC 和身份认证 pipe 执行显式 Probe／Apply，保留实际进程退出状态。CLI 与 GUI 的检查、缓存预览、应用和待完成状态已接线。默认构建不启用候选功能，编译时 `windows-fnlock-candidate` 仅用于单独安排的验收候选；当前固定支持清单只有 candidate，没有 `runtime_accepted` 记录。
+
+Windows x64 MSI 配方、发行清单及执行权限清单已编写；维护 DLL 已在 Linux 上通过 MinGW 编译和链接，不能代替 MSVC、WiX／MSI 构建或真实 Windows 安装、升级、Repair、UAC、Fn 按键与恢复验收。最终 Rust／Python 验证仍在进行，结果与未完成项见候选收据；[Windows 构建说明](../packaging/windows/README.md)给出实际参数。此进展不证明全型号兼容，不关闭任何功能族或上游问题。
 
 ## 已有事实和本版范围
 
@@ -22,7 +28,9 @@
 
 首版不包含驱动自动安装、原厂服务接管、充电、性能档位、风扇、HID 灯效、任意地址或任意 IOCTL。原厂相关参数不从型号相近、函数名称或接口名称推导。
 
-## 当前代码缺口
+## 设计形成时的代码缺口（历史）
+
+以下列出接入前的状态，用于解释设计约束，不代表本轮实现后的当前缺口；后续实现及验证范围见开头的候选收据。
 
 - [oem.rs](../console/crates/core/src/oem.rs) 的非 Linux 枚举为空，计划与写入均 unavailable；需要真实 Windows 分支。
 - [privilege.rs](../console/crates/core/src/privilege.rs) 的非 Linux `apply_oem` 直接退回 Service，`apply_root` 不支持 Windows；接入写入时必须同时替换此退路，不能悄悄让整个 GUI 提权。

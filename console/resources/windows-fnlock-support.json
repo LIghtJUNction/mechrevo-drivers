@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "contracts": [
+    {
+      "id": "gm6px0x-mro07-uwacpi-10.48.11.331-fnlock-v1",
+      "stage": "candidate",
+      "smbios": {
+        "system_vendor": "MECHREVO",
+        "product_name": "Kuangshi16Pro Series GM6PX0X",
+        "board_vendor": "MECHREVO",
+        "board_name": "GM6PX0X",
+        "bios_vendor": "American Megatrends International, LLC.",
+        "bios_version": "N.1.09MRO07"
+      },
+      "raw_dsdt_sha256": "de42c0d802ed746c1d032bf53ebb3b80f92172b8fb55e115b0e433566f542cda",
+      "driver": {
+        "hardware_id": "ACPI\\INOU0000",
+        "service": "UWACPIDriver",
+        "inf_version": "10/28/2025,10.48.11.331",
+        "driver_version": "10.48.11.331",
+        "disk_file_sha256": "6e360ee4a0c42b2a4eaf46208c1592c87f8cd71aca2a6c52831a2ad356e61235"
+      },
+      "architecture": "x86_64",
+      "buffer_contract_version": 1,
+      "runtime_acceptance": null
+    }
+  ]
+}

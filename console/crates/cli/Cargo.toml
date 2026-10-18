@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+windows-fnlock-candidate = ["mechrevo-console-core/windows-fnlock-candidate"]
+
 [[bin]]
 name = "mechrevo-console"
 path = "src/main.rs"

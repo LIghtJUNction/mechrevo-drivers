@@ -8,6 +8,7 @@ pub mod cpu_power;
 pub mod fan_curve;
 pub mod oem;
 pub mod privilege;
+pub mod windows_oem;
 pub use brightness::{BrightnessApplyResult, BrightnessDevice, BrightnessPlan};
 pub use oem::{OemApplyResult, OemControl, OemControlKind, OemDomain, OemPlan, OemValue};
 #[cfg(any(target_os = "linux", test))]

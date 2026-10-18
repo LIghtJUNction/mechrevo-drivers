@@ -30,13 +30,28 @@ GUI_EMBEDDED_FONTS = (
     "crates/gui/assets/fonts/CormorantGaramond-Italic.ttf",
     "crates/gui/assets/fonts/Manrope.ttf",
 )
+WINDOWS_REQUIRED_RESOURCES = (
+    "resources/windows-fnlock-support.json",
+    "resources/windows/console-cli.manifest",
+    "resources/windows/console-gui.manifest",
+    "resources/windows/console-oem-helper.manifest",
+    "resources/windows/installer-guard.c",
+    "resources/windows/release-manifest.schema.json",
+    "resources/windows/embed-gnu-manifest.rs",
+)
 CONSOLE_REQUIRED_RESOURCES = (
     "resources/org.mechrevo.console.oem.policy",
     "resources/org.mechrevo.console.fan.policy",
+    *WINDOWS_REQUIRED_RESOURCES,
 )
 ROOT_REQUIRED_RUNTIME_INPUTS = (
     "scripts/mechrevo_power.py",
     "scripts/mechrevo-power-console-helper",
+    "packaging/windows/console.wxs",
+    "packaging/windows/build.ps1",
+    "packaging/windows/verify-installed.ps1",
+    "console/crates/cli/build.rs",
+    "console/crates/gui/build.rs",
 )
 ROOT_REQUIRED_TEST_RUNTIME_INPUTS = (
     "tests/fixtures/power_console_wire.py",

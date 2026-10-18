@@ -222,7 +222,15 @@ pub fn apply_oem(service: &Service, plan: &OemPlan) -> Result<OemApplyResult, Co
         )?;
         decode_reply(&request, output)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (service, plan);
+        Err(ControlError::new(
+            "windows_fnlock_authorized_probe_required",
+            "Use the Windows Fn-lock client to authorize a fresh probe and apply its bound plan",
+        ))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         service.apply_oem(plan)
     }

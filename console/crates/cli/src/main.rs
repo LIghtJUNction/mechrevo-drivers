@@ -4,6 +4,7 @@ use mechrevo_console_core::{
     Snapshot, ThermalSample,
 };
 use serde_json::{json, Value};
+mod windows_fn_cli;
 #[cfg(any(target_os = "linux", test))]
 use std::io::Read;
 use std::{
@@ -14,7 +15,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--expected-current RAW] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nBrightness --dry-run never writes or invokes a brightness setter. Applied output\nseparates source, selected write_backend, requested_control and actual_value.\n--expected-current RAW requires a target: RAW is the raw OS control value, not\na percent. This optional stale-request guard is not atomic kernel CAS.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--expected-current RAW] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nBrightness --dry-run never writes or invokes a brightness setter. Applied output\nseparates source, selected write_backend, requested_control and actual_value.\n--expected-current RAW requires a target: RAW is the raw OS control value, not\na percent. This optional stale-request guard is not atomic kernel CAS.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. oem set --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 const CPU_POWER_HELP: &str = "\nCPU PL1 policy (independent of OS power profiles):\n  mechrevo-console cpu-power probe\n  mechrevo-console cpu-power set WATTS [--dry-run]\n      [--target-celsius native|90] [--polling-seconds native|1]\n      [--rapl-debounce-seconds native|0]\n  mechrevo-console cpu-power <clear|recover|reapply> [--dry-run]\n\nCPU commands require explicit authorization for their read-only probe. A CPU\n--dry-run probes, then previews locally without executing a policy change.\nSet preserves every omitted option from the observed complete policy; on a\nnative unmanaged host, absent options remain explicit null. Native and 90/1/0\nare distinct settings. Allowed watts come from the qualified controller.\nClear/recover return to native thermald policy, not a fixed watt value.\nExecuted CPU policies persist after this command exits. JSON output is default.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
@@ -28,6 +29,7 @@ enum Action {
     Brightness(Option<u8>, Option<String>, bool, Option<u32>),
     OemList,
     OemSet(String, String, bool),
+    WindowsFn(windows_fn_cli::Action),
     FanValidate(PathBuf),
     FanHold(PathBuf),
     CpuPower(CliCpuPowerAction),
@@ -177,6 +179,9 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             }
             Ok(Action::Brightness(percent, device, dry, expected_current))
         }
+        "oem" if rest.first().is_some_and(|arg| arg == "windows-fn") => {
+            windows_fn_cli::parse(&rest[1..]).map(Action::WindowsFn)
+        }
         "oem" if rest.len() == 1 && rest[0] == "list" => Ok(Action::OemList),
         "oem" if (rest.len() == 3 || rest.len() == 4) && rest[0] == "set" => {
             let id = text(&rest[1])?;
@@ -191,7 +196,7 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             }
             Ok(Action::OemSet(id.into(), value.into(), dry))
         }
-        "oem" => Err(usage("Use oem list or oem set ID VALUE [--dry-run]")),
+        "oem" => Err(usage("Use oem list, oem set ID VALUE [--dry-run], or oem windows-fn probe|set on|off [--dry-run]")),
         "fan"
             if rest.len() == 3
                 && rest[0] == "validate"
@@ -1973,7 +1978,7 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
     let mut stdout = io::stdout().lock();
     let output = match action {
         Action::Help => {
-            write!(stdout, "{HELP}{CPU_POWER_HELP}")
+            write!(stdout, "{HELP}{CPU_POWER_HELP}{}", windows_fn_cli::HELP)
                 .map_err(|e| ControlError::new("output_failed", e.to_string()))?;
             return Ok(());
         }
@@ -2030,6 +2035,7 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         Action::Models(query) => json!(service.catalog(&query)),
         Action::OemList => json!(service.oem_controls()),
         Action::OemSet(id, value, dry_run) => set_oem(service, &id, &value, dry_run)?,
+        Action::WindowsFn(command) => return windows_fn_cli::run(command, &mut stdout),
         Action::FanValidate(path) => curve_validation_json(&load_curve_file(&path)?),
         Action::CpuPower(command) => return cpu_power_cli::run(command, &mut stdout),
         Action::FanHold(path) => {
@@ -2076,7 +2082,7 @@ fn main() {
     if let Err(error) = result {
         let _ = write_json(
             &mut io::stderr().lock(),
-            &brightness_cli::error_document(&error),
+            &windows_fn_cli::error_document(&error, brightness_cli::error_document(&error)),
         );
         std::process::exit(2)
     }

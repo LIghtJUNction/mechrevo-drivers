@@ -2,6 +2,22 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
+## Windows Fn 锁源码候选（尚未安装）
+
+本轮 Windows Fn 锁源码已接入真实 Win32 设备读写、完整 EC 字节的条件修改／独立回读／条件恢复、固件与官方驱动资格检查，以及受保护安装位置内的限权 helper。GUI／CLI 保持普通用户身份，只有显式检查或应用才请求 UAC；自动刷新和本地缓存预览不提权。CLI 候选入口为：
+
+```powershell
+mechrevo-console.exe oem windows-fn probe
+mechrevo-console.exe oem windows-fn set on --dry-run
+mechrevo-console.exe oem windows-fn set off
+```
+
+`windows-fn set --dry-run` 先授权只读检查，再做本地预览，不写 Fn 状态；它与不会提权的通用 `oem set --dry-run` 不同。应用不会因退出自动撤销，失败或未知结果不会自动重试；helper 尚未确认退出时保留待完成状态。GUI 已接检查、预览、显式应用和等待完成流程，但没有 Windows 原生 GUI 或实际 Fn 按键验收。
+
+固定支持清单当前只有未验收 candidate；默认关闭 `windows-fnlock-candidate` 编译功能，没有正式 `runtime_accepted` 名单，也没有用户自填清单、地址或跳过资格的运行开关。MSI 配方及维护 gate 已落源码；维护 DLL 仅通过 MinGW 交叉编译／链接，MSVC／WiX／MSI 构建、签名发布、Windows 安装升级／Repair、UAC 及硬件读写均待验收。最终离线套件仍待本轮验证结果，不能把此前检查当作最终源码通过。[候选收据](verification/windows-fnlock-control.json)、[历史设计约束](WINDOWS-FNLOCK-CONTROL-DESIGN.md)、[Windows 构建说明](../packaging/windows/README.md)。
+
+本机已安装控制台仍为下文 Linux `0.1.0.r171.g00e3998-1`，本轮没有安装 Windows 候选、重载驱动或重启，也不增加完整兼容或问题已解决的结论。
+
 ## r171 控制台已安装（2026-10-18）
 
 控制台 `0.1.0.r171.g00e3998-1` 已真实安装，功能源码为本地签名提交 `00e3998a5bc35acde240c08b91b2693ac444e5c8`。59 份输入与最终 395 项 Rust／135 项 Python 控制台检查一致；格式、Clippy 和 Windows 目标编译通过，Windows 仍未实机验收。11 项载荷的字节、模式和 root 归属与包一致；控制台、原功耗工具、原驱动包完整性分别为 23／26／126 项，均为零改动。[r171 安装收据](verification/deployment-console-r171.json)

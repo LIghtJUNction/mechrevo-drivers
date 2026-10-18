@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mechrevo Console protected Windows release identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release_id", "source_commit", "architecture", "trust", "files"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "architecture": {"const": "x86_64"},
+    "trust": {"enum": ["development_candidate", "authenticode"]},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mechrevo-console.exe", "mechrevo-console-gui.exe", "mechrevo-console-oem-helper.exe"],
+      "properties": {
+        "mechrevo-console.exe": {"$ref": "#/$defs/sha256"},
+        "mechrevo-console-gui.exe": {"$ref": "#/$defs/sha256"},
+        "mechrevo-console-oem-helper.exe": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+  "$comment": "Use strict UTF-8 without BOM and reject duplicate keys before schema validation. This protected sidecar hashes exactly three final executables, never itself. Both release_id and source_commit must equal compile-time identities in the authenticating executables. The support catalog is compiled into the binaries; this is not a user-extensible hardware allowlist."
+}

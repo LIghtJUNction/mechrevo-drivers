@@ -44,6 +44,10 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.oem_policy.write_text('<policyconfig><action id="org.mechrevo.console.oem"/></policyconfig>\n')
         self.fan_policy = self.resources / "org.mechrevo.console.fan.policy"
         self.fan_policy.write_text('<policyconfig><action id="org.mechrevo.console.fan"/></policyconfig>\n')
+        self.windows_resources = [self.root / "console" / name for name in verify.WINDOWS_REQUIRED_RESOURCES]
+        for resource in self.windows_resources:
+            resource.parent.mkdir(parents=True, exist_ok=True)
+            resource.write_text("fixture Windows release input: " + resource.name + "\n")
         self.uapi = self.root / "src/uniwill_fan_curve_ioctl.h"
         self.uapi.parent.mkdir()
         self.uapi.write_text("/* fixture shared fan ABI */\n")
@@ -101,9 +105,9 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 17)
+        self.assertEqual(len(result["source_before"]["files"]), 29)
         for asset in (*self.fonts, self.font_license, self.oem_policy, self.fan_policy, self.uapi,
-                      *self.fixed_inputs):
+                      *self.fixed_inputs, *self.windows_resources):
             self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
         self.assertIn("production backend and protocol-test input fingerprints", result["scope"])
         self.assertIn("no standalone Python CPU-power domain suite", result["scope"])
@@ -294,9 +298,34 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertNotEqual(result["source_before"]["files"]["src/uniwill_fan_curve_ioctl.h"],
                             result["source_after"]["files"]["src/uniwill_fan_curve_ioctl.h"])
 
+    def test_windows_release_resource_omission_blocks_before_cargo_and_changes_invalidate(self):
+        for path in self.windows_resources:
+            with self.subTest(path=path.name):
+                original = path.read_bytes()
+                relative = str(path.relative_to(self.root))
+                path.unlink()
+                self.calls.clear()
+                result = self.run_verifier()
+                self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
+                self.assertIn(relative, result["source_before"]["missing"])
+                self.assertFalse(any(call[0][1] in {"test", "check", "clippy", "fmt"}
+                                     for call in self.calls))
+                path.write_bytes(original)
+                self.mutate = lambda resource=path: resource.write_bytes(resource.read_bytes() + b"changed\n")
+                result = self.run_verifier()
+                self.assertEqual((result["exit_code"], result["outcome"]), (2, "incomplete"))
+                self.assertFalse(result["source_unchanged"])
+                self.assertNotEqual(result["source_before"]["files"][relative],
+                                    result["source_after"]["files"][relative])
+                path.write_bytes(original)
+                self.mutate = None
+
     def test_each_fixed_backend_or_test_input_edit_changes_its_hash_and_total_fingerprint(self):
         self.assertEqual({str(path.relative_to(self.root)) for path in self.runtime_inputs},
-                         {"scripts/mechrevo_power.py", "scripts/mechrevo-power-console-helper"})
+                         {"scripts/mechrevo_power.py", "scripts/mechrevo-power-console-helper",
+                          "packaging/windows/console.wxs", "packaging/windows/build.ps1",
+                          "packaging/windows/verify-installed.ps1", "console/crates/cli/build.rs",
+                          "console/crates/gui/build.rs"})
         self.assertEqual({str(path.relative_to(self.root)) for path in self.test_runtime_inputs},
                          {"tests/fixtures/power_console_wire.py", "tests/test_power_console_protocol.py",
                           "tests/test_mechrevo_power.py"})

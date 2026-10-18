@@ -10,6 +10,7 @@ description = "Evidence-backed native Windows/Linux control console"
 default = []
 gui = ["dep:eframe", "dep:egui_system_font_provider"]
 screenshot = ["gui", "eframe/__screenshot"]
+windows-fnlock-candidate = ["mechrevo-console-core/windows-fnlock-candidate"]
 
 [dependencies]
 mechrevo-console-core = { path = "../core" }

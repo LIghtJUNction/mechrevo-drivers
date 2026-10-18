@@ -13,6 +13,11 @@ use mechrevo_console_core::fan_curve::{
     client::{FanBrokerClient, FanClientUpdate},
 };
 use mechrevo_console_core::fan_curve::{FanCurve, ValidatedFanCurve};
+use mechrevo_console_core::windows_oem::{
+    self, Client as WindowsOemClient, ClientHelperLifetime as WindowsFnLifetime,
+    Outcome as WindowsFnOutcome, Receipt as WindowsFnReceipt, Recovery as WindowsFnRecovery,
+    Status as WindowsFnStatus, Update as WindowsFnUpdate,
+};
 use mechrevo_console_core::{
     ApplyResult, BrightnessApplyResult, BrightnessPlan, CapabilityStatus, CatalogModel,
     ControlError, OemApplyResult, OemControl, OemDomain, OemPlan, OemValue, PowerProfile,
@@ -37,6 +42,7 @@ mod cpu_power_controller;
 pub mod desktop;
 #[cfg(feature = "gui")]
 pub mod fan_editor;
+mod windows_fn_controller;
 
 pub trait Backend: Send + 'static {
     fn snapshot(&mut self) -> Snapshot;
@@ -89,6 +95,17 @@ pub trait Backend: Send + 'static {
     fn cpu_power_execute(&mut self, _plan: &CpuPlan) -> CpuPowerUpdate {
         unavailable_cpu_power()
     }
+    /// Explicit Windows-only authorization; never used by snapshot or sampling.
+    fn windows_fn_probe(&mut self) -> WindowsFnUpdate {
+        unavailable_windows_fn()
+    }
+    fn windows_fn_apply(&mut self, _plan: &OemPlan) -> WindowsFnUpdate {
+        unavailable_windows_fn()
+    }
+    /// Drain/wait only the existing helper. This must never spawn or replay.
+    fn windows_fn_finish_pending(&mut self) -> WindowsFnUpdate {
+        unavailable_windows_fn()
+    }
     fn fan_probe(&mut self) -> FanClientUpdate {
         unavailable_fan()
     }
@@ -135,12 +152,28 @@ fn unavailable_fan() -> FanClientUpdate {
     }
 }
 
+fn unavailable_windows_fn() -> WindowsFnUpdate {
+    WindowsFnUpdate {
+        status: None,
+        outcome: WindowsFnOutcome::RejectedBeforeWrite,
+        result: None,
+        receipt: WindowsFnReceipt::default(),
+        error: Some(ControlError::new(
+            "windows_fn_unavailable",
+            "此后端未提供 Windows Fn 锁授权接口。",
+        )),
+        helper_reaped: true,
+        helper_lifetime: WindowsFnLifetime::NotStarted,
+    }
+}
+
 /// One service and one persistent broker client belong to the worker. Merely
 /// constructing this backend never launches authentication or claims a lease.
 pub struct NativeBackend {
     service: Service,
     fan: FanBrokerClient,
     cpu_power: CpuPowerClient,
+    windows_oem: WindowsOemClient,
 }
 impl Default for NativeBackend {
     fn default() -> Self {
@@ -153,6 +186,7 @@ impl NativeBackend {
             service: Service::new(),
             fan: FanBrokerClient::new(),
             cpu_power: CpuPowerClient::new(),
+            windows_oem: WindowsOemClient::new(),
         }
     }
 }
@@ -196,6 +230,15 @@ impl Backend for NativeBackend {
     }
     fn cpu_power_execute(&mut self, plan: &CpuPlan) -> CpuPowerUpdate {
         self.cpu_power.execute_authorized(plan)
+    }
+    fn windows_fn_probe(&mut self) -> WindowsFnUpdate {
+        self.windows_oem.probe_authorized()
+    }
+    fn windows_fn_apply(&mut self, plan: &OemPlan) -> WindowsFnUpdate {
+        self.windows_oem.apply_authorized(plan)
+    }
+    fn windows_fn_finish_pending(&mut self) -> WindowsFnUpdate {
+        self.windows_oem.finish_pending()
     }
     fn fan_probe(&mut self) -> FanClientUpdate {
         self.fan.probe()
@@ -316,6 +359,13 @@ pub enum FanOperation {
     Shutdown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsFnOperation {
+    Probe,
+    Apply,
+    FinishPending,
+}
+
 #[derive(Debug)]
 enum Job {
     Refresh,
@@ -329,6 +379,9 @@ enum Job {
     ApplyOem(OemPlan),
     ProbeCpuPower,
     ExecuteCpuPower(CpuPlan),
+    ProbeWindowsFn,
+    ApplyWindowsFn(OemPlan),
+    FinishWindowsFn,
     ProbeFan,
     RefreshFan,
     ApplyFan(ValidatedFanCurve),
@@ -344,7 +397,9 @@ impl Job {
             | Self::ThermalRefresh
             | Self::ProbeFan
             | Self::RefreshFan
-            | Self::ProbeCpuPower => JobKind::Refresh,
+            | Self::ProbeCpuPower
+            | Self::ProbeWindowsFn
+            | Self::FinishWindowsFn => JobKind::Refresh,
             Self::Preview(_) | Self::PreviewBrightness { .. } | Self::PreviewOem { .. } => {
                 JobKind::Preview
             }
@@ -352,6 +407,7 @@ impl Job {
             | Self::ApplyBrightness(_)
             | Self::ApplyOem(_)
             | Self::ExecuteCpuPower(_)
+            | Self::ApplyWindowsFn(_)
             | Self::ApplyFan(_)
             | Self::RestoreFan
             | Self::ShutdownFan => JobKind::Apply,
@@ -364,6 +420,14 @@ impl Job {
             Self::ApplyFan(_) => Some(FanOperation::Apply),
             Self::RestoreFan => Some(FanOperation::Restore),
             Self::ShutdownFan => Some(FanOperation::Shutdown),
+            _ => None,
+        }
+    }
+    fn windows_fn_operation(&self) -> Option<WindowsFnOperation> {
+        match self {
+            Self::ProbeWindowsFn => Some(WindowsFnOperation::Probe),
+            Self::ApplyWindowsFn(_) => Some(WindowsFnOperation::Apply),
+            Self::FinishWindowsFn => Some(WindowsFnOperation::FinishPending),
             _ => None,
         }
     }
@@ -402,6 +466,11 @@ enum Reply {
         update: CpuPowerUpdate,
         finished_at: Instant,
     },
+    WindowsFn {
+        operation: WindowsFnOperation,
+        update: Box<WindowsFnUpdate>,
+        finished_at: Instant,
+    },
     Fan {
         operation: FanOperation,
         curve: Option<ValidatedFanCurve>,
@@ -436,6 +505,7 @@ struct InFlight {
     fan_operation: Option<FanOperation>,
     thermal_refresh: bool,
     cpu_power_operation: bool,
+    windows_fn_operation: Option<WindowsFnOperation>,
     brightness_reconcile: bool,
     brightness_plan: Option<BrightnessPlan>,
 }
@@ -498,6 +568,24 @@ pub struct Controller {
     pub cpu_power_response_finished: Option<Instant>,
     cpu_power_revision: u64,
     cpu_power_preview_revision: Option<u64>,
+    pub windows_fn_status: Option<WindowsFnStatus>,
+    pub windows_fn_requested: Option<bool>,
+    pub windows_fn_preview: Option<OemPlan>,
+    pub windows_fn_error: Option<ControlError>,
+    pub windows_fn_draft_error: Option<ControlError>,
+    pub windows_fn_receipt: Option<WindowsFnReceipt>,
+    pub windows_fn_followup_receipt: Option<WindowsFnReceipt>,
+    pub windows_fn_result: Option<OemApplyResult>,
+    pub windows_fn_outcome: Option<WindowsFnOutcome>,
+    pub windows_fn_helper_reaped: bool,
+    pub windows_fn_helper_lifetime: WindowsFnLifetime,
+    pub windows_fn_state_unknown: bool,
+    pub windows_fn_needs_probe: bool,
+    /// Reception time only; authorization and hardware freshness are separate.
+    pub windows_fn_received_at: Option<std::time::SystemTime>,
+    pub windows_fn_response_finished: Option<Instant>,
+    windows_fn_revision: u64,
+    windows_fn_preview_revision: Option<u64>,
     pub error: Option<ControlError>,
     pub last_refresh: Option<Instant>,
     /// Full-device discovery and thermal samples retain separate clocks.
@@ -626,6 +714,21 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
             update: backend.cpu_power_execute(&plan),
             finished_at: Instant::now(),
         },
+        Job::ProbeWindowsFn => Reply::WindowsFn {
+            operation: WindowsFnOperation::Probe,
+            update: Box::new(backend.windows_fn_probe()),
+            finished_at: Instant::now(),
+        },
+        Job::ApplyWindowsFn(plan) => Reply::WindowsFn {
+            operation: WindowsFnOperation::Apply,
+            update: Box::new(backend.windows_fn_apply(&plan)),
+            finished_at: Instant::now(),
+        },
+        Job::FinishWindowsFn => Reply::WindowsFn {
+            operation: WindowsFnOperation::FinishPending,
+            update: Box::new(backend.windows_fn_finish_pending()),
+            finished_at: Instant::now(),
+        },
 
         Job::ProbeFan => Reply::Fan {
             operation: FanOperation::Probe,
@@ -708,9 +811,10 @@ impl Controller {
                     let thermal_refresh = matches!(&request.job, Job::ThermalRefresh);
                     let cpu_power_operation = matches!(&request.job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
                     let cpu_probe = matches!(&request.job, Job::ProbeCpuPower);
+                    let windows_fn_operation = request.job.windows_fn_operation();
                     let brightness_plan = match &request.job { Job::ApplyBrightness(plan) => Some(plan.clone()), _ => None };
                     let thermal_started_at = Instant::now();
-                    let preserve_backend = fan_may_live || fan_operation.is_some() || cpu_power_operation || brightness_plan.is_some();
+                    let preserve_backend = fan_may_live || fan_operation.is_some() || cpu_power_operation || brightness_plan.is_some() || windows_fn_operation.is_some();
                     let result = catch_unwind(AssertUnwindSafe(|| execute_job(&mut backend, request.job)));
                     let panicked = result.is_err();
                     let mut reply = result.unwrap_or_else(|_| {
@@ -719,7 +823,10 @@ impl Controller {
                                 "温度与转速采样异常，自动采样已暂停；请点击刷新重试。"
                             } else { "后台控制发生异常；恢复完成前不能关闭会话。" },
                         );
-                        if let Some(plan) = brightness_plan {
+                        if let Some(operation) = windows_fn_operation {
+                            Reply::WindowsFn { operation, finished_at: Instant::now(), update: Box::new(windows_fn_controller::uncertain_update(
+                                ControlError::new("windows_fn_worker_panicked", "Windows Fn 锁后台异常，设备状态和辅助进程退出尚未确认。"))) }
+                        } else if let Some(plan) = brightness_plan {
                             Reply::BrightnessFailed { plan,
                                 error: ControlError::new("brightness_worker_panicked", "亮度操作异常，未确认上次调节结束，不能再次提交。"),
                                 writer_unknown: true }
@@ -818,6 +925,23 @@ impl Controller {
             cpu_power_response_finished: None,
             cpu_power_revision: 0,
             cpu_power_preview_revision: None,
+            windows_fn_status: None,
+            windows_fn_requested: None,
+            windows_fn_preview: None,
+            windows_fn_error: None,
+            windows_fn_draft_error: None,
+            windows_fn_receipt: None,
+            windows_fn_followup_receipt: None,
+            windows_fn_result: None,
+            windows_fn_outcome: None,
+            windows_fn_helper_reaped: true,
+            windows_fn_helper_lifetime: WindowsFnLifetime::NotStarted,
+            windows_fn_state_unknown: false,
+            windows_fn_needs_probe: true,
+            windows_fn_received_at: None,
+            windows_fn_response_finished: None,
+            windows_fn_revision: 0,
+            windows_fn_preview_revision: None,
             error: None,
             last_refresh: None,
             thermal_sample: None,
@@ -832,6 +956,7 @@ impl Controller {
         self.in_flight.is_some()
             || self.oem_write_uncertain
             || !self.cpu_power_helper_reaped
+            || !self.windows_fn_lifetime_clean()
             || (self.close_requested
                 && self.shutdown_attempted
                 && self.fan_cleanup_complete
@@ -843,6 +968,7 @@ impl Controller {
     pub fn write_in_progress(&self) -> bool {
         self.oem_write_uncertain
             || !self.cpu_power_helper_reaped
+            || !self.windows_fn_lifetime_clean()
             || self
                 .in_flight
                 .as_ref()
@@ -864,6 +990,12 @@ impl Controller {
     }
 
     pub fn fan_apply_unavailable_reason(&self) -> Option<&str> {
+        if self.windows_fn_state_unknown
+            || !self.windows_fn_lifetime_clean()
+            || self.windows_fn_preview.is_some()
+        {
+            return Some("Windows Fn 锁事务或预览尚未确认，不能开始其他写入。");
+        }
         if self.cpu_power_state_unknown || !self.cpu_power_helper_reaped {
             return Some("CPU 功耗事务尚未确认，不能开始其他写入。请先检查其状态。");
         }
@@ -960,6 +1092,7 @@ impl Controller {
         self.close_requested = true;
         self.invalidate_previews();
         self.invalidate_cpu_power_preview();
+        self.invalidate_windows_fn_preview();
         self.drive_close();
     }
 
@@ -968,6 +1101,7 @@ impl Controller {
             && self.in_flight.is_none()
             && !self.oem_write_uncertain
             && self.cpu_power_helper_reaped
+            && self.windows_fn_lifetime_clean()
             && self.worker.is_none()
             && !self.fan_session_held
             && self.fan_helper_reaped
@@ -980,6 +1114,7 @@ impl Controller {
             && self.in_flight.is_none()
             && !self.oem_write_uncertain
             && self.cpu_power_helper_reaped
+            && self.windows_fn_lifetime_clean()
             && self.worker_available
             && self.enqueue(Job::ShutdownFan).is_ok()
         {
@@ -1052,6 +1187,7 @@ impl Controller {
             || self.oem_preview.is_some()
             || self.fan_preview.is_some()
             || self.cpu_power_preview.is_some()
+            || self.windows_fn_preview.is_some()
     }
 
     fn invalidate_previews(&mut self) {
@@ -1102,7 +1238,7 @@ impl Controller {
 
     /// Preview checks the typed input without probing, authorizing or leasing.
     pub fn preview_fan(&mut self) -> Result<(), SubmitError> {
-        if self.cpu_power_preview.is_some() {
+        if self.cpu_power_preview.is_some() || self.windows_fn_preview.is_some() {
             return Err(SubmitError::Busy);
         }
         if self.busy() {
@@ -1217,6 +1353,12 @@ impl Controller {
     }
 
     pub fn brightness_unavailable_reason(&self) -> Option<&str> {
+        if self.windows_fn_state_unknown
+            || !self.windows_fn_lifetime_clean()
+            || self.windows_fn_preview.is_some()
+        {
+            return Some("Windows Fn 锁事务或预览尚未确认，请先完成检查或取消预览。");
+        }
         if self.brightness_writer_may_continue {
             return Some("尚未确认上次调节结束，不能再次提交。刷新只能核对当前读数。");
         }
@@ -1513,6 +1655,8 @@ impl Controller {
             || (self.cpu_power_preview.is_some()
                 && !matches!(&job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_)))
             || (self.cpu_power_state_unknown && job.kind() == JobKind::Apply)
+            || (self.windows_fn_preview.is_some() && job.windows_fn_operation().is_none())
+            || (self.windows_fn_state_unknown && job.kind() == JobKind::Apply)
         {
             return Err(SubmitError::Busy);
         }
@@ -1520,7 +1664,7 @@ impl Controller {
     }
 
     fn enqueue(&mut self, job: Job) -> Result<(), SubmitError> {
-        if self.busy() {
+        if self.busy() && !matches!(&job, Job::FinishWindowsFn) {
             return Err(SubmitError::Busy);
         }
         if !self.worker_available {
@@ -1531,6 +1675,7 @@ impl Controller {
         let fan_operation = job.fan_operation();
         let thermal_refresh = matches!(&job, Job::ThermalRefresh);
         let cpu_power_operation = matches!(&job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
+        let windows_fn_operation = job.windows_fn_operation();
         let brightness_operation = matches!(
             &job,
             Job::PreviewBrightness { .. } | Job::ApplyBrightness(_) | Job::RefreshBrightness
@@ -1556,6 +1701,7 @@ impl Controller {
                     fan_operation,
                     thermal_refresh,
                     cpu_power_operation,
+                    windows_fn_operation,
                     brightness_reconcile,
                     brightness_plan,
                 });
@@ -1565,6 +1711,7 @@ impl Controller {
                 if fan_operation.is_none()
                     && !thermal_refresh
                     && !cpu_power_operation
+                    && windows_fn_operation.is_none()
                     && !brightness_operation
                 {
                     self.error = None;
@@ -1635,6 +1782,13 @@ impl Controller {
                         finished_at,
                     } => {
                         self.accept_cpu_power_update(probe, update, finished_at);
+                    }
+                    Reply::WindowsFn {
+                        operation,
+                        update,
+                        finished_at,
+                    } => {
+                        self.accept_windows_fn_update(operation, *update, finished_at);
                     }
                     Reply::Preview(plan) => {
                         // A selection made while a request ran must invalidate its late result.
@@ -1864,6 +2018,20 @@ impl Controller {
     }
 
     fn stopped(&mut self) {
+        if let Some(operation) = self
+            .in_flight
+            .as_ref()
+            .and_then(|job| job.windows_fn_operation)
+        {
+            self.accept_windows_fn_update(
+                operation,
+                windows_fn_controller::uncertain_update(ControlError::new(
+                    "windows_fn_worker_disconnected",
+                    "Windows Fn 锁后台中断，辅助进程退出尚未确认。",
+                )),
+                Instant::now(),
+            );
+        }
         if let Some(plan) = self
             .in_flight
             .as_ref()
@@ -1912,6 +2080,7 @@ impl Controller {
         self.oem_preview = None;
         self.fan_preview = None;
         self.invalidate_cpu_power_preview();
+        self.invalidate_windows_fn_preview();
         if self.error.is_none() {
             self.error = Some(ControlError::new(
                 "worker_stopped",

@@ -1,8 +1,11 @@
 //! This installed executable has one operation. It never accepts a shell,
 //! arbitrary file, alternate sysfs root, plugin, environment backend or daemon.
+#[cfg(not(target_os = "windows"))]
 use mechrevo_console_core::privilege::{self, HelperOutcome};
+#[cfg(not(target_os = "windows"))]
 use std::io::Write;
 
+#[cfg(not(target_os = "windows"))]
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let result = if args.len() == 2 && args[0] == "--apply-plan" {
@@ -41,4 +44,10 @@ fn main() {
         std::process::exit(3);
     }
     std::process::exit(exit);
+}
+
+#[cfg(target_os = "windows")]
+fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    std::process::exit(mechrevo_console_core::windows_oem::helper::run(&args) as i32);
 }

@@ -13,6 +13,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE = ROOT / "packaging/arch/mechrevo-console"
+WINDOWS_BUILD_INPUTS = (
+    "console/crates/cli/build.rs", "console/crates/gui/build.rs",
+    "console/resources/windows/embed-gnu-manifest.rs",
+    "console/resources/windows/console-cli.manifest",
+    "console/resources/windows/console-gui.manifest",
+    "console/resources/windows/console-oem-helper.manifest",
+    "console/resources/windows-fnlock-support.json",
+)
 SOURCE_FILES = (
     "console/Cargo.toml", "console/Cargo.lock",
     "console/crates/cli/Cargo.toml", "console/crates/cli/src/main.rs",
@@ -29,6 +37,7 @@ SOURCE_FILES = (
     "console/crates/gui/assets/fonts/Cormorant-OFL.txt",
     "console/crates/gui/assets/fonts/Manrope-OFL.txt",
     "docs/MECHREVO-CONSOLE-USER-GUIDE.md", "LICENSE",
+    *WINDOWS_BUILD_INPUTS,
 )
 BINARIES = ("mechrevo-console", "mechrevo-console-gui",
             "mechrevo-console-oem-helper", "mechrevo-console-fan-helper")
@@ -145,6 +154,77 @@ class ConsoleFanPackagingTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o644)
         self.assertFalse(installed.is_symlink())
         self.assertEqual({path.name for path in directory.iterdir()}, {"MECHREVO-CONSOLE.md"})
+
+    def test_build_enables_only_production_gui_feature_in_real_cargo_arguments(self):
+        # Execute build() with an inert cargo executable. This observes actual
+        # shell expansion and arguments without compiling or running helpers.
+        tools = self.base / "tools"
+        tools.mkdir()
+        capture = self.base / "cargo-arguments.bin"
+        cargo = tools / "cargo"
+        cargo.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$CARGO_ARGUMENTS_FILE"\n')
+        cargo.chmod(0o755)
+        self.env["PATH"] = str(tools) + os.pathsep + self.env["PATH"]
+        self.env["CARGO_ARGUMENTS_FILE"] = str(capture)
+        for custom_target in (True, False):
+            with self.subTest(custom_target=custom_target):
+                if custom_target:
+                    self.env["CARGO_TARGET_DIR"] = str(self.target)
+                    expected_target = self.target
+                else:
+                    self.env.pop("CARGO_TARGET_DIR", None)
+                    expected_target = self.src / "cargo-target"
+                result = self.invoke("build")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                argv = capture.read_bytes().split(b"\0")
+                self.assertEqual(argv.pop(), b"")
+                self.assertEqual([arg.decode() for arg in argv], [
+                    "build", "--manifest-path", "console/Cargo.toml",
+                    "--target-dir", str(expected_target), "--release", "--workspace",
+                    "--features", "mechrevo-console-gui/gui", "--locked", "--offline",
+                ])
+
+    def assert_windows_build_input_rejected(self, mutation):
+        for relative in WINDOWS_BUILD_INPUTS:
+            with self.subTest(relative=relative):
+                path = self.source / relative
+                original = path.read_bytes()
+                backing = self.base / "outside-source-build-input"
+                try:
+                    if mutation == "missing":
+                        path.unlink()
+                        self.commit()
+                    elif mutation == "symlink":
+                        path.rename(backing)
+                        path.symlink_to(backing)
+                        self.commit()
+                    elif mutation == "untracked":
+                        self.git("rm", "--cached", relative)
+                        self.git("commit", "--quiet", "-m", "untrack Windows build input")
+                        self.commit_id = self.git("rev-parse", "HEAD")
+                    else:
+                        self.fail("Unknown fixture mutation")
+                    for function in ("prepare", "check", "package"):
+                        with self.subTest(function=function):
+                            result = self.assert_rejected(
+                                function, "Required tracked regular source file missing")
+                            self.assertIn(relative, result.stderr)
+                finally:
+                    if path.is_symlink():
+                        path.unlink()
+                    path.write_bytes(original)
+                    if backing.exists():
+                        backing.unlink()
+                    self.commit()
+
+    def test_each_phase_rejects_missing_windows_build_inputs(self):
+        self.assert_windows_build_input_rejected("missing")
+
+    def test_each_phase_rejects_committed_symlink_windows_build_inputs(self):
+        self.assert_windows_build_input_rejected("symlink")
+
+    def test_each_phase_rejects_untracked_windows_build_inputs(self):
+        self.assert_windows_build_input_rejected("untracked")
 
     def test_each_phase_rejects_missing_user_guide(self):
         (self.source / "docs/MECHREVO-CONSOLE-USER-GUIDE.md").unlink()

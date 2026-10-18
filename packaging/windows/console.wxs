@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WiX Toolset 5.0.2, native x64, MSI 5.0. No vendor driver/service actions.
+     https://github.com/wixtoolset/wix/releases/tag/v5.0.2
+     https://docs.firegiant.com/wix/schema/wxs/permissionex/
+     A compiled MSI and real maintenance/ACL behavior still require Windows validation. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Mechrevo Console" Manufacturer="Mechrevo Console contributors"
+           Version="$(var.MsiVersion)" UpgradeCode="31B9D6D6-60C5-4F6D-A2C9-4D352CE44789"
+           Language="1033" Scope="perMachine" InstallerVersion="500" Compressed="yes">
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade Schedule="afterInstallExecute" AllowSameVersionUpgrades="no"
+                  DowngradeErrorMessage="A newer Mechrevo Console is already installed." />
+    <Upgrade Id="31B9D6D6-60C5-4F6D-A2C9-4D352CE44789">
+      <UpgradeVersion Minimum="$(var.MsiVersion)" Maximum="$(var.MsiVersion)"
+                      IncludeMinimum="yes" IncludeMaximum="yes" OnlyDetect="yes"
+                      Property="MECHREVO_SAME_VERSION" />
+    </Upgrade>
+    <Launch Condition="VersionNT64" Message="This package requires native Windows x64." />
+    <Launch Condition="ALLUSERS = 1" Message="Mechrevo Console requires a per-machine installation." />
+    <Launch Condition="Installed OR NOT MECHREVO_SAME_VERSION"
+            Message="This version is already installed. Use its registered Repair or uninstall it first." />
+    <Launch Condition="NOT RollbackDisabled"
+            Message="Windows Installer rollback must be enabled to maintain the Fn writer gate." />
+    <Launch Condition="MSIRESTARTMANAGERCONTROL = &quot;Disable&quot; AND MSIDISABLERMRESTART = 1"
+            Message="This package never shuts down or restarts a control writer. Restart Manager overrides are not supported." />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <Property Id="MsiHiddenProperties" Value="AcquireMaintenance;CommitMaintenance;RollbackMaintenance" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="MechrevoInstallFolder" Name="Mechrevo">
+        <Component Id="MechrevoFolderAcl" Guid="7AD9FC93-4C67-4721-9340-B2E1334B7ECA" Bitness="always64">
+          <CreateFolder>
+            <PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+          </CreateFolder>
+        </Component>
+        <Directory Id="ConsoleInstallFolder" Name="Console">
+          <Component Id="ConsoleFolderAcl" Guid="9104FDE1-68A5-4E2B-A826-21F3793198E1" Bitness="always64">
+            <CreateFolder>
+              <PermissionEx Sddl="O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+            </CreateFolder>
+          </Component>
+          <Component Id="ConsoleCli" Guid="*" Bitness="always64">
+            <File Id="ConsoleCliExe" Source="$(var.PayloadDir)\mechrevo-console.exe" KeyPath="yes">
+              <PermissionEx Sddl="O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)" />
+            </File>
+          </Component>
+          <Component Id="ConsoleGui" Guid="*" Bitness="always64">
+            <File Id="ConsoleGuiExe" Source="$(var.PayloadDir)\mechrevo-console-gui.exe" KeyPath="yes">
+              <PermissionEx Sddl="O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)" />
+            </File>
+          </Component>
+          <Component Id="ConsoleHelper" Guid="*" Bitness="always64">
+            <File Id="ConsoleHelperExe" Source="$(var.PayloadDir)\mechrevo-console-oem-helper.exe" KeyPath="yes">
+              <PermissionEx Sddl="O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)" />
+            </File>
+          </Component>
+          <Component Id="ConsoleReleaseIdentity" Guid="*" Bitness="always64">
+            <File Id="ConsoleReleaseJson" Source="$(var.PayloadDir)\console-release.json" KeyPath="yes">
+              <PermissionEx Sddl="O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)" />
+            </File>
+          </Component>
+          <Component Id="ConsoleLicense" Guid="*" Bitness="always64">
+            <File Source="$(var.PayloadDir)\LICENSE.txt" KeyPath="yes" />
+          </Component>
+          <Component Id="ManropeLicense" Guid="*" Bitness="always64">
+            <File Source="$(var.PayloadDir)\Manrope-OFL.txt" KeyPath="yes" />
+          </Component>
+          <Component Id="CormorantLicense" Guid="*" Bitness="always64">
+            <File Source="$(var.PayloadDir)\Cormorant-OFL.txt" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ConsoleMenuFolder" Name="Mechrevo">
+        <Component Id="ConsoleShortcut" Guid="E86BB756-C3AC-4153-9BE2-7D02284B3C89" Bitness="always64">
+          <Shortcut Id="ConsoleMenuShortcut" Name="Mechrevo Console"
+                    Target="[#ConsoleGuiExe]" WorkingDirectory="ConsoleInstallFolder" />
+          <RemoveFolder Id="RemoveConsoleMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\Mechrevo\Console" Name="ShortcutInstalled"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Embedded CA: never invoke an installed/replaceable helper to guard maintenance.
+         Rollback removes the owned gate only after file rollback. A crashed transaction
+         leaves a fail-closed gate; ordinary helpers never clear it based on a PID. -->
+    <Binary Id="MaintenanceGuardBinary" SourceFile="$(var.GuardDll)" />
+    <CustomAction Id="PrepareMaintenance" BinaryRef="MaintenanceGuardBinary" DllEntry="PrepareMaintenance" Return="check" />
+    <CustomAction Id="RollbackMaintenance" BinaryRef="MaintenanceGuardBinary" DllEntry="ReleaseMaintenance"
+                  Execute="rollback" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="AcquireMaintenance" BinaryRef="MaintenanceGuardBinary" DllEntry="AcquireMaintenance"
+                  Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="VerifyMaintenance" BinaryRef="MaintenanceGuardBinary" DllEntry="VerifyMaintenance" Return="check" />
+    <CustomAction Id="CommitMaintenance" BinaryRef="MaintenanceGuardBinary" DllEntry="ReleaseMaintenance"
+                  Execute="commit" Impersonate="no" Return="check" HideTarget="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="PrepareMaintenance" Before="InstallInitialize" />
+      <Custom Action="RollbackMaintenance" After="InstallInitialize" />
+      <Custom Action="AcquireMaintenance" After="RollbackMaintenance" />
+      <InstallExecute After="PublishProduct" />
+      <Custom Action="VerifyMaintenance" After="RemoveExistingProducts" />
+      <Custom Action="CommitMaintenance" After="VerifyMaintenance" />
+    </InstallExecuteSequence>
+    <Feature Id="Console" Title="Mechrevo Console" Level="1" Absent="disallow">
+      <ComponentRef Id="MechrevoFolderAcl" /><ComponentRef Id="ConsoleFolderAcl" />
+      <ComponentRef Id="ConsoleCli" /><ComponentRef Id="ConsoleGui" /><ComponentRef Id="ConsoleHelper" />
+      <ComponentRef Id="ConsoleReleaseIdentity" /><ComponentRef Id="ConsoleLicense" />
+      <ComponentRef Id="ManropeLicense" /><ComponentRef Id="CormorantLicense" /><ComponentRef Id="ConsoleShortcut" />
+    </Feature>
+  </Package>
+</Wix>
