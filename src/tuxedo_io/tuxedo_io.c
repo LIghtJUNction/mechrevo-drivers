@@ -30,6 +30,9 @@
 #include <linux/delay.h>
 #include <linux/version.h>
 #include <linux/dmi.h>
+#include <linux/err.h>
+#include <linux/fs.h>
+#include <linux/usb.h>
 #include "../clevo_interfaces.h"
 #include "../uniwill_interfaces.h"
 #include "tuxedo_io_ioctl.h"
@@ -814,6 +817,169 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 	return copy_result ? -EFAULT : 0;
 }
 
+/* Uniwill OEM v5.17.51.34 turns the camera on or off by enabling or disabling
+ * the Camera-class device. 0x0727 is already the custom-profile byte, so this
+ * path never writes EC RAM. It only changes authorization of a USB device whose
+ * name is a bus port, and whose product or interface says it is a camera.
+ * usb_authorize_device() is not exported to modules; the sysfs attribute is.
+ * Clevo firmware webcam commands stay on the Clevo path.
+ */
+#define UW_WEBCAM_FOUND		0
+#define UW_WEBCAM_ENABLED	1
+#define UW_WEBCAM_ENABLE	2
+
+static int uniwill_webcam_contains(const char *haystack, const char *needle)
+{
+	size_t i, j;
+
+	if (!haystack || !needle || !needle[0])
+		return 0;
+	for (i = 0; haystack[i]; ++i) {
+		for (j = 0; needle[j]; ++j) {
+			char left = haystack[i + j];
+			char right = needle[j];
+
+			if (!left)
+				return 0;
+			if (left >= 'A' && left <= 'Z')
+				left += 'a' - 'A';
+			if (right >= 'A' && right <= 'Z')
+				right += 'a' - 'A';
+			if (left != right)
+				break;
+		}
+		if (!needle[j])
+			return 1;
+	}
+	return 0;
+}
+
+static int uniwill_webcam_name_is_device(const char *name)
+{
+	size_t i;
+	int dash = 0;
+
+	if (!name || !name[0])
+		return 0;
+	for (i = 0; name[i]; ++i) {
+		char c = name[i];
+
+		if (i >= 31)
+			return 0;
+		if (c == '-') {
+			if (i == 0 || dash)
+				return 0;
+			dash = 1;
+			continue;
+		}
+		if (c == '.') {
+			if (!dash || name[i - 1] == '-' || name[i - 1] == '.')
+				return 0;
+			continue;
+		}
+		if (c < '0' || c > '9')
+			return 0;
+	}
+	if (!dash || name[i - 1] == '-' || name[i - 1] == '.')
+		return 0;
+	return 1;
+}
+
+static int uniwill_webcam_device_is_camera(struct usb_device *udev)
+{
+	int i;
+
+	if (!udev || !uniwill_webcam_name_is_device(dev_name(&udev->dev)))
+		return 0;
+	if (uniwill_webcam_contains(udev->product, "webcam") ||
+	    uniwill_webcam_contains(udev->product, "camera"))
+		return 1;
+	if (!udev->actconfig)
+		return 0;
+	for (i = 0; i < udev->actconfig->desc.bNumInterfaces; ++i) {
+		struct usb_interface *intf = udev->actconfig->interface[i];
+
+		if (intf && intf->cur_altsetting &&
+		    intf->cur_altsetting->desc.bInterfaceClass == USB_CLASS_VIDEO)
+			return 1;
+	}
+	return 0;
+}
+
+static int uniwill_webcam_write_authorized(struct usb_device *udev, int enable)
+{
+	char path[64];
+	struct file *file;
+	loff_t pos = 0;
+	char value = enable ? '1' : '0';
+	ssize_t written;
+	int length;
+
+	if (!uniwill_webcam_name_is_device(dev_name(&udev->dev)))
+		return -EINVAL;
+	length = scnprintf(path, sizeof(path), "/sys/bus/usb/devices/%s/authorized",
+			   dev_name(&udev->dev));
+	if (length < 0 || length >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+	file = filp_open(path, O_WRONLY, 0);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+	written = kernel_write(file, &value, 1, &pos);
+	filp_close(file, NULL);
+	if (written < 0)
+		return written;
+	return written == 1 ? 0 : -EIO;
+}
+
+static int uniwill_webcam_visit(struct usb_device *udev, void *data)
+{
+	int *walk = data;
+	int desired, status;
+
+	if (!uniwill_webcam_device_is_camera(udev))
+		return 0;
+	++walk[UW_WEBCAM_FOUND];
+	if (udev->authorized)
+		++walk[UW_WEBCAM_ENABLED];
+	if (walk[UW_WEBCAM_ENABLE] < 0)
+		return 0;
+	desired = walk[UW_WEBCAM_ENABLE] & 0x01;
+	if (udev->authorized == desired)
+		return 0;
+	status = uniwill_webcam_write_authorized(udev, desired);
+	if (status)
+		return status;
+	return 0;
+}
+
+static long uniwill_webcam_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int walk[3] = { 0, 0, -1 };
+	u32 argument = 0;
+	u32 result;
+	int status;
+
+	(void)file;
+	if (cmd == W_CL_WEBCAM_SW) {
+		if (copy_from_user(&argument, (u32 __user *)arg, sizeof(argument)))
+			return -EFAULT;
+		walk[UW_WEBCAM_ENABLE] = argument & 0x01;
+	} else if (cmd != R_CL_WEBCAM_SW) {
+		return -ENOTTY;
+	}
+	status = usb_for_each_dev(walk, uniwill_webcam_visit);
+	if (status)
+		return status;
+	if (!walk[UW_WEBCAM_FOUND])
+		return -ENODEV;
+	if (cmd == W_CL_WEBCAM_SW)
+		return 0;
+	result = walk[UW_WEBCAM_ENABLED] ? 1 : 0;
+	if (copy_to_user((u32 __user *)arg, &result, sizeof(result)))
+		return -EFAULT;
+	return 0;
+}
+
 static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	u32 copy_result;
@@ -839,6 +1005,9 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return uniwill_ioctl_interface(file, cmd, arg);
 #endif
 		default:
+			if ((cmd == R_CL_WEBCAM_SW || cmd == W_CL_WEBCAM_SW) &&
+			    id_check_uniwill && !id_check_clevo)
+				return uniwill_webcam_ioctl(file, cmd, arg);
 			switch (_IOC_TYPE(cmd)) {
 				case MAGIC_READ_CL:
 				case MAGIC_WRITE_CL:
