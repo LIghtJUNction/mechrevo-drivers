@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T09:53:02.669585+00:00",
+  "status": "linux_console_r171_installed_ordinary_user_logind_write_restore_and_isolated_native_gui_preview_verified",
+  "source": {
+    "commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+    "commit_signature": "G",
+    "snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
+    "input_files": 59,
+    "matches_green_verification_source": true,
+    "candidate_evidence_ref": "docs/verification/display-brightness-control.json",
+    "candidate_evidence_sha256": "61c1411611856db6dea804577172f231c9cf4ca8b48d26b3e7a0bc537fed8075",
+    "candidate_scope": "Source/offline candidate receipt retains its original not-installed/no-hardware scope; this independent receipt records the later real package installation."
+  },
+  "verification": {
+    "rust_workspace_tests": 395,
+    "python_console_tests": 135,
+    "failed_or_skipped": 0,
+    "fmt_clippy_windows_compile": "passed",
+    "scope": "Whole local suites, not per-feature counts. Windows compile does not establish Windows runtime. Earlier failures, behavior mutations and partial tracking are retained in the candidate receipt."
+  },
+  "installation": {
+    "installed_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+    "unchanged_packages": {
+      "power": "mechrevo-power-control 0.1.0-18",
+      "driver": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1"
+    },
+    "verified_regular_payload_files": 11,
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "pacman_integrity": {
+      "console": {
+        "files": 23,
+        "altered": 0
+      },
+      "power": {
+        "files": 26,
+        "altered": 0
+      },
+      "driver": {
+        "files": 126,
+        "altered": 0
+      }
+    },
+    "runtime_guard_before_and_after": true,
+    "protected_services": {
+      "count": 4,
+      "pids_and_start_times_unchanged": true
+    },
+    "efi": {
+      "checked_files": 4,
+      "hashes_unchanged": true
+    },
+    "loaded_module_identities_unchanged": true,
+    "new_fan_interface_loaded": false,
+    "power_reinstalled": false,
+    "driver_reinstalled": false,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "boot_write_executed": false,
+    "hardware_setter_executed_during_install": false,
+    "backup_directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/display-console-0.1.0.r171.g00e3998-1",
+    "private_installed_verification_path": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/display-console-0.1.0.r171.g00e3998-1/installed-verification.json",
+    "evidence_basis": "Root installer verification facts supplied by the parent agent; private root-only content was not bypassed or read by this documentation agent.",
+    "private_installed_verification_sha256": "a8d6973d6c2331d24d58f8289aa232418023a6380f6028ec31b9ca8ffea13e53"
+  },
+  "archive": {
+    "filename": "mechrevo-console-0.1.0.r171.g00e3998-1-x86_64.pkg.tar.zst",
+    "sha256": "52d088d6c427e20eaed3415aa2551164114f030514b32934c88b48cbb11edd13",
+    "bytes": 7289929,
+    "recipe_sha256": "c284ad17c99df9b0c0b9741a7d27bc8bd0160e299e48d7a483de7e4bf0fffd6f",
+    "BUILDINFO_recipe_hash_matches": true,
+    "provenance_sha256": "0edd5366853bff049bec1ce41a3ca494459500950e61fc1f5e8dd701f10784c0",
+    "private_backup_manifest_sha256": "0326a7bfa5c670f1c945db0e1d93cf8251bdfd5bb485dba9cdfc1264bc0f3f8d",
+    "provenance_installed_false_scope": "The immutable build-time provenance was recorded before installation; it is not current package-state evidence.",
+    "original_manifest_defect": {
+      "reproduction_receipt_sha256": "e6763dc044e2d10536969a3968516732f839c64a1f2ea3360e5a658ce631f584",
+      "reproduced_mechanism": "A child exhausting an inherited directory open-description leaves the original function's first listdir empty; the function incorrectly accepts it. A fresh openat directory descriptor plus exact expected inventory avoids this failure; dup shares the cursor.",
+      "actual_installer_cursor_writer": "unknown; the read-only pacman print attempt did not reproduce it, and installation was not repeated for diagnosis",
+      "sha256": "0326a7bfa5c670f1c945db0e1d93cf8251bdfd5bb485dba9cdfc1264bc0f3f8d",
+      "recorded_file_count": 0,
+      "observed_files_field": {},
+      "actual_files_reported_by_parent": 26,
+      "original_manifest_preserved": true,
+      "scope": "The original manifest is an empty inventory and cannot establish full archive coverage. This defect is separate from successful package payload, integrity and runtime-guard verification."
+    },
+    "supplemental_inventory_verification": {
+      "status": "verified_by_independent_append_only_inventory",
+      "filename": "archive-verification-independent.json",
+      "sha256": "f6d45e4195860e5ac2ae56275a8ad549c13342ebcc5372ddb328f3499c0f378e",
+      "bytes": 5683,
+      "verified_original_files": 26,
+      "all_original_files_root_owned_mode_0600_single_link": true,
+      "file_sha256_and_bytes_reread_match": true,
+      "frozen_inputs_matched": 18,
+      "original_empty_manifest_preserved": true,
+      "reinstallation_performed": false,
+      "scope": "Independent append-only root audit verifies the original 26 archived files and 18 frozen inputs; it supplements rather than rewrites the empty original manifest. Facts supplied by the parent after independent root verification."
+    }
+  },
+  "payload_files": {
+    "usr/bin/mechrevo-console": {
+      "sha256": "27d7979988bcf4a7421abc7ab413b98678da7e8c404fe8d2453c88870727c02b",
+      "bytes": 2157312,
+      "mode": 493
+    },
+    "usr/bin/mechrevo-console-gui": {
+      "sha256": "5106eb50896bf1e81e87c80b0c4a00791fd7b3cde793cafa550cdf847689fec0",
+      "bytes": 23033336,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/fan-helper": {
+      "sha256": "6efd54d627d649159dcc0e88e591d391af9c3c3f5b88db09f1ea0ef964b26a6a",
+      "bytes": 834656,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/oem-helper": {
+      "sha256": "45efe0a8dcbc5ea30d50bab52e07b23c3b3f5ad74c4ada4687179f7ed0347c2a",
+      "bytes": 922168,
+      "mode": 493
+    },
+    "usr/share/applications/best.lmm.mechrevo-console.desktop": {
+      "sha256": "0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48",
+      "bytes": 524,
+      "mode": 420
+    },
+    "usr/share/doc/mechrevo-console/MECHREVO-CONSOLE.md": {
+      "sha256": "e25fb5311a6a660c19b56d74a76eb5eeab5110a3e84cc51e2cd345c45279a5f9",
+      "bytes": 3768,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Cormorant-OFL.txt": {
+      "sha256": "60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/LICENSE": {
+      "sha256": "cd6cc5e62e8217ce3c538d256e8c1ef9c9128dc7b30b825c1512676c66461657",
+      "bytes": 1089,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Manrope-OFL.txt": {
+      "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.fan.policy": {
+      "sha256": "ca2b1b6bef6a8acd42047c2caae3edb7626c2346e72a0a5bbaf78c7571a4d76d",
+      "bytes": 1056,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.oem.policy": {
+      "sha256": "61872098435090906cb0b4d6ada336edd883dc712e102a8d6e6e07733100d47f",
+      "bytes": 991,
+      "mode": 420
+    }
+  },
+  "installed_runtime_validation": {
+    "ordinary_user_brightness_loop": {
+      "status": "passed",
+      "passed": true,
+      "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
+      "cli_path": "/usr/bin/mechrevo-console",
+      "cli_sha256": "27d7979988bcf4a7421abc7ab413b98678da7e8c404fe8d2453c88870727c02b",
+      "uid": 1000,
+      "euid": 1000,
+      "backend": "linux_logind",
+      "session_id": "3",
+      "seat_id": "seat0",
+      "device": "intel_backlight",
+      "direct_sysfs_writable": false,
+      "maximum_raw": 96000,
+      "requested_percent_sequence": [
+        70,
+        69,
+        70
+      ],
+      "observed_control_raw_sequence": [
+        67200,
+        66240,
+        67200
+      ],
+      "observed_actual_raw_sequence": [
+        67200,
+        66240,
+        67200
+      ],
+      "explicit_setter_requests": 2,
+      "expected_current_raw_guards": [
+        67200,
+        66240
+      ],
+      "each_setter_exit_code": 0,
+      "each_transaction_outcome": "confirmed",
+      "each_recovery": "not_needed",
+      "each_writer_may_continue": false,
+      "original_request_restored": true,
+      "runtime_guard_before_and_after": true,
+      "observer_samples": 24,
+      "foreign_change_observed": false,
+      "observer_errors": [],
+      "trial_processes_reaped": true,
+      "cpu_fan_or_config_setter_executed": false,
+      "earlier_read_only_preflight": "Initial loginctl comma-separated property query produced empty output and was rejected before any setter. The failed receipt is retained; repeated property options then passed preflight.",
+      "limitations": [
+        "No kernel compare-and-swap exists: matching-value ABA and a final read/write race cannot be excluded.",
+        "Write route/session are checked by preview, fresh seat observation, backend revalidation and CLI receipt; raw sysfs identifies the observation source, not the write route.",
+        "Actual brightness is a driver report, not physical luminance measurement.",
+        "No implicit retry, root brightness route or direct sysfs write is used."
+      ],
+      "scope": "One installed ordinary-user CLI logind 70-to-69-to-70 requested-state loop with two explicit setters. Restoration is an explicit second request with recovery=not_needed; it is not an induced failure-recovery trial or optical brightness measurement."
+    },
+    "native_gui_preview": {
+      "status": "limited_preview_and_independent_cleanup_verified",
+      "passed": true,
+      "binary_sha256": "5106eb50896bf1e81e87c80b0c4a00791fd7b3cde793cafa550cdf847689fec0",
+      "binary_unchanged": true,
+      "run_receipt_sha256": "7b49a9d547ca32ab7aa52bcaa7213541ac863d659806a2bea81cdf673cf89bbd",
+      "capture_receipt_sha256": "e5c0f21102004f1b064b9acec8362ec7317c2adb7ec08e2f68ff624c99f0903e",
+      "environment": "Dedicated private D-Bus, Cage headless compositor and own-PID accessibility registry; not the actual user desktop.",
+      "runner_elapsed_monotonic_seconds": 10.137806972001272,
+      "capture_elapsed_monotonic_seconds": 9.894932571995014,
+      "screenshots": {
+        "overview.png": {
+          "sha256": "28f83e13c5d838c0ad861a79778e340ea1e22b9e528870e89d71b0aef8945fb4",
+          "width": 1280,
+          "height": 720
+        },
+        "brightness-card.png": {
+          "sha256": "ee66fffa4a51c8b6d492a3ffbf1751bfbd95f9c44ab2ad266f58bb6383de9b8e",
+          "width": 1280,
+          "height": 720
+        },
+        "brightness-preview.png": {
+          "sha256": "7c1762247c1ba85404a2fc228fafd9253c07810e7191429061467b564de5b7f9",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "parent_visual_review": {
+        "brightness_preview_png": true,
+        "scope": "Root agent viewed the original brightness-preview.png and confirmed target/requested/driver-report 70%, session delegation route, raw pending plan 67200 to 67200 and visible unactivated Apply control."
+      },
+      "exact_own_pid_preview_button_activations": 1,
+      "slider_actions": 0,
+      "apply_actions": 0,
+      "authorization_actions": 0,
+      "oem_or_fan_actions": 0,
+      "requested_percent": 70,
+      "driver_reported_percent": 70,
+      "preview_raw_previous": 67200,
+      "preview_raw_target": 67200,
+      "endpoint_control_raw": [
+        67200,
+        67200,
+        67200,
+        67200
+      ],
+      "endpoint_actual_raw": [
+        67200,
+        67200,
+        67200,
+        67200
+      ],
+      "endpoint_scope": "Sequential bounded sysfs reads at endpoints; equality is not continuous monitoring or an atomic hardware snapshot.",
+      "termination": {
+        "app_reaped": true,
+        "app_sigterm_sent": true,
+        "app_exit_code": -15,
+        "registry_reaped": true,
+        "registry_sigterm_sent": true,
+        "registry_exit_code": -15,
+        "compositor_reaped": true,
+        "compositor_exit_code": 0,
+        "compositor_sigterm_sent": false,
+        "timeout": false,
+        "sigkill_sent": false,
+        "scope": "App/registry SIGTERM and reaping, compositor exit 0. This is not native graceful-close acceptance."
+      },
+      "final_cleanup_audit": {
+        "status": "verified",
+        "receipt_sha256": "6a9274730e46244a7ccd27b200941c1c3bd914ecdbc36d3105961c0dc477d530",
+        "exact_owned_pid_count": 3,
+        "all_exact_owned_pids_absent": true,
+        "owned_compositor_process_group_empty": true,
+        "mounts_at_or_below_private_qa_run_empty": true,
+        "scope": "Read-only /proc existence, own process-group metadata, mount-table target filter; no process signal or unmount needed."
+      },
+      "scope": "Installed native overview brightness card and one unchanged-target local preview verified; no slider movement, Apply, authorization, brightness setter or other hardware control. Root visual review and explicit endpoint readings do not establish optical luminance or GUI write acceptance.",
+      "result_receipt_sha256": "9ebba7c9bb1d8dfd8d02676951f8c84c5fd2dd234d3e6aaca7f5f6d72cefaad3"
+    },
+    "scope": "Installed ordinary-user CLI requested-state write and explicit restoration, plus isolated native unchanged-target brightness preview and independent cleanup, are verified. GUI Apply, native graceful-close, optical luminance and continuous endpoint monitoring are not accepted."
+  },
+  "tracking": {
+    "source": {
+      "session": "86989324-e5d5-4c7e-8478-c9402c1f7564",
+      "status": "finished",
+      "tracking_status": "partial",
+      "command_status": "not-applicable",
+      "gap_count": 0,
+      "unresolved_event_count": 10,
+      "scope": "Selected-source watcher completed its final scan. Retained transient test-fixture metadata events remain partial; final receipt edits use a separate bounded AgentGC wrapper."
+    },
+    "installation": {
+      "session": "6bfce2f2-062a-4e72-bb26-a492438b2b88",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 0,
+      "unresolved_event_count": 4,
+      "scope": "Parent-reported root installation wrapper; temporary metadata events under /usr/share/applications. Command success does not imply complete write history."
+    },
+    "cleanup_performed": false,
+    "independent_archive_inventory": {
+      "session": "a09bda4f-7b9d-4f71-8b2d-2f3c9338dc30",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "ordinary_user_brightness_trial": {
+      "session": "1a5e428b-803e-40cd-820c-bac7658e2639",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "native_gui_run": {
+      "session": "4bb20be0-3c56-4e0f-8b56-4cd9978f6751",
+      "command_status": "succeeded",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 0,
+      "unresolved_event_count": 4
+    },
+    "native_gui_summary": {
+      "session_prefix": "b5ef99b7",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "scope": "Parent-reported summary wrapper; its complete tracking does not repair the partial GUI run history."
+    },
+    "receipt_finalization_session": "0f7e7a74-e0b6-4591-8db8-3d3d128a2c84"
+  },
+  "publication": {
+    "feature_source_locally_committed": true,
+    "remote_push_verified_by_this_receipt": false,
+    "aur_publication_verified_by_this_receipt": false,
+    "scope": "This receipt establishes local installation only."
+  },
+  "remaining": [
+    "Native GUI apply/authorization and normal-close acceptance",
+    "Physical luminance, saved brightness presets, refresh rate, color, MiniLED and external-display coverage",
+    "Windows runtime and cross-model compatibility",
+    "New fan interface loading, actual fan transactions, cooling/noise and full OpenRevo parity"
+  ],
+  "complete_families_closed": 0,
+  "upstream_issues_closed": 0,
+  "updated_at_utc": "2026-10-18T10:03:53.727238+00:00",
+  "final_root_recheck": {
+    "two_cli_transactions_fields_uid_and_reaping_verified": true,
+    "trial_runtime_guards_verified": true,
+    "gui_artifacts_sha256_verified": 12,
+    "gui_cleanup_verified": true,
+    "package_integrity_files": [
+      23,
+      26,
+      126
+    ],
+    "package_integrity_altered": [
+      0,
+      0,
+      0
+    ],
+    "ordinary_user_brightness_observation": {
+      "control_raw": 67200,
+      "actual_raw": 67200,
+      "maximum_raw": 96000,
+      "direct_writable": false,
+      "write_backend": "linux_logind"
+    },
+    "scope": "Final independent root checks reported by parent after all runtime receipts; no new setter or broader feature acceptance is inferred."
+  }
+}

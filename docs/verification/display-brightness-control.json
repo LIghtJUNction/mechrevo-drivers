@@ -2,6 +2,7 @@
   "schema_version": 1,
   "recorded_at_utc": "2026-10-18T09:33:57.744233+00:00",
   "outcome": "candidate_offline_verified_not_installed_no_hardware_acceptance",
+  "record_scope": "Historical offline-stage receipt recorded before r171 installation. Deployment booleans and remaining items below describe that recorded stage; see subsequent_deployment for later installed/runtime evidence.",
   "scope": "Linux operating-system display-brightness candidate: active local-session logind delegation, shared typed transactions and conditional recovery, CLI raw expected-current guard and GUI unknown-state gating. Offline verification is separate from installed release, requested-state runtime readback and physical luminance acceptance.",
   "source": {
     "base_commit_at_documentation": "a0ce13d803c69e76d53860e9da7dbeee038c8f28",
@@ -232,5 +233,14 @@
   ],
   "complete_families_closed": 0,
   "upstream_issues_closed": 0,
+  "subsequent_deployment": {
+    "evidence_ref": "docs/verification/deployment-console-r171.json",
+    "installed_release": "mechrevo-console 0.1.0.r171.g00e3998-1",
+    "ordinary_user_cli_requested_state_write_restore": "verified_70_to_69_to_70_on_qualified_linux_host",
+    "native_gui_brightness_preview": "verified_in_isolated_native_window",
+    "native_gui_brightness_application": "pending",
+    "physical_luminance_and_windows_runtime": "pending",
+    "scope": "Later installation and runtime checks do not replace this offline snapshot or establish complete F18 acceptance."
+  },
   "updated_at_utc": "2026-10-18T09:36:16.389835+00:00"
 }

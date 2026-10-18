@@ -4,10 +4,10 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "partial_linux_r168_installed_bounded_cpu_pl1_verified",
+    "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "r168 console and power-control 18 are locally installed. Fixed installed CPU helper completed two correlated root-pkexec transactions, 55W to 54W and full 55W/90C/1s/0s restoration. Ordinary-user read-only CLI and isolated native overview/unprobed CPU-page navigation are verified. Rust CLI CPU execution, ordinary-user administrator dialog, GUI writes, real fan transactions, physical cooling/noise and Windows runtime remain unaccepted. Historical source/candidate and older deployment fields retain their original scopes; newer brightness work is separate from this installed release.",
-    "installation_status": "r168_console_and_power18_installed_r162_driver_signed_image_not_loaded",
+    "scope": "Latest installed r171 verifies two ordinary-user Linux logind brightness setters and one isolated GUI preview only. Historical OEM, fan, thermal and r168 CPU records retain their original scopes; CPU power was not retested in r171. All 28 families and 77 upstream issues remain unresolved.",
+    "installation_status": "r171_console_installed_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -85,24 +85,81 @@
     "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
     "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
     "latest_deployment": {
-      "evidence_ref": "docs/verification/deployment-cpu-r168.json",
-      "evidence_sha256": "c2a9dba980988f79da2283272da57438739402f92f162ec2ed7671dfb1450c29",
-      "console_source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
-      "console_package": "mechrevo-console 0.1.0.r168.gd2d50f7-1",
+      "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
+      "evidence_ref": "docs/verification/deployment-console-r171.json",
+      "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
+      "console_source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+      "source_signature_status": "G",
+      "console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
       "power_package": "mechrevo-power-control 0.1.0-18",
       "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "power_and_driver_reinstalled": false,
       "new_driver_loaded": false,
-      "installed_cli_scope": "Installed ordinary-user help/status/OEM/capabilities and three thermal frames, 33 readings each; CPU authorized probe and local dry-run recorded separately. No Rust CLI CPU execute acceptance.",
-      "installed_cpu_helper_scope": "Two correlated fixed installed helper transactions via root pkexec: 55W to 54W and full original 55W/90C/1s/0s policy restoration; MSR/MMIO requested PL1 readback confirmed. No stress workload, PL2/Tau/TCC/fan writes or physical cooling acceptance.",
-      "installed_cpu_helper_transactions": 2,
-      "installed_native_gui_scope": "Isolated Linux headless startup/overview and exact own-process read-only selectors to the unprobed CPU page verified in QA3. No authorization, GUI write or normal-close acceptance.",
+      "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
+      "installed_brightness_cli": {
+        "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
+        "uid": 1000,
+        "euid": 1000,
+        "backend": "linux_logind",
+        "session_id": "3",
+        "seat_id": "seat0",
+        "device": "intel_backlight",
+        "max_raw": 96000,
+        "requested_percent_sequence": [
+          70,
+          69,
+          70
+        ],
+        "requested_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "actual_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "explicit_setter_requests": 2,
+        "outcomes": [
+          "confirmed",
+          "confirmed"
+        ],
+        "recovery": [
+          "not_needed",
+          "not_needed"
+        ],
+        "writer_may_continue": [
+          false,
+          false
+        ],
+        "implicit_retries": 0,
+        "original_requested_state_restored": true,
+        "restoration_scope": "The second explicit setter restored the original requested value; no induced failure recovery was exercised."
+      },
+      "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
+      "installed_native_gui_cleanup_scope": "All owned processes reaped. App and accessibility registry were SIGTERM -15; compositor exited 0. Not normal-close or in-flight-writer recovery acceptance.",
+      "runtime_guard_before_and_after_passed": true,
+      "installed_cpu_helper_scope": "No CPU transaction was rerun for r171; retain the separate historical r168 55W to 54W to 55W record.",
       "real_fan_transaction_verified": false,
       "normal_user_administrator_dialog_verified": false,
       "gui_apply_verified": false,
       "physical_effect_acceptance": false,
       "AUR_published": false,
       "remote_pushed": false,
-      "record_scope": "Latest recorded installed release only; newer display-brightness candidate changes are not included in this deployment receipt."
+      "complete_family_resolved": false,
+      "remaining_scope": [
+        "GUI brightness Apply and authorization",
+        "runtime failure recovery",
+        "optical luminance",
+        "custom display presets and issue #113",
+        "refresh rate",
+        "color and MiniLED",
+        "external displays",
+        "Windows runtime",
+        "real fan transactions and noise acceptance"
+      ],
+      "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
     },
     "thermal_sampling_development": {
       "status": "partial_linux_source_and_r166_installed_read_only_subset_verified",
@@ -159,7 +216,7 @@
     "display_brightness_development": {
       "status": "partial_linux_brightness_candidate_offline_verified_not_installed",
       "evidence_ref": "docs/verification/display-brightness-control.json",
-      "evidence_sha256": "43ed1e391e38da74b31d27b42777b9332bb38a5a8951c3ffa2ef9cac36836688",
+      "evidence_sha256": "61c1411611856db6dea804577172f231c9cf4ca8b48d26b3e7a0bc537fed8075",
       "source_snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
       "rust_workspace_tests_passed": 395,
       "python_console_tests_passed": 135,
@@ -172,6 +229,105 @@
       "source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
       "isolated_behavior_mutations_detected": 3,
       "gui_close_scope": "Remote possible writer keeps new brightness writes locked. Actual local in-flight work/worker exit gates closing; after local return, remote uncertainty alone does not prohibit close."
+    },
+    "historical_r168_deployment": {
+      "evidence_ref": "docs/verification/deployment-cpu-r168.json",
+      "evidence_sha256": "c2a9dba980988f79da2283272da57438739402f92f162ec2ed7671dfb1450c29",
+      "console_source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
+      "console_package": "mechrevo-console 0.1.0.r168.gd2d50f7-1",
+      "power_package": "mechrevo-power-control 0.1.0-18",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "new_driver_loaded": false,
+      "installed_cli_scope": "Installed ordinary-user help/status/OEM/capabilities and three thermal frames, 33 readings each; CPU authorized probe and local dry-run recorded separately. No Rust CLI CPU execute acceptance.",
+      "installed_cpu_helper_scope": "Two correlated fixed installed helper transactions via root pkexec: 55W to 54W and full original 55W/90C/1s/0s policy restoration; MSR/MMIO requested PL1 readback confirmed. No stress workload, PL2/Tau/TCC/fan writes or physical cooling acceptance.",
+      "installed_cpu_helper_transactions": 2,
+      "installed_native_gui_scope": "Isolated Linux headless startup/overview and exact own-process read-only selectors to the unprobed CPU page verified in QA3. No authorization, GUI write or normal-close acceptance.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false,
+      "record_scope": "Latest recorded installed release only; newer display-brightness candidate changes are not included in this deployment receipt."
+    },
+    "historical_r168_deployment_scope": "Original r168 deployment record retained unchanged; its CPU helper 55W to 54W to 55W acceptance was not rerun for r171.",
+    "display_brightness_development_record_scope": "Historical offline candidate receipt before installation; installed activity is recorded separately in display_brightness_deployment and latest_deployment.",
+    "display_brightness_deployment": {
+      "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
+      "evidence_ref": "docs/verification/deployment-console-r171.json",
+      "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
+      "console_source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+      "source_signature_status": "G",
+      "console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+      "power_package": "mechrevo-power-control 0.1.0-18",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "power_and_driver_reinstalled": false,
+      "new_driver_loaded": false,
+      "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
+      "installed_brightness_cli": {
+        "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
+        "uid": 1000,
+        "euid": 1000,
+        "backend": "linux_logind",
+        "session_id": "3",
+        "seat_id": "seat0",
+        "device": "intel_backlight",
+        "max_raw": 96000,
+        "requested_percent_sequence": [
+          70,
+          69,
+          70
+        ],
+        "requested_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "actual_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "explicit_setter_requests": 2,
+        "outcomes": [
+          "confirmed",
+          "confirmed"
+        ],
+        "recovery": [
+          "not_needed",
+          "not_needed"
+        ],
+        "writer_may_continue": [
+          false,
+          false
+        ],
+        "implicit_retries": 0,
+        "original_requested_state_restored": true,
+        "restoration_scope": "The second explicit setter restored the original requested value; no induced failure recovery was exercised."
+      },
+      "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
+      "installed_native_gui_cleanup_scope": "All owned processes reaped. App and accessibility registry were SIGTERM -15; compositor exited 0. Not normal-close or in-flight-writer recovery acceptance.",
+      "runtime_guard_before_and_after_passed": true,
+      "installed_cpu_helper_scope": "No CPU transaction was rerun for r171; retain the separate historical r168 55W to 54W to 55W record.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false,
+      "complete_family_resolved": false,
+      "remaining_scope": [
+        "GUI brightness Apply and authorization",
+        "runtime failure recovery",
+        "optical luminance",
+        "custom display presets and issue #113",
+        "refresh rate",
+        "color and MiniLED",
+        "external displays",
+        "Windows runtime",
+        "real fan transactions and noise acceptance"
+      ],
+      "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
     }
   },
   "upstream": {
@@ -1413,7 +1569,7 @@
         "G14"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_brightness_candidate_offline_verified_not_installed",
+      "current_work_status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
       "baseline_notes": [
         "双端系统亮度后端已有，不代表刷新率/色彩已实现。",
         "逐屏能力、面板/native、回读、恢复及实体显示待验。"
@@ -1421,12 +1577,12 @@
       "platforms": {
         "linux": {
           "read": "partial_read_only_runtime_recorded",
-          "write": "partial_active_local_session_logind_and_direct_backend_offline_verified_runtime_pending",
-          "readback": "partial_requested_state_transactions_offline_verified_not_physical_luminance",
-          "recovery": "partial_shared_conditional_recovery_and_unknown_writer_gates_offline_verified",
+          "write": "partial_installed_ordinary_user_logind_brightness_two_explicit_setters_verified",
+          "readback": "partial_installed_requested_and_driver_actual_raw_brightness_verified_not_optical_luminance",
+          "recovery": "original_requested_value_restored_by_second_explicit_setter_runtime_failure_recovery_pending",
           "automated_tests": "partial_395_workspace_135_console_tests_complete_family_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "feature_activation_not_verified",
+          "installation": "r171_console_installed_power18_and_r162_driver_unchanged",
+          "loading": "installed_cli_brightness_and_isolated_gui_preview_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -1453,13 +1609,14 @@
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
-        "docs/verification/display-brightness-control.json"
+        "docs/verification/display-brightness-control.json",
+        "docs/verification/deployment-console-r171.json"
       ],
       "resolved_in_this_project": false,
       "brightness_development": {
         "status": "partial_linux_brightness_candidate_offline_verified_not_installed",
         "evidence_ref": "docs/verification/display-brightness-control.json",
-        "evidence_sha256": "43ed1e391e38da74b31d27b42777b9332bb38a5a8951c3ffa2ef9cac36836688",
+        "evidence_sha256": "61c1411611856db6dea804577172f231c9cf4ca8b48d26b3e7a0bc537fed8075",
         "source_snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
         "rust_workspace_tests_passed": 395,
         "python_console_tests_passed": 135,
@@ -1472,6 +1629,84 @@
         "source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
         "isolated_behavior_mutations_detected": 3,
         "gui_close_scope": "Remote possible writer keeps new brightness writes locked. Actual local in-flight work/worker exit gates closing; after local return, remote uncertainty alone does not prohibit close."
+      },
+      "brightness_development_record_scope": "Historical offline candidate receipt before installation; installed activity is recorded separately in display_brightness_deployment and latest_deployment.",
+      "brightness_deployment": {
+        "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
+        "evidence_ref": "docs/verification/deployment-console-r171.json",
+        "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
+        "console_source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+        "source_signature_status": "G",
+        "console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+        "power_package": "mechrevo-power-control 0.1.0-18",
+        "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+        "power_and_driver_reinstalled": false,
+        "new_driver_loaded": false,
+        "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
+        "installed_brightness_cli": {
+          "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
+          "uid": 1000,
+          "euid": 1000,
+          "backend": "linux_logind",
+          "session_id": "3",
+          "seat_id": "seat0",
+          "device": "intel_backlight",
+          "max_raw": 96000,
+          "requested_percent_sequence": [
+            70,
+            69,
+            70
+          ],
+          "requested_raw_sequence": [
+            67200,
+            66240,
+            67200
+          ],
+          "actual_raw_sequence": [
+            67200,
+            66240,
+            67200
+          ],
+          "explicit_setter_requests": 2,
+          "outcomes": [
+            "confirmed",
+            "confirmed"
+          ],
+          "recovery": [
+            "not_needed",
+            "not_needed"
+          ],
+          "writer_may_continue": [
+            false,
+            false
+          ],
+          "implicit_retries": 0,
+          "original_requested_state_restored": true,
+          "restoration_scope": "The second explicit setter restored the original requested value; no induced failure recovery was exercised."
+        },
+        "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
+        "installed_native_gui_cleanup_scope": "All owned processes reaped. App and accessibility registry were SIGTERM -15; compositor exited 0. Not normal-close or in-flight-writer recovery acceptance.",
+        "runtime_guard_before_and_after_passed": true,
+        "installed_cpu_helper_scope": "No CPU transaction was rerun for r171; retain the separate historical r168 55W to 54W to 55W record.",
+        "real_fan_transaction_verified": false,
+        "normal_user_administrator_dialog_verified": false,
+        "gui_apply_verified": false,
+        "physical_effect_acceptance": false,
+        "AUR_published": false,
+        "remote_pushed": false,
+        "complete_family_resolved": false,
+        "remaining_scope": [
+          "GUI brightness Apply and authorization",
+          "runtime failure recovery",
+          "optical luminance",
+          "custom display presets and issue #113",
+          "refresh rate",
+          "color and MiniLED",
+          "external displays",
+          "Windows runtime",
+          "real fan transactions and noise acceptance"
+        ],
+        "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
       }
     },
     {
@@ -1758,7 +1993,7 @@
         "G15"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_installed_subset_verified",
+      "current_work_status": "partial_linux_r171_installed_brightness_cli_and_isolated_gui_preview_verified",
       "baseline_notes": [
         "Linux原生概览与CLI已安装并有只读记录。",
         "托盘、OSD、完整服务、权限、升级和双端OEM控制待完成。"
@@ -1770,8 +2005,8 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r168_console_power18_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
-          "loading": "r168_installed_readonly_cli_and_isolated_overview_unprobed_cpu_page_navigation_verified_gui_apply_pending",
+          "installation": "r171_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
+          "loading": "r171_installed_ordinary_user_cli_brightness_and_isolated_gui_preview_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -1804,7 +2039,8 @@
         "docs/verification/deployment-fan-r162-r163.json",
         "docs/verification/thermal-sampling.json",
         "docs/verification/deployment-console-r166.json",
-        "docs/verification/deployment-cpu-r168.json"
+        "docs/verification/deployment-cpu-r168.json",
+        "docs/verification/deployment-console-r171.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -1861,6 +2097,17 @@
         "physical_fan_lease_response_and_noise": "not_verified",
         "complete_family_resolved": false,
         "python_console_tests_passed": 131
+      },
+      "brightness_deployment": {
+        "evidence_ref": "docs/verification/deployment-console-r171.json",
+        "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
+        "scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed.",
+        "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
+        "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
+        "gui_apply_verified": false,
+        "normal_close_verified": false,
+        "physical_effect_acceptance": false,
+        "complete_family_resolved": false
       }
     },
     {
