@@ -42,6 +42,8 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.resources.mkdir()
         self.oem_policy = self.resources / "org.mechrevo.console.oem.policy"
         self.oem_policy.write_text('<policyconfig><action id="org.mechrevo.console.oem"/></policyconfig>\n')
+        self.fan_policy = self.resources / "org.mechrevo.console.fan.policy"
+        self.fan_policy.write_text('<policyconfig><action id="org.mechrevo.console.fan"/></policyconfig>\n')
         self.uapi = self.root / "src/uniwill_fan_curve_ioctl.h"
         self.uapi.parent.mkdir()
         self.uapi.write_text("/* fixture shared fan ABI */\n")
@@ -93,8 +95,8 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 11)
-        for asset in (*self.fonts, self.font_license, self.oem_policy, self.uapi):
+        self.assertEqual(len(result["source_before"]["files"]), 12)
+        for asset in (*self.fonts, self.font_license, self.oem_policy, self.fan_policy, self.uapi):
             self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
         self.assertEqual({row["name"] for row in result["commands"]}, {"fmt", "test", "clippy", "windows"})
         for row in result["commands"] + result["prerequisites"]:
@@ -288,6 +290,13 @@ class ConsoleVerificationTests(unittest.TestCase):
         result = self.run_verifier()
         self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
         self.assertIn("src/uniwill_fan_curve_ioctl.h", result["source_before"]["missing"])
+
+    def test_missing_required_fan_policy_blocks_checks(self):
+        self.fan_policy.unlink()
+        result = self.run_verifier()
+        relative = str(self.fan_policy.relative_to(self.root))
+        self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
+        self.assertIn(relative, result["source_before"]["missing"])
 
     def test_symlink_shared_fan_abi_is_rejected_before_checks(self):
         actual = self.directory / "actual-uapi.h"

@@ -19,6 +19,8 @@ optdepends=('noto-fonts-cjk: Chinese system font fallback')
 options=('!strip' '!debug' '!lto')
 
 # Always build the reviewed commit, including when using an existing local repo.
+# Development contract: the fan helper requires a new reviewed source pin.
+# This old pin intentionally fails prepare() until the source commit is updated.
 _source_commit=5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60
 _source_url=${MECHREVO_CONSOLE_SOURCE:-"${url}.git"}
 source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
@@ -26,7 +28,7 @@ source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
 sha256sums=('SKIP'
             '0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48')
 
-prepare() {
+_validate_source_tree() {
     cd "${srcdir}/mechrevo-drivers" || return 1
     if [[ $(git rev-parse HEAD) != "$_source_commit" ]] ||
         ! git diff-index --quiet HEAD --; then
@@ -36,9 +38,13 @@ prepare() {
     local file
     for file in console/Cargo.toml console/Cargo.lock \
         console/crates/cli/Cargo.toml console/crates/cli/src/main.rs \
-        console/crates/cli/src/oem_helper.rs console/crates/core/src/privilege.rs \
+        console/crates/cli/src/oem_helper.rs console/crates/cli/src/fan_helper.rs \
+        console/crates/core/src/privilege.rs console/crates/core/src/fan_curve.rs \
+        console/crates/core/src/fan_curve/linux.rs \
+        console/crates/core/src/fan_curve/broker.rs console/crates/core/src/fan_curve/client.rs \
         console/crates/gui/src/main.rs \
         console/resources/org.mechrevo.console.oem.policy \
+        console/resources/org.mechrevo.console.fan.policy \
         console/crates/gui/assets/fonts/Cormorant-OFL.txt \
         console/crates/gui/assets/fonts/Manrope-OFL.txt \
         docs/MECHREVO-CONSOLE.md LICENSE; do
@@ -50,6 +56,10 @@ prepare() {
     done
 }
 
+prepare() {
+    _validate_source_tree
+}
+
 build() {
     cd "${srcdir}/mechrevo-drivers" || return 1
     cargo build --manifest-path console/Cargo.toml \
@@ -57,55 +67,66 @@ build() {
         --release --workspace --all-features --locked --offline
 }
 
-check() {
-    desktop-file-validate "${srcdir}/best.lmm.mechrevo-console.desktop" || return 1
-    local policy="${srcdir}/mechrevo-drivers/console/resources/org.mechrevo.console.oem.policy"
+_validate_policy() {
+    local role=$1
+    local policy="${srcdir}/mechrevo-drivers/console/resources/org.mechrevo.console.${role}.policy"
+    local annotations=1 extra=''
+    if [[ $role == fan ]]; then
+        annotations=2
+        extra=" and count(/policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.argv1'])=1 and /policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.argv1']='--serve'"
+    fi
     xmllint --nonet --noout "$policy" || return 1
-    if [[ $(xmllint --nonet --xpath \
-        'boolean(count(/policyconfig/action)=1 and /policyconfig/action[@id="org.mechrevo.console.oem"]/annotate[@key="org.freedesktop.policykit.exec.path"]="/usr/lib/mechrevo-console/oem-helper" and /policyconfig/action/defaults/allow_any="no" and /policyconfig/action/defaults/allow_inactive="auth_admin" and /policyconfig/action/defaults/allow_active="auth_admin_keep")' \
-        "$policy") != true ]]; then
-        printf '%s\n' 'OEM policy action, helper path or authorization defaults do not match the package contract.' >&2
+    local xpath="boolean(count(/policyconfig)=1 and count(/policyconfig/action)=1 and count(/policyconfig/action/@*)=1 and /policyconfig/action/@id='org.mechrevo.console.${role}' and count(/policyconfig/action/annotate)=${annotations} and count(/policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.path'])=1 and /policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.path']='/usr/lib/mechrevo-console/${role}-helper' and count(/policyconfig/action/defaults)=1 and count(/policyconfig/action/defaults/*)=3 and count(/policyconfig/action/defaults/allow_any)=1 and /policyconfig/action/defaults/allow_any='no' and count(/policyconfig/action/defaults/allow_inactive)=1 and /policyconfig/action/defaults/allow_inactive='auth_admin' and count(/policyconfig/action/defaults/allow_active)=1 and /policyconfig/action/defaults/allow_active='auth_admin_keep'${extra})"
+    if [[ $(xmllint --nonet --xpath "$xpath" "$policy") != true ]]; then
+        printf '%s policy action, helper path or authorization defaults do not match the package contract.\n' "$role" >&2
         return 1
     fi
 }
 
+check() {
+    _validate_source_tree || return 1
+    desktop-file-validate "${srcdir}/best.lmm.mechrevo-console.desktop" || return 1
+    _validate_policy oem || return 1
+    _validate_policy fan
+}
+
 package() {
-    cd "${srcdir}/mechrevo-drivers" || return 1
+    check || return 1
     local binary candidate
-    for binary in mechrevo-console mechrevo-console-gui; do
+    for binary in mechrevo-console mechrevo-console-gui \
+        mechrevo-console-oem-helper mechrevo-console-fan-helper; do
         candidate="${CARGO_TARGET_DIR:-${srcdir}/cargo-target}/release/${binary}"
         if [[ ! -f $candidate || -L $candidate || ! -x $candidate ]]; then
             printf 'Required regular executable missing: %s\n' "$candidate" >&2
             return 1
         fi
+    done
+    for binary in mechrevo-console mechrevo-console-gui; do
+        candidate="${CARGO_TARGET_DIR:-${srcdir}/cargo-target}/release/${binary}"
         install -Dm755 "$candidate" "${pkgdir}/usr/bin/${binary}" || return 1
     done
-    candidate="${CARGO_TARGET_DIR:-${srcdir}/cargo-target}/release/mechrevo-console-oem-helper"
-    if [[ ! -f $candidate || -L $candidate || ! -x $candidate ]]; then
-        printf 'Required regular executable missing: %s\n' "$candidate" >&2
-        return 1
-    fi
-    local helper="${pkgdir}/usr/lib/mechrevo-console/oem-helper"
-    local policy=console/resources/org.mechrevo.console.oem.policy
-    local installed_policy="${pkgdir}/usr/share/polkit-1/actions/org.mechrevo.console.oem.policy"
-    if [[ ! -f $policy || -L $policy ]]; then
-        printf '%s\n' 'Required regular OEM policy is missing.' >&2
-        return 1
-    fi
-    install -Dm755 "$candidate" "$helper" || return 1
-    install -Dm644 "$policy" "$installed_policy" || return 1
-    if ! cmp -s "$candidate" "$helper" || ! cmp -s "$policy" "$installed_policy" ||
-        [[ $(stat -c '%a' "$helper") != 755 || $(stat -c '%a' "$installed_policy") != 644 ]]; then
-        printf '%s\n' 'Installed OEM helper or policy bytes/modes do not match the package contract.' >&2
-        return 1
-    fi
+    local role helper policy installed_policy
+    for role in oem fan; do
+        candidate="${CARGO_TARGET_DIR:-${srcdir}/cargo-target}/release/mechrevo-console-${role}-helper"
+        helper="${pkgdir}/usr/lib/mechrevo-console/${role}-helper"
+        policy="console/resources/org.mechrevo.console.${role}.policy"
+        installed_policy="${pkgdir}/usr/share/polkit-1/actions/org.mechrevo.console.${role}.policy"
+        install -Dm755 "$candidate" "$helper" || return 1
+        install -Dm644 "$policy" "$installed_policy" || return 1
+        if [[ ! -f $helper || -L $helper || ! -f $installed_policy || -L $installed_policy ]] ||
+            ! cmp -s "$candidate" "$helper" || ! cmp -s "$policy" "$installed_policy" ||
+            [[ $(stat -c '%a' "$helper") != 755 || $(stat -c '%a' "$installed_policy") != 644 ]]; then
+            printf 'Installed %s helper or policy bytes/modes do not match the package contract.\n' "$role" >&2
+            return 1
+        fi
+    done
     install -Dm644 "${srcdir}/best.lmm.mechrevo-console.desktop" \
-        "${pkgdir}/usr/share/applications/best.lmm.mechrevo-console.desktop"
-    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+        "${pkgdir}/usr/share/applications/best.lmm.mechrevo-console.desktop" || return 1
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE" || return 1
     install -Dm644 console/crates/gui/assets/fonts/Cormorant-OFL.txt \
-        "${pkgdir}/usr/share/licenses/${pkgname}/Cormorant-OFL.txt"
+        "${pkgdir}/usr/share/licenses/${pkgname}/Cormorant-OFL.txt" || return 1
     install -Dm644 console/crates/gui/assets/fonts/Manrope-OFL.txt \
-        "${pkgdir}/usr/share/licenses/${pkgname}/Manrope-OFL.txt"
+        "${pkgdir}/usr/share/licenses/${pkgname}/Manrope-OFL.txt" || return 1
     install -Dm644 docs/MECHREVO-CONSOLE.md \
-        "${pkgdir}/usr/share/doc/${pkgname}/MECHREVO-CONSOLE.md"
+        "${pkgdir}/usr/share/doc/${pkgname}/MECHREVO-CONSOLE.md" || return 1
 }

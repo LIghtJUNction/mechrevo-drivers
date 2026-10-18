@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-18",
+  "scope": "Linux native fan editor, unprivileged persistent client and restricted helper: offline candidate verification only; installation and actual hardware acceptance recorded separately",
+  "source": {
+    "base_commit": "e4bfb3f5d728619e108dc7dbd42b90449d224ac7",
+    "branch": "wip/fan-control",
+    "snapshot_sha256": "ffdae71d2aede7577f7ab3e2f665f0fdc256699da7bcc69f81e7c74f2b179d6e",
+    "input_files": 41,
+    "unchanged_during_verification": true
+  },
+  "checks": {
+    "rust_tests_passed": 241,
+    "rust_failed": 0,
+    "rust_ignored": 0,
+    "rust_filtered": 0,
+    "python_console_tests_passed": 125,
+    "python_skipped": 0,
+    "fmt": "passed",
+    "clippy_all_targets_all_features_deny_warnings": "passed",
+    "windows_gnu_compile": "passed",
+    "windows_runtime": false,
+    "test_count_scope": "Whole verification suites; not added repeatedly for each feature",
+    "fan_layout_real_render_cases": 62,
+    "fan_worker_lifecycle_tests": 20,
+    "source_marks_errors": 0,
+    "source_marks_warnings": 0
+  },
+  "implemented": {
+    "native_editor": "16 raw duty stages and 15 rise/fall boundaries per channel; explicit supplied draft, half-percent precision, preview separate from applied receipt",
+    "helper": "Fixed installed path/--serve, typed bounded JSONL, fresh random nonce, serialized monotonic request IDs, one fd per session",
+    "authorization": "Read-only handshake before any Apply, ordinary-user GUI, independent polkit action, no authentication on normal telemetry or edits",
+    "liveness": "Independent heartbeat, bounded nonblocking input, continuous output draining, real child wait/reap, passive UI events when automatic sampling is disabled",
+    "recovery": "Explicit original-byte restore, current-transaction receipt separate from historical GET flag, primary and recovery errors retained, orphan restore only by explicit action",
+    "ownership": "Read-only foreign state does not become local cleanup responsibility; exact no-acquisition proof cannot excuse an ambiguous acquire acknowledgement"
+  },
+  "verification_limits": [
+    "Simulated server/backend and real unprivileged test child processes do not exercise the installed privileged helper or EC writes.",
+    "No real fan Apply/Restore, thermal/noise, suspend/resume or long-term acceptance.",
+    "Twenty-second helper heartbeat cannot cancel a blocked synchronous kernel ioctl; recovery happens after it returns.",
+    "Windows fan transport remains unsupported; target compilation is not Windows hardware compatibility.",
+    "Only the existing qualified GM6PX0X/N.1.09MRO07 kernel protocol combination can grant write capability.",
+    "This helper is scoped to the current application session, not a startup service or resume policy."
+  ],
+  "private_evidence_sha256": {
+    "rust-final-5.json": "adb2cc07d54326719008111073a6a2e567f37a4e9d04e3fab7e5d505d464c62a",
+    "console-python.json": "19df1d991657025c3f71b20821af6c3fd3568297f6b2727be04e770aa8669f5c",
+    "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test.log": "db49052f0f4d0f8159d8074a9afc68f494271f4d82d48104db075dd8509074fc",
+    "clippy.log": "216b98e36354d3db184144a6cb044d1a10e6d5640f5bd2117ec06e4ba28ac92b",
+    "windows.log": "6fb20a8d9476861a9513c1d2f35ee0f9b8b88dd5c628dd2cedd2d6560cace6ff"
+  },
+  "tracking": {
+    "final_rust_session": "3631c9ef-d3bd-47ec-b580-56bb4ca718f0",
+    "status": "complete",
+    "gap_count": 0,
+    "unresolved_event_count": 0,
+    "earlier_attempts": "Earlier compilation, fixture, UI and tracking failures are retained privately; final success does not erase those records."
+  },
+  "installed_by_this_candidate_receipt": false
+}

@@ -62,22 +62,23 @@
       "physical_acceptance": "not_changed_by_requested_state_or_rendering_results"
     },
     "fan_curve_development": {
-      "status": "partial_linux_source_offline_verified_not_installed",
+      "status": "partial_linux_gui_broker_verified_driver_installed_not_loaded",
       "branch": "wip/fan-control",
       "base_commit": "bad4b45016e073e8b2dab0faa7f28255d630c5b8",
-      "scope": "Fixed UAPI, fd-owned lease, raw snapshot/apply/restore, Rust session and foreground CLI; no real fan writes, installation or loading in this development work.",
+      "scope": "Fixed UAPI, fd-owned raw transactions, CLI hold, native editor and persistent restricted session helper are offline verified. r162 driver is installed on disk; r106 remains loaded. No real fan transaction has been exercised.",
       "evidence_ref": "docs/verification/fan-curve-control.json",
       "qualified_protocol_combination": "GM6PX0X / N.1.09MRO07 / model byte 0x10 / universal RAM-fan branch; not physical thermal qualification",
       "windows_fan_backend": "not_implemented",
       "physical_acceptance": "not_verified",
       "remaining": [
-        "persistent service and authorization",
-        "GUI curve editor and integration",
+        "startup service and saved policy",
         "real fan response and acoustic acceptance",
         "suspend/resume policy replay",
         "other models and Windows fan transport"
       ],
-      "evidence_sha256": "91b18adade9df6add2516f726f37e8e436edaaf5ceb5604ab91900f7b1c64520"
+      "evidence_sha256": "91b18adade9df6add2516f726f37e8e436edaaf5ceb5604ab91900f7b1c64520",
+      "gui_broker_evidence_ref": "docs/verification/fan-gui-broker.json",
+      "gui_broker_evidence_sha256": "cad90ccfced43eb7609439ece5147469012a0b1d3863d2b1a4432f714d492d09"
     }
   },
   "upstream": {
@@ -352,7 +353,7 @@
         "G05"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_source_offline_verified_not_installed",
+      "current_work_status": "partial_linux_gui_broker_verified_driver_installed_not_loaded",
       "baseline_notes": [
         "16项表和失败回归已有依据，不等于任意用户曲线接口已实现。",
         "真实曲线、恢复、卸载及睡眠效果待验。"
@@ -360,11 +361,11 @@
       "platforms": {
         "linux": {
           "read": "source_fd_state_backend_offline_verified_not_runtime",
-          "write": "source_typed_ramfan1p5_curve_cli_hold_offline_verified_not_runtime",
+          "write": "source_typed_curve_cli_and_native_editor_restricted_broker_offline_verified_not_runtime",
           "readback": "source_whole_raw_table_and_owned_bits_offline_verified_not_runtime",
-          "recovery": "source_fd_lease_original_raw_restore_and_lifecycle_offline_verified_not_runtime",
-          "automated_tests": "partial_engine_provider_ioctl_rust_and_legacy_regressions_verified_complete_family_pending",
-          "installation": "new_fan_interface_not_installed",
+          "recovery": "source_fd_original_raw_restore_broker_process_and_gui_close_offline_verified_not_runtime",
+          "automated_tests": "partial_engine_provider_ioctl_rust_broker_gui_and_packaging_verified_complete_family_pending",
+          "installation": "r162_driver_disk_installed_and_payload_signatures_verified_console_candidate_separate",
           "loading": "new_fan_interface_not_loaded",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -393,7 +394,8 @@
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
         "docs/FAN-CURVE-CONTROL.md",
-        "docs/verification/fan-curve-control.json"
+        "docs/verification/fan-curve-control.json",
+        "docs/verification/fan-gui-broker.json"
       ],
       "resolved_in_this_project": false,
       "source_development_notes": [

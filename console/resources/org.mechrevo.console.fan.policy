@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Mechrevo Drivers</vendor>
+  <vendor_url>https://github.com/LIghtJUNction/mechrevo-drivers</vendor_url>
+  <action id="org.mechrevo.console.fan">
+    <description>Apply a verified laptop fan curve</description>
+    <description xml:lang="zh_CN">应用已校验的笔记本风扇曲线</description>
+    <message>Authentication is required to apply this fan curve.</message>
+    <message xml:lang="zh_CN">应用此风扇曲线需要管理员授权。</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/mechrevo-console/fan-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">--serve</annotate>
+  </action>
+</policyconfig>

@@ -9,6 +9,9 @@ use crate::ControlError;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 
+pub mod broker;
+pub mod client;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 

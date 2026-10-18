@@ -1,6 +1,6 @@
 # 本地 Arch 控制台包
 
-`mechrevo-console` 独立安装 Rust CLI、原生 GUI 和受限 OEM helper，不依赖 DKMS 包，也不替换
+`mechrevo-console` 独立安装 Rust CLI、原生 GUI、受限 OEM helper 与风扇 helper，不依赖 DKMS 包，也不替换
 `mechrevo-control`、TCC 或已有热键守护进程。安装不新增服务、不修改风扇曲线，
 GUI 从应用菜单中的“机械革命控制台”启动。
 
@@ -8,7 +8,10 @@ GUI 从应用菜单中的“机械革命控制台”启动。
 `0.1.0.r160.g5542b9d-1`。这是本地部署配方，不表示已经发布到 AUR。
 后续更新应一并修改提交、版本和部署验证记录，不能只替换安装目录里的二进制。
 
-该固定提交包含 OEM helper 与策略。本轮包的实际构建、安装及硬件验证结果由部署
+**当前是开发中的打包契约，尚未更新源码固定提交。** `5542b9d` 包含 OEM helper，
+但不包含新风扇 helper 和策略；新配方的 `prepare()` 会明确拒绝这个旧提交。
+下方构建／安装命令须等新增源码审核、提交并固定到新提交和版本后再执行，
+不能把当前旧版本号理解成新 helper 已能构建。本轮包的实际构建、安装及硬件验证结果由部署
 收据单独记录，更新配方本身不代表已安装或已经验证实体效果。
 
 构建需要系统已有 Rust 1.95 以上、Git、pkgconf、desktop-file-utils、libxml2，以及锁文件
@@ -44,19 +47,34 @@ mechrevo-console status --json
 的 Wayland app ID 一致。另安装 root 归属的
 `/usr/lib/mechrevo-console/oem-helper`（0755，无 setuid）和
 `/usr/share/polkit-1/actions/org.mechrevo.console.oem.policy`（0644）。
+风扇 binary `mechrevo-console-fan-helper` 安装为
+`/usr/lib/mechrevo-console/fan-helper`（0755，无 setuid），独立策略为
+`/usr/share/polkit-1/actions/org.mechrevo.console.fan.policy`（0644）。
+固定入口为 `fan-helper --serve`，不会将构建产物同时放进 `/usr/bin`。
 许可放在 `/usr/share/licenses/mechrevo-console/`，
 包含项目 GPL 许可声明和两份内嵌字体的 OFL；控制台说明放在对应的 `/usr/share/doc/` 目录。
 
-`prepare()` 核对固定提交、干净工作树及必要文件的 Git 跟踪和普通文件类型；
-`check()` 验证 desktop 文件及策略 XML，不联网读取 DTD，并核对唯一 action、固定
-helper 路径及授权默认值。`package()` 要求三个真实可执行产物为非符号链接普通文件，
-将 helper 改名放到上述固定路径，再核对 helper／策略的字节与权限。
+`prepare()`、`check()`、`package()` 均核对固定提交、干净工作树及必要文件的 Git 跟踪和普通文件类型，
+包括新 helper 源码及两份策略。`check()` 验证 desktop 文件及两份策略 XML，不联网读取 DTD，
+逐个核对唯一 action、固定 helper 路径及唯一的授权默认值。
+风扇 action 另外要求 `org.freedesktop.policykit.exec.argv1=--serve`；
+OEM action 与既有权限保持独立，不接受其他授权注解。
+`package()` 在写入前重新执行这些检查，并要求四个真实可执行产物为非符号链接普通文件，
+将两个 helper 改名放到上述固定路径，再核对各 helper／策略的字节、普通文件类型与 0755／0644 权限。
 
 OEM 枚举与预览不提权。只有显式应用时，普通用户通过 `pkexec` 请求受限 helper
 执行类型化计划；活动会话策略为 `auth_admin_keep`，管理员认证可短时缓存，非活动
 会话为 `auth_admin`，`allow_any` 为 `no`。不赋予任意路径写入权限，不放宽 sysfs
 权限，也不让整个 GUI 以 root 运行。授权拒绝、缺少代理或 helper 不可用均须作为
 失败报告；不能自动重放旧计划。
+
+风扇预览和普通遥测不启动提权 helper。只有用户点“应用”时才通过 `pkexec` 启动
+固定路径的 `fan-helper --serve`，在当前 GUI 会话中保留受限命令通道；
+后续应用仍需校验每份类型化计划，不能因通道已授权而接受任意寄存器、路径或命令。
+它使用独立的 `org.mechrevo.console.fan` action：活动会话 `auth_admin_keep`，
+非活动会话 `auth_admin`，其他情况 `no`；不会放宽 OEM action 或让 GUI 以 root 运行。
+缺少 helper、授权失败、协议错误和进程退出应分别报告。安装不会自动启动此进程，
+不会添加 systemd 服务或自动应用风扇曲线；实际关闭和风扇恢复行为须另做运行及硬件验收。
 
 安装后应核对 `pacman -Qkk mechrevo-console`、包内与安装后二进制的摘要、CLI
 只读状态及原生 GUI 启动结果。还要核对 helper／策略的 root 归属、0755／0644 模式、
@@ -65,3 +83,12 @@ OEM 枚举与预览不提权。只有显式应用时，普通用户通过 `pkexe
 安装包成功不代表 GUI 或硬件控制已验收；运行中的
 内核模块也不会因安装控制台而更新。回滚使用保留的上一个本地包执行 `pacman -U`；
 首次安装可用 `pacman -R mechrevo-console` 卸载，用户 GUI 偏好不会由该包删除。
+
+离线打包回归通过真实 Bash `prepare()`／`check()`／`package()` 运行到临时 staging 目录，
+覆盖两份策略与两个 helper 的实际安装内容，以及缺失文件、错误路径／授权、重复 action、
+符号链接和安装后字节／权限漂移的拒绝。它不执行 `pkexec`、真实 helper 或硬件控制：
+
+```sh
+mkdir -p .local-tests
+python -B -m unittest discover -s tests -p test_console_fan_packaging.py
+```

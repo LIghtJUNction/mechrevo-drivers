@@ -1,5 +1,10 @@
 //! The UI never performs blocking platform calls or speculative hardware writes.
 //! A single worker and a one-item channel bound refresh requests and results.
+use mechrevo_console_core::fan_curve::{
+    broker::{BrokerPhase, BrokerState},
+    client::{FanBrokerClient, FanClientUpdate},
+};
+use mechrevo_console_core::fan_curve::{FanCurve, ValidatedFanCurve};
 use mechrevo_console_core::{
     ApplyResult, BrightnessApplyResult, BrightnessPlan, CapabilityStatus, CatalogModel,
     ControlError, OemApplyResult, OemControl, OemDomain, OemPlan, OemValue, PowerProfile,
@@ -21,6 +26,8 @@ use std::{
 mod appearance;
 #[cfg(feature = "gui")]
 pub mod desktop;
+#[cfg(feature = "gui")]
+pub mod fan_editor;
 
 pub trait Backend: Send + 'static {
     fn snapshot(&mut self) -> Snapshot;
@@ -57,6 +64,108 @@ pub trait Backend: Send + 'static {
             "oem_unavailable",
             "No OEM control backend is available",
         ))
+    }
+    fn fan_probe(&mut self) -> FanClientUpdate {
+        unavailable_fan()
+    }
+    fn fan_refresh(&mut self) -> FanClientUpdate {
+        unavailable_fan()
+    }
+    fn fan_apply(&mut self, _curve: &ValidatedFanCurve) -> FanClientUpdate {
+        unavailable_fan()
+    }
+    fn fan_restore(&mut self) -> FanClientUpdate {
+        unavailable_fan()
+    }
+    /// Legacy/mock backends never started a fan helper, so their shutdown is
+    /// already clean. A real session backend must override this method.
+    fn fan_shutdown(&mut self) -> FanClientUpdate {
+        FanClientUpdate::default()
+    }
+    /// Cached lifecycle/reaper updates only. No EC reads or authorization.
+    fn fan_poll(&mut self) -> Option<FanClientUpdate> {
+        None
+    }
+}
+
+fn unavailable_fan() -> FanClientUpdate {
+    FanClientUpdate {
+        error: Some(ControlError::new(
+            "fan_backend_unsupported",
+            "此后端未提供风扇曲线会话。",
+        )),
+        ..FanClientUpdate::default()
+    }
+}
+
+/// One service and one persistent broker client belong to the worker. Merely
+/// constructing this backend never launches authentication or claims a lease.
+pub struct NativeBackend {
+    service: Service,
+    fan: FanBrokerClient,
+}
+impl Default for NativeBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl NativeBackend {
+    pub fn new() -> Self {
+        Self {
+            service: Service::new(),
+            fan: FanBrokerClient::new(),
+        }
+    }
+}
+impl Backend for NativeBackend {
+    fn snapshot(&mut self) -> Snapshot {
+        Backend::snapshot(&mut self.service)
+    }
+    fn catalog(&mut self) -> Vec<CatalogModel> {
+        Backend::catalog(&mut self.service)
+    }
+    fn plan(&mut self, profile: PowerProfile) -> Result<ProfilePlan, ControlError> {
+        Backend::plan(&mut self.service, profile)
+    }
+    fn apply(&mut self, plan: &ProfilePlan) -> Result<ApplyResult, ControlError> {
+        Backend::apply(&mut self.service, plan)
+    }
+    fn plan_brightness(
+        &mut self,
+        percent: u8,
+        device: &str,
+    ) -> Result<BrightnessPlan, ControlError> {
+        Backend::plan_brightness(&mut self.service, percent, device)
+    }
+    fn apply_brightness(
+        &mut self,
+        plan: &BrightnessPlan,
+    ) -> Result<BrightnessApplyResult, ControlError> {
+        Backend::apply_brightness(&mut self.service, plan)
+    }
+    fn plan_oem(&mut self, control: &str, target: OemValue) -> Result<OemPlan, ControlError> {
+        Backend::plan_oem(&mut self.service, control, target)
+    }
+    fn apply_oem(&mut self, plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
+        Backend::apply_oem(&mut self.service, plan)
+    }
+    fn fan_probe(&mut self) -> FanClientUpdate {
+        self.fan.probe()
+    }
+    fn fan_refresh(&mut self) -> FanClientUpdate {
+        self.fan.refresh()
+    }
+    fn fan_apply(&mut self, curve: &ValidatedFanCurve) -> FanClientUpdate {
+        self.fan.apply(curve)
+    }
+    fn fan_restore(&mut self) -> FanClientUpdate {
+        self.fan.restore()
+    }
+    fn fan_shutdown(&mut self) -> FanClientUpdate {
+        self.fan.shutdown()
+    }
+    fn fan_poll(&mut self) -> Option<FanClientUpdate> {
+        self.fan.poll()
     }
 }
 
@@ -147,6 +256,15 @@ pub enum JobKind {
     Apply,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanOperation {
+    Probe,
+    Refresh,
+    Apply,
+    Restore,
+    Shutdown,
+}
+
 #[derive(Debug)]
 enum Job {
     Refresh,
@@ -156,16 +274,36 @@ enum Job {
     ApplyBrightness(BrightnessPlan),
     PreviewOem { control: String, target: OemValue },
     ApplyOem(OemPlan),
+    ProbeFan,
+    RefreshFan,
+    ApplyFan(ValidatedFanCurve),
+    RestoreFan,
+    ShutdownFan,
 }
 
 impl Job {
     fn kind(&self) -> JobKind {
         match self {
-            Self::Refresh => JobKind::Refresh,
+            Self::Refresh | Self::ProbeFan | Self::RefreshFan => JobKind::Refresh,
             Self::Preview(_) | Self::PreviewBrightness { .. } | Self::PreviewOem { .. } => {
                 JobKind::Preview
             }
-            Self::Apply(_) | Self::ApplyBrightness(_) | Self::ApplyOem(_) => JobKind::Apply,
+            Self::Apply(_)
+            | Self::ApplyBrightness(_)
+            | Self::ApplyOem(_)
+            | Self::ApplyFan(_)
+            | Self::RestoreFan
+            | Self::ShutdownFan => JobKind::Apply,
+        }
+    }
+    fn fan_operation(&self) -> Option<FanOperation> {
+        match self {
+            Self::ProbeFan => Some(FanOperation::Probe),
+            Self::RefreshFan => Some(FanOperation::Refresh),
+            Self::ApplyFan(_) => Some(FanOperation::Apply),
+            Self::RestoreFan => Some(FanOperation::Restore),
+            Self::ShutdownFan => Some(FanOperation::Shutdown),
+            _ => None,
         }
     }
 }
@@ -183,12 +321,22 @@ enum Reply {
     BrightnessApplied(BrightnessApplyResult, Snapshot),
     OemPreview(OemPlan),
     OemApplied(OemApplyResult, Snapshot),
+    Fan {
+        operation: FanOperation,
+        curve: Option<ValidatedFanCurve>,
+        update: FanClientUpdate,
+    },
     Error(ControlError),
 }
 
 struct Response {
     id: u64,
+    sequence: u64,
     reply: Reply,
+}
+struct FanEvent {
+    sequence: u64,
+    update: FanClientUpdate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,11 +352,14 @@ struct InFlight {
     kind: JobKind,
     started: Instant,
     selection_revision: u64,
+    fan_operation: Option<FanOperation>,
 }
 
 pub struct Controller {
     requests: Option<SyncSender<Request>>,
     responses: Receiver<Response>,
+    fan_events: Receiver<FanEvent>,
+    fan_sequence: u64,
     alive: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     in_flight: Option<InFlight>,
@@ -226,6 +377,19 @@ pub struct Controller {
     pub requested_oem_value: Option<OemValue>,
     pub oem_preview: Option<OemPlan>,
     pub oem_applied: Option<OemApplyResult>,
+    /// A validated local edit is not an application or a hardware readback.
+    pub fan_draft: Option<ValidatedFanCurve>,
+    pub fan_preview: Option<ValidatedFanCurve>,
+    pub fan_applied: Option<ValidatedFanCurve>,
+    pub fan_draft_error: Option<ControlError>,
+    pub fan_error: Option<ControlError>,
+    pub fan_state: Option<BrokerState>,
+    pub fan_session_held: bool,
+    pub fan_helper_reaped: bool,
+    pub fan_cleanup_complete: bool,
+    pub fan_restoration_confirmed: bool,
+    close_requested: bool,
+    shutdown_attempted: bool,
     selection_revision: u64,
     oem_write_uncertain: bool,
     pub error: Option<ControlError>,
@@ -233,74 +397,181 @@ pub struct Controller {
     pub worker_available: bool,
 }
 
+fn fan_clean(update: &FanClientUpdate) -> bool {
+    !update.session_held && update.helper_reaped && update.cleanup_complete
+}
+
+fn reconcile_fan_update(update: &mut FanClientUpdate) {
+    // A fresh local-owner receipt cannot simultaneously prove cleanup. A
+    // read-only observation of a foreign lease does not make this UI its owner.
+    if update.cleanup_complete
+        && !update.session_held
+        && update
+            .state
+            .as_ref()
+            .is_some_and(|state| state.state_is_current && state.owner)
+    {
+        update.session_held = true;
+        update.cleanup_complete = false;
+        update.restoration_confirmed = false;
+        update.error.get_or_insert_with(|| {
+            ControlError::new(
+                "fan_cleanup_unconfirmed",
+                "现场回读仍显示本会话持有控制权，不能确认清理完成。",
+            )
+        });
+    }
+}
+
+fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
+    match job {
+        Job::Refresh => Reply::Snapshot(backend.snapshot(), backend.catalog()),
+        Job::Preview(profile) => match backend.plan(profile) {
+            Ok(plan) => Reply::Preview(plan),
+            Err(error) => Reply::Error(error),
+        },
+        Job::Apply(plan) => match backend.apply(&plan) {
+            Ok(result) => Reply::Applied(result, backend.snapshot()),
+            Err(error) => Reply::Error(error),
+        },
+        Job::PreviewBrightness { percent, device } => {
+            match backend.plan_brightness(percent, &device) {
+                Ok(plan) => Reply::BrightnessPreview(plan),
+                Err(error) => Reply::Error(error),
+            }
+        }
+        Job::ApplyBrightness(plan) => match backend.apply_brightness(&plan) {
+            Ok(result) => Reply::BrightnessApplied(result, backend.snapshot()),
+            Err(error) => Reply::Error(error),
+        },
+        Job::PreviewOem { control, target } => match backend.plan_oem(&control, target) {
+            Ok(plan) => Reply::OemPreview(plan),
+            Err(error) => Reply::Error(error),
+        },
+        Job::ApplyOem(plan) => match backend.apply_oem(&plan) {
+            Ok(result) => Reply::OemApplied(result, backend.snapshot()),
+            Err(error) => Reply::Error(error),
+        },
+
+        Job::ProbeFan => Reply::Fan {
+            operation: FanOperation::Probe,
+            curve: None,
+            update: backend.fan_probe(),
+        },
+        Job::RefreshFan => Reply::Fan {
+            operation: FanOperation::Refresh,
+            curve: None,
+            update: backend.fan_refresh(),
+        },
+        Job::ApplyFan(curve) => {
+            let update = backend.fan_apply(&curve);
+            Reply::Fan {
+                operation: FanOperation::Apply,
+                curve: Some(curve),
+                update,
+            }
+        }
+        Job::RestoreFan => Reply::Fan {
+            operation: FanOperation::Restore,
+            curve: None,
+            update: backend.fan_restore(),
+        },
+        Job::ShutdownFan => Reply::Fan {
+            operation: FanOperation::Shutdown,
+            curve: None,
+            update: backend.fan_shutdown(),
+        },
+    }
+}
+
 impl Controller {
     /// Starting a controller does not access hardware. Refresh is explicit.
     pub fn new(mut backend: impl Backend) -> Result<Self, std::io::Error> {
         let (requests, incoming) = mpsc::sync_channel::<Request>(1);
         let (outgoing, responses) = mpsc::sync_channel::<Response>(1);
+        let (fan_outgoing, fan_events) = mpsc::sync_channel::<FanEvent>(1);
         let alive = Arc::new(AtomicBool::new(true));
         let worker_alive = alive.clone();
         let worker = thread::Builder::new()
             .name("mechrevo-platform".into())
             .spawn(move || {
-                while let Ok(request) = incoming.recv() {
+                let mut fan_may_live = false;
+                let mut sequence = 0_u64;
+                let mut pending_fan_event = None;
+                loop {
+                    let request = match incoming.recv_timeout(Duration::from_millis(200)) {
+                        Ok(request) => request,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if fan_may_live {
+                                let update = catch_unwind(AssertUnwindSafe(|| backend.fan_poll()))
+                                    .unwrap_or_else(|_| Some(FanClientUpdate {
+                                        state:None, error:Some(ControlError::new("fan_poll_panicked", "辅助进程状态检测异常；恢复与退出尚未确认。")),
+                                        session_held:true, helper_reaped:false,
+                                        restoration_confirmed:false, cleanup_complete:false,
+                                    }));
+                                if let Some(mut update) = update {
+                                    reconcile_fan_update(&mut update);
+                                    fan_may_live = !fan_clean(&update);
+                                    sequence = sequence.wrapping_add(1);
+                                    pending_fan_event = Some(FanEvent { sequence, update });
+                                }
+                            }
+                            if let Some(event) = pending_fan_event.take() {
+                                match fan_outgoing.try_send(event) {
+                                    Ok(()) => {},
+                                    Err(mpsc::TrySendError::Full(event)) => pending_fan_event = Some(event),
+                                    Err(mpsc::TrySendError::Disconnected(_)) => break,
+                                }
+                            }
+                            continue;
+                        }
+                    };
                     if !worker_alive.load(Ordering::Acquire) {
                         break;
                     }
-                    let result = catch_unwind(AssertUnwindSafe(|| match request.job {
-                        Job::Refresh => Reply::Snapshot(backend.snapshot(), backend.catalog()),
-                        Job::Preview(profile) => match backend.plan(profile) {
-                            Ok(plan) => Reply::Preview(plan),
-                            Err(error) => Reply::Error(error),
-                        },
-                        Job::Apply(plan) => match backend.apply(&plan) {
-                            Ok(result) => Reply::Applied(result, backend.snapshot()),
-                            Err(error) => Reply::Error(error),
-                        },
-                        Job::PreviewBrightness { percent, device } => {
-                            match backend.plan_brightness(percent, &device) {
-                                Ok(plan) => Reply::BrightnessPreview(plan),
-                                Err(error) => Reply::Error(error),
-                            }
-                        }
-                        Job::ApplyBrightness(plan) => match backend.apply_brightness(&plan) {
-                            Ok(result) => Reply::BrightnessApplied(result, backend.snapshot()),
-                            Err(error) => Reply::Error(error),
-                        },
-                        Job::PreviewOem { control, target } => {
-                            match backend.plan_oem(&control, target) {
-                                Ok(plan) => Reply::OemPreview(plan),
-                                Err(error) => Reply::Error(error),
-                            }
-                        }
-                        Job::ApplyOem(plan) => match backend.apply_oem(&plan) {
-                            Ok(result) => Reply::OemApplied(result, backend.snapshot()),
-                            Err(error) => Reply::Error(error),
-                        },
-                    }));
+                    let fan_operation = request.job.fan_operation();
+                    let preserve_backend = fan_may_live || fan_operation.is_some();
+                    let result = catch_unwind(AssertUnwindSafe(|| execute_job(&mut backend, request.job)));
                     let panicked = result.is_err();
-                    let reply = result.unwrap_or_else(|_| {
-                        Reply::Error(ControlError::new(
-                            "worker_panicked",
-                            "后台检测意外退出；请关闭后重新打开控制台。",
-                        ))
+                    let mut reply = result.unwrap_or_else(|_| {
+                        let error = ControlError::new(
+                            "worker_panicked", "后台控制发生异常；恢复完成前不能关闭会话。",
+                        );
+                        if preserve_backend {
+                            // Keep the client and worker for an explicit recovery attempt.
+                            // A panic is never evidence that a privileged child stopped.
+                            Reply::Fan {
+                                operation:fan_operation.unwrap_or(FanOperation::Refresh), curve:None,
+                                update:FanClientUpdate { state:None, error:Some(error),
+                                    session_held:true, helper_reaped:false,
+                                    restoration_confirmed:false, cleanup_complete:false },
+                            }
+                        } else { Reply::Error(error) }
                     });
-                    if !worker_alive.load(Ordering::Acquire)
-                        || outgoing
-                            .send(Response {
-                                id: request.id,
-                                reply,
-                            })
-                            .is_err()
-                        || panicked
-                    {
-                        break;
+                    if let Reply::Fan { update, .. } = &mut reply { reconcile_fan_update(update); }
+                    let shutdown_complete = matches!(&reply,
+                        Reply::Fan { operation:FanOperation::Shutdown, update, .. } if fan_clean(update));
+                    if let Reply::Fan { update, .. } = &reply {
+                        fan_may_live = !fan_clean(update);
                     }
+                    sequence = sequence.wrapping_add(1);
+                    if !worker_alive.load(Ordering::Acquire)
+                        || outgoing.send(Response { id:request.id, sequence, reply }).is_err()
+                        || (panicked && !preserve_backend) || shutdown_complete
+                    { break; }
+                }
+                if fan_may_live {
+                    // Programmatic Drop is a fallback, never a UI-confirmed close.
+                    // Cleanup runs here so dropping the UI does not block rendering.
+                    let _ = catch_unwind(AssertUnwindSafe(|| backend.fan_shutdown()));
                 }
             })?;
         Ok(Self {
             requests: Some(requests),
             responses,
+            fan_events,
+            fan_sequence: 0,
             alive,
             worker: Some(worker),
             in_flight: None,
@@ -318,6 +589,18 @@ impl Controller {
             requested_oem_value: None,
             oem_preview: None,
             oem_applied: None,
+            fan_draft: None,
+            fan_preview: None,
+            fan_applied: None,
+            fan_draft_error: None,
+            fan_error: None,
+            fan_state: None,
+            fan_session_held: false,
+            fan_helper_reaped: true,
+            fan_cleanup_complete: true,
+            fan_restoration_confirmed: false,
+            close_requested: false,
+            shutdown_attempted: false,
             selection_revision: 0,
             oem_write_uncertain: false,
             error: None,
@@ -327,7 +610,14 @@ impl Controller {
     }
 
     pub fn busy(&self) -> bool {
-        self.in_flight.is_some() || self.oem_write_uncertain
+        self.in_flight.is_some()
+            || self.oem_write_uncertain
+            || (self.close_requested
+                && self.shutdown_attempted
+                && self.fan_cleanup_complete
+                && self.fan_helper_reaped
+                && !self.fan_session_held
+                && self.worker.is_some())
     }
 
     pub fn write_in_progress(&self) -> bool {
@@ -348,6 +638,125 @@ impl Controller {
             .map(|job| (job.kind, job.started.elapsed()))
     }
 
+    pub fn fan_activity(&self) -> Option<FanOperation> {
+        self.in_flight.as_ref().and_then(|job| job.fan_operation)
+    }
+
+    pub fn fan_apply_unavailable_reason(&self) -> Option<&str> {
+        let Some(state) = self.fan_state.as_ref() else {
+            return Some("先只读检测本机风扇接口；旧驱动或未知接口不能应用曲线。");
+        };
+        if !state.state_is_current
+            || state.live_error != 0
+            || state
+                .live_table
+                .as_ref()
+                .is_none_or(|table| table.len() != 96)
+            || state.live_controls.is_none()
+        {
+            return Some("风扇现场回读未确认，请显式刷新状态。");
+        }
+        if state.capabilities & 0x07 != 0x07 {
+            return Some("此型号或已加载驱动未提供经过限定的曲线控制接口。");
+        }
+        if state.revoked || state.phase == BrokerPhase::RecoveryRequired {
+            return Some("会话已撤销或需要恢复，请先恢复原始风扇状态。");
+        }
+        if self.fan_session_held {
+            if !state.owner || !matches!(state.phase, BrokerPhase::Acquired | BrokerPhase::Active) {
+                return Some("当前会话没有可验证的曲线控制权，请先恢复。");
+            }
+        } else if state.phase != BrokerPhase::Idle
+            || state.lease_id != 0
+            || state.owner
+            || state.modified_or_uncertain
+        {
+            return Some("风扇接口由其他会话占用或状态不明，不能申请新控制权。");
+        }
+        None
+    }
+
+    pub fn probe_fan(&mut self) -> Result<(), SubmitError> {
+        // A new read-only fd would not own the existing lease. Query the
+        // retained session instead of mislabelling it as a foreign owner.
+        self.enqueue(if self.fan_session_held || !self.fan_helper_reaped {
+            Job::RefreshFan
+        } else {
+            Job::ProbeFan
+        })
+    }
+
+    pub fn refresh_fan(&mut self) -> Result<(), SubmitError> {
+        self.enqueue(Job::RefreshFan)
+    }
+
+    pub fn apply_fan(&mut self) -> Result<(), SubmitError> {
+        if self.busy() || self.close_requested {
+            return Err(SubmitError::Busy);
+        }
+        if self.fan_apply_unavailable_reason().is_some() {
+            return Err(SubmitError::Unsupported);
+        }
+        let curve = self
+            .fan_preview
+            .as_ref()
+            .filter(|preview| self.fan_draft.as_ref() == Some(*preview))
+            .cloned()
+            .ok_or(SubmitError::PreviewRequired)?;
+        self.enqueue(Job::ApplyFan(curve))?;
+        self.invalidate_previews();
+        Ok(())
+    }
+
+    pub fn restore_fan(&mut self) -> Result<(), SubmitError> {
+        if self.busy() {
+            return Err(SubmitError::Busy);
+        }
+        if self.fan_helper_reaped
+            && self.fan_cleanup_complete
+            && !self.fan_session_held
+            && !self
+                .fan_state
+                .as_ref()
+                .is_some_and(|state| state.phase == BrokerPhase::RecoveryRequired)
+        {
+            return Err(SubmitError::Unsupported);
+        }
+        self.enqueue(Job::RestoreFan)?;
+        self.invalidate_previews();
+        Ok(())
+    }
+
+    /// Start asynchronous cleanup. Repeated close events do not retry a failed
+    /// transaction; the visible Restore action is the explicit recovery path.
+    pub fn request_close(&mut self) {
+        self.close_requested = true;
+        self.invalidate_previews();
+        self.drive_close();
+    }
+
+    pub fn close_ready(&self) -> bool {
+        self.close_requested
+            && self.in_flight.is_none()
+            && !self.oem_write_uncertain
+            && self.worker.is_none()
+            && !self.fan_session_held
+            && self.fan_helper_reaped
+            && self.fan_cleanup_complete
+    }
+
+    fn drive_close(&mut self) {
+        if self.close_requested
+            && !self.shutdown_attempted
+            && self.in_flight.is_none()
+            && !self.oem_write_uncertain
+            && self.worker_available
+            && self.enqueue(Job::ShutdownFan).is_ok()
+        {
+            self.shutdown_attempted = true;
+        }
+    }
+
     pub fn refresh(&mut self) -> Result<(), SubmitError> {
         self.submit(Job::Refresh)?;
         self.invalidate_previews();
@@ -355,14 +764,66 @@ impl Controller {
     }
 
     pub fn has_pending_preview(&self) -> bool {
-        self.preview.is_some() || self.brightness_preview.is_some() || self.oem_preview.is_some()
+        self.preview.is_some()
+            || self.brightness_preview.is_some()
+            || self.oem_preview.is_some()
+            || self.fan_preview.is_some()
     }
 
     fn invalidate_previews(&mut self) {
         self.preview = None;
         self.brightness_preview = None;
         self.oem_preview = None;
+        self.fan_preview = None;
         self.selection_revision = self.selection_revision.wrapping_add(1);
+    }
+
+    pub fn invalidate_fan_preview(&mut self) {
+        self.fan_preview = None;
+    }
+
+    /// Bounded, local parsing only. An invalid replacement cannot leave an old
+    /// valid preview armed for a later Apply click.
+    pub fn import_fan_curve(&mut self, input: &[u8]) -> Result<(), ControlError> {
+        self.fan_preview = None;
+        self.fan_draft = None;
+        self.fan_draft_error = None;
+        match ValidatedFanCurve::from_json(input) {
+            Ok(curve) => {
+                self.fan_draft = Some(curve);
+                Ok(())
+            }
+            Err(error) => {
+                self.fan_draft_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub fn set_fan_draft(&mut self, curve: FanCurve) -> Result<(), ControlError> {
+        self.fan_preview = None;
+        self.fan_draft = None;
+        self.fan_draft_error = None;
+        match curve.validate() {
+            Ok(curve) => {
+                self.fan_draft = Some(curve);
+                Ok(())
+            }
+            Err(error) => {
+                self.fan_draft_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    /// Preview checks the typed input without probing, authorizing or leasing.
+    pub fn preview_fan(&mut self) -> Result<(), SubmitError> {
+        if self.busy() {
+            return Err(SubmitError::Busy);
+        }
+        self.fan_preview = Some(self.fan_draft.clone().ok_or(SubmitError::PreviewRequired)?);
+        self.fan_draft_error = None;
+        Ok(())
     }
 
     pub fn select_profile(&mut self, profile: PowerProfile) {
@@ -635,6 +1096,17 @@ impl Controller {
     }
 
     fn submit(&mut self, job: Job) -> Result<(), SubmitError> {
+        if self.close_requested
+            || self.fan_session_held
+            || !self.fan_cleanup_complete
+            || !self.fan_helper_reaped
+        {
+            return Err(SubmitError::Busy);
+        }
+        self.enqueue(job)
+    }
+
+    fn enqueue(&mut self, job: Job) -> Result<(), SubmitError> {
         if self.busy() {
             return Err(SubmitError::Busy);
         }
@@ -643,6 +1115,7 @@ impl Controller {
         }
         let id = self.next_id;
         let kind = job.kind();
+        let fan_operation = job.fan_operation();
         let result = self
             .requests
             .as_ref()
@@ -656,8 +1129,14 @@ impl Controller {
                     kind,
                     started: Instant::now(),
                     selection_revision: self.selection_revision,
+                    fan_operation,
                 });
-                self.error = None;
+                // Fan lifecycle housekeeping has its own error channel. In
+                // particular, closing must retain an earlier write/rollback
+                // failure instead of erasing it while queuing ShutdownFan.
+                if fan_operation.is_none() {
+                    self.error = None;
+                }
                 Ok(())
             }
             Err(mpsc::TrySendError::Full(_)) => Err(SubmitError::Busy),
@@ -670,6 +1149,22 @@ impl Controller {
 
     /// Nonblocking; safe to call from the event/render thread.
     pub fn poll(&mut self) -> bool {
+        let mut lifecycle_changed = false;
+        if let Ok(event) = self.fan_events.try_recv() {
+            if event.sequence > self.fan_sequence {
+                self.fan_sequence = event.sequence;
+                self.accept_fan_update(FanOperation::Refresh, None, event.update);
+                lifecycle_changed = true;
+            }
+        }
+        let mut reaped_worker = false;
+        if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+            self.worker_available = false;
+            reaped_worker = true;
+        }
         match self.responses.try_recv() {
             Ok(response) => {
                 if self.in_flight.as_ref().map(|job| job.id) != Some(response.id) {
@@ -728,6 +1223,19 @@ impl Controller {
                         self.snapshot = Some(snapshot);
                         self.last_refresh = Some(Instant::now());
                     }
+                    Reply::Fan {
+                        operation,
+                        curve,
+                        update,
+                    } => {
+                        // Lifecycle observations can arrive after an operation
+                        // completed but before its reply was rendered. Never let
+                        // an older Apply ACK overwrite a newer child-exit event.
+                        if response.sequence > self.fan_sequence {
+                            self.fan_sequence = response.sequence;
+                            self.accept_fan_update(operation, curve, update);
+                        }
+                    }
                     Reply::Error(error) => {
                         if error.code == "oem_helper_liveness_unknown" {
                             // A missing wait result is not evidence that a
@@ -758,23 +1266,133 @@ impl Controller {
                         self.invalidate_previews();
                     }
                 }
+                self.drive_close();
                 true
             }
-            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Empty) => {
+                self.drive_close();
+                reaped_worker || lifecycle_changed
+            }
             Err(TryRecvError::Disconnected) => {
                 let changed = self.worker_available;
-                self.stopped();
-                changed
+                if self.close_requested
+                    && self.shutdown_attempted
+                    && self.fan_cleanup_complete
+                    && self.fan_helper_reaped
+                    && !self.fan_session_held
+                    && self.in_flight.is_none()
+                {
+                    self.worker_available = false;
+                } else {
+                    self.stopped();
+                }
+                changed || reaped_worker || lifecycle_changed
             }
         }
     }
 
+    fn accept_fan_update(
+        &mut self,
+        operation: FanOperation,
+        curve: Option<ValidatedFanCurve>,
+        mut update: FanClientUpdate,
+    ) {
+        reconcile_fan_update(&mut update);
+        let confirmed_apply = operation == FanOperation::Apply
+            && update.error.is_none()
+            && update.session_held
+            && !update.helper_reaped
+            && update.state.as_ref().is_some_and(|state| {
+                state.state_is_current
+                    && state.live_error == 0
+                    && state.last_error == 0
+                    && state.restore_error == 0
+                    && state.owner
+                    && !state.revoked
+                    && state.phase == BrokerPhase::Active
+                    && curve
+                        .as_ref()
+                        .is_some_and(|curve| state.applied_curve.as_ref() == Some(curve.curve()))
+            });
+        if operation == FanOperation::Apply {
+            self.fan_applied = if confirmed_apply { curve } else { None };
+            if update.error.is_none() && !confirmed_apply {
+                update.error = Some(ControlError::new(
+                    "fan_apply_unconfirmed",
+                    "没有收到与目标曲线对应的现场应用回执；请检查并恢复原始状态。",
+                ));
+                update.session_held = true;
+                update.cleanup_complete = false;
+                update.restoration_confirmed = false;
+            }
+        }
+        if operation == FanOperation::Restore
+            || operation == FanOperation::Shutdown
+            || update.state.as_ref().is_none_or(|state| {
+                !state.state_is_current
+                    || state.revoked
+                    || !state.owner
+                    || state.phase != BrokerPhase::Active
+            })
+        {
+            self.fan_applied = None;
+        }
+        if let Some(state) = update.state {
+            self.fan_state = Some(state);
+        } else if let Some(state) = self.fan_state.as_mut() {
+            state.state_is_current = false;
+            if update.session_held {
+                state.modified_or_uncertain = true;
+            }
+        }
+        self.fan_session_held = update.session_held;
+        self.fan_helper_reaped = update.helper_reaped;
+        self.fan_cleanup_complete = update.cleanup_complete;
+        self.fan_restoration_confirmed = update.restoration_confirmed;
+        self.fan_error = update.error;
+        if operation == FanOperation::Shutdown {
+            self.shutdown_attempted = true;
+        } else if operation == FanOperation::Refresh
+            && self.close_requested
+            && self.in_flight.is_none()
+            && self.fan_cleanup_complete
+            && self.fan_helper_reaped
+            && !self.fan_session_held
+        {
+            // Cleanup may become confirmed later by the cheap reaper path.
+            // End the now-clean worker too; no new hardware transaction is
+            // needed, and the previous failed close must not leave it stuck.
+            self.shutdown_attempted = false;
+        }
+        if operation == FanOperation::Restore && self.close_requested {
+            // A successful explicit recovery allows the final worker shutdown;
+            // a failed one waits for another explicit action, without a loop.
+            self.shutdown_attempted = !self.fan_cleanup_complete || self.fan_session_held;
+        }
+    }
+
     fn stopped(&mut self) {
+        if self
+            .in_flight
+            .as_ref()
+            .is_some_and(|job| job.fan_operation.is_some())
+        {
+            self.fan_session_held = true;
+            self.fan_helper_reaped = false;
+            self.fan_cleanup_complete = false;
+            self.fan_restoration_confirmed = false;
+            self.fan_applied = None;
+            self.fan_error = Some(ControlError::new(
+                "fan_worker_disconnected",
+                "风扇控制线程已断开；未确认恢复或辅助进程退出。",
+            ));
+        }
         self.worker_available = false;
         self.in_flight = None;
         self.preview = None;
         self.brightness_preview = None;
         self.oem_preview = None;
+        self.fan_preview = None;
         if self.error.is_none() {
             self.error = Some(ControlError::new(
                 "worker_stopped",

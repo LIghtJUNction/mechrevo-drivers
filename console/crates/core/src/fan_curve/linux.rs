@@ -129,7 +129,7 @@ pub struct FanCurveSession {
 impl FanCurveSession {
     pub fn open() -> Result<Self, FanCurveSessionError> {
         let (transport, binding) =
-            DeviceTransport::open().map_err(|error| local_io("open", error))?;
+            DeviceTransport::open(true).map_err(|error| local_io("open", error))?;
         Ok(Self {
             engine: SessionEngine::open(transport)?,
             binding,
@@ -137,6 +137,13 @@ impl FanCurveSession {
     }
     pub fn device_binding(&self) -> DeviceBinding {
         self.binding
+    }
+    pub fn modified_or_uncertain(&self) -> bool {
+        self.engine.requires_restoration
+    }
+    /// A locally confirmed token, not a guarantee of current kernel ownership.
+    pub fn has_local_lease(&self) -> bool {
+        self.engine.lease.is_some()
     }
     /// Cached state; call refresh explicitly when new kernel metadata is needed.
     pub fn state(&self) -> &FanCurveState {
@@ -169,10 +176,10 @@ trait IoctlTransport {
 }
 struct DeviceTransport(File);
 impl DeviceTransport {
-    fn open() -> io::Result<(Self, DeviceBinding)> {
+    fn open(writable: bool) -> io::Result<(Self, DeviceBinding)> {
         let file = OpenOptions::new()
             .read(true)
-            .write(true)
+            .write(writable)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(DEVICE_PATH)?;
         let opened = file.metadata()?;
@@ -210,6 +217,13 @@ impl DeviceTransport {
             },
         ))
     }
+}
+/// One read-only GET on the fixed character device, never an ownership request.
+pub fn inspect() -> Result<FanCurveState, FanCurveSessionError> {
+    let (transport, _) =
+        DeviceTransport::open(false).map_err(|error| local_io("inspect_open", error))?;
+    let session = SessionEngine::open(transport)?;
+    Ok(session.state.expect("successful open records state"))
 }
 impl IoctlTransport for DeviceTransport {
     fn ioctl(&mut self, request: u32, packet: &mut [u8]) -> io::Result<()> {
@@ -491,10 +505,15 @@ impl<T: IoctlTransport> SessionEngine<T> {
             || state.last_request_id != id
             || state.last_error != 0
             || state.live_table.as_ref() != Some(&expected)
+            || state.live_controls.is_none_or(|controls| {
+                (controls[0] & 0x80 != 0) != curve.curve().respective
+                    || controls[1] & 0x04 == 0
+                    || controls[2] & 0x40 != 0
+            })
         {
             let mut failure = self.local(
                 "apply_confirm",
-                "GET did not confirm the applied table and ownership",
+                "GET did not confirm the applied table, control bits and ownership",
             );
             failure.state_is_current = true;
             failure.mutation_may_have_occurred = true;
@@ -727,7 +746,11 @@ mod tests {
         bytes[72..76].copy_from_slice(&flags.to_ne_bytes());
         bytes[88..184].copy_from_slice(table.as_bytes());
         bytes[184..280].copy_from_slice(original().as_bytes());
-        bytes[280..286].copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+        bytes[280..286].copy_from_slice(if phase == 2 {
+            &[0x81, 0x06, 3, 4, 5, 6]
+        } else {
+            &[1, 2, 3, 4, 5, 6]
+        });
         bytes[286..292].copy_from_slice(&[1, 2, 3, 4, 5, 6]);
         bytes[292..296].copy_from_slice(&[51, 52, 53, 54]);
         bytes
@@ -1156,6 +1179,37 @@ mod tests {
             5,
             "no silent retry or restore"
         );
+    }
+    #[test]
+    fn correct_table_cannot_ack_wrong_split_disabled_table_or_full_speed_control() {
+        for (offset, mask) in [(280, 0x80), (281, 0x04), (282, 0x40)] {
+            let expected = original().with_curve(&curve());
+            let mut response = state_packet(
+                token(22, 77),
+                2,
+                OWNER | ORIGINAL_VALID | LIVE_VALID | APPLIED,
+                4,
+                &expected,
+            );
+            response[offset] ^= mask;
+            let mut steps = acquired_steps();
+            steps.extend([apply(4, token(21, 77), None), get(5, response)]);
+            let (transport, trace) = mock(steps);
+            let mut session = SessionEngine::open(transport).unwrap();
+            session.acquire().unwrap();
+            let error = session.apply(&curve()).unwrap_err();
+            assert_eq!(error.operation, "apply_confirm");
+            assert!(error.state_is_current);
+            assert!(error.mutation_may_have_occurred);
+            assert_eq!(session.lease, Some(token(22, 77)));
+            assert!(session.requires_restoration);
+            assert_eq!(
+                trace.borrow().requests.len(),
+                5,
+                "no hidden write or retry for control byte {offset}"
+            );
+            assert!(trace.borrow().steps.is_empty());
+        }
     }
     #[test]
     fn restoration_receipt_survives_later_legacy_table_changes_and_unowned_control_bits() {

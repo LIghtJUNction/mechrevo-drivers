@@ -4,6 +4,7 @@ use mechrevo_console_core::{
     Snapshot,
 };
 use serde_json::{json, Value};
+#[cfg(any(target_os = "linux", test))]
 use std::io::Read;
 use std::{
     ffi::OsString,

@@ -1,8 +1,12 @@
 //! A quiet, responsive desktop surface built around real device readings.
-use crate::{appearance, reading_text, Controller, DisplayMode, JobKind, Preferences, Theme};
+use crate::{
+    appearance,
+    fan_editor::{FanEditor, FanEditorUpdate},
+    reading_text, Controller, DisplayMode, JobKind, Preferences, Theme,
+};
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
 use mechrevo_console_core::{
-    CapabilityStatus, OemControlKind, OemDomain, OemValue, PowerProfile, SensorReading, Service,
+    CapabilityStatus, OemControlKind, OemDomain, OemValue, PowerProfile, SensorReading,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -44,6 +48,7 @@ pub enum Section {
     #[default]
     Dashboard,
     Controls,
+    Fans,
     Sensors,
     Catalog,
 }
@@ -119,6 +124,7 @@ pub struct DesktopApp {
     motion_enabled: bool,
     source_details_expanded: bool,
     history: TemperatureHistory,
+    fan_editor: FanEditor,
 }
 impl DesktopApp {
     pub fn new(creation: &eframe::CreationContext<'_>) -> Result<Self, std::io::Error> {
@@ -127,7 +133,8 @@ impl DesktopApp {
             .and_then(|s| eframe::get_value(s, "display_preferences"))
             .unwrap_or_default();
         preferences.sanitize();
-        let mut app = Self::with_controller(Controller::new(Service::new())?, preferences);
+        let mut app =
+            Self::with_controller(Controller::new(crate::NativeBackend::new())?, preferences);
         app.motion_enabled = creation
             .storage
             .and_then(|s| eframe::get_value(s, "interface_motion"))
@@ -152,6 +159,7 @@ impl DesktopApp {
             motion_enabled: true,
             source_details_expanded: false,
             history: TemperatureHistory::default(),
+            fan_editor: FanEditor::default(),
         }
     }
     pub fn scroll_to_bottom(&mut self) {
@@ -159,6 +167,12 @@ impl DesktopApp {
     }
     pub fn select_section(&mut self, section: Section) {
         self.section = section;
+    }
+    pub fn fan_editor(&self) -> &FanEditor {
+        &self.fan_editor
+    }
+    pub fn fan_editor_mut(&mut self) -> &mut FanEditor {
+        &mut self.fan_editor
     }
     pub fn open_display_settings(&mut self) {
         self.display_settings_requested = true;
@@ -274,14 +288,15 @@ impl DesktopApp {
     fn tick(&mut self, ctx: &egui::Context) {
         // A native close must not terminate the process between write, readback
         // and rollback. Defer closing while that transaction owns the worker.
-        if ctx.input(|input| input.viewport().close_requested())
-            && self.controller.write_in_progress()
-        {
-            self.pending_close = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.controller.request_close();
+            if !self.controller.close_ready() {
+                self.pending_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
         }
         self.controller.poll();
-        if self.pending_close && !self.controller.busy() {
+        if self.pending_close && self.controller.close_ready() {
             self.pending_close = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -289,6 +304,9 @@ impl DesktopApp {
         if self.preferences.auto_refresh
             && !self.controller.busy()
             && !self.controller.has_pending_preview()
+            && !self.controller.fan_session_held
+            && self.controller.fan_helper_reaped
+            && self.controller.fan_cleanup_complete
             && self.controller.worker_available
             && !self.pending_close
             && self
@@ -302,6 +320,15 @@ impl DesktopApp {
             if !self.controller.oem_write_state_unknown() {
                 ctx.request_repaint_after(Duration::from_millis(80));
             }
+        } else if self.controller.fan_session_held
+            || !self.controller.fan_helper_reaped
+            || !self.controller.fan_cleanup_complete
+            || self.pending_close
+        {
+            // Lifecycle events arrive independently of sensor sampling. Keep
+            // draining those cached worker events while a helper may live;
+            // this requests a frame, never a snapshot or a driver read.
+            ctx.request_repaint_after(Duration::from_millis(200));
         } else if self.preferences.auto_refresh {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
@@ -352,6 +379,7 @@ impl DesktopApp {
         for (section, label) in [
             (Section::Dashboard, "概览"),
             (Section::Controls, "控制"),
+            (Section::Fans, "风扇"),
             (Section::Sensors, "传感器"),
             (Section::Catalog, "型号目录"),
         ] {
@@ -410,6 +438,7 @@ impl DesktopApp {
             match self.section {
                 Section::Dashboard => thermal_panel_rect = self.dashboard(ui),
                 Section::Controls => self.oem_controls(ui),
+                Section::Fans => self.fan_controls(ui),
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
             }
@@ -497,6 +526,7 @@ impl DesktopApp {
         let title = match self.section {
             Section::Dashboard => "设备概览",
             Section::Controls => "设备控制",
+            Section::Fans => "风扇曲线",
             Section::Sensors => "传感器",
             Section::Catalog => "型号目录",
         };
@@ -938,7 +968,7 @@ impl DesktopApp {
 
     fn feedback(&self, ui: &mut egui::Ui) {
         if self.pending_close {
-            ui.label(RichText::new("正在完成操作与回读，结束后自动退出。").color(amber(ui)));
+            ui.label(RichText::new("正在完成操作、恢复控制并等待后台结束。").color(amber(ui)));
         }
         if let Some((kind, elapsed)) = self.controller.activity() {
             if kind != JobKind::Refresh || elapsed > Duration::from_secs(10) {
@@ -1228,6 +1258,256 @@ impl DesktopApp {
                     }
                 });
             }
+        });
+    }
+
+    fn publish_fan_edit(&mut self) {
+        match self.fan_editor.take_update() {
+            Some(FanEditorUpdate::Import(input)) => {
+                let _ = self.controller.import_fan_curve(&input);
+            }
+            Some(FanEditorUpdate::Edit(curve)) => {
+                let _ = self.controller.set_fan_draft(curve);
+            }
+            None => {}
+        }
+    }
+
+    fn fan_controls(&mut self, ui: &mut egui::Ui) {
+        use mechrevo_console_core::fan_curve::{broker::BrokerPhase, RawFanTable, TABLE_BYTES};
+        self.publish_fan_edit();
+        if self.fan_editor.curve().is_none() {
+            if let Some(draft) = &self.controller.fan_draft {
+                self.fan_editor.adopt_draft(draft);
+            }
+        }
+        surface(ui, |ui| {
+            let phase = self.controller.fan_state.as_ref().map(|state| state.phase);
+            let state_unconfirmed = self
+                .controller
+                .fan_state
+                .as_ref()
+                .is_some_and(|state| !state.state_is_current || state.live_error != 0);
+            let status = if state_unconfirmed {
+                "当前风扇状态未确认，请刷新或恢复"
+            } else {
+                match phase {
+                    Some(BrokerPhase::Idle) => "风扇接口已就绪",
+                    Some(BrokerPhase::Acquired) if self.controller.fan_session_held => {
+                        "已取得控制，尚未应用曲线"
+                    }
+                    Some(BrokerPhase::Acquired) => "风扇接口正由其他会话占用",
+                    Some(BrokerPhase::Active) if self.controller.fan_session_held => {
+                        "本会话曲线控制正在运行"
+                    }
+                    Some(BrokerPhase::Active) => "其他会话正在控制风扇",
+                    Some(BrokerPhase::RecoveryRequired) => "需要恢复原控制",
+                    None if self.controller.fan_error.is_some() => "当前风扇接口不可用",
+                    None => "尚未检查风扇接口",
+                }
+            };
+            ui.label(RichText::new(status).size(18.0).color(
+                if state_unconfirmed || phase == Some(BrokerPhase::RecoveryRequired) {
+                    error_color(ui)
+                } else {
+                    foreground(ui)
+                },
+            ));
+            if self.controller.fan_session_held {
+                ui.label(
+                    RichText::new("本会话保持风扇控制权；恢复旧表后才会释放。")
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            } else if !state_unconfirmed
+                && phase == Some(BrokerPhase::Idle)
+                && self.controller.fan_helper_reaped
+                && self.controller.fan_cleanup_complete
+            {
+                ui.label(
+                    RichText::new("控制权已释放，辅助程序已退出。")
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            }
+            if self.controller.fan_restoration_confirmed {
+                ui.label(
+                    RichText::new("本次恢复事务曾回读确认旧硬件表与控制状态。")
+                        .size(13.0)
+                        .color(amber(ui)),
+                );
+            }
+            if self.controller.fan_state.is_none() {
+                ui.label(
+                    RichText::new(
+                        "检查只读取驱动状态。没有此版本接口时仍可编辑草稿，无法应用到设备。",
+                    )
+                    .size(13.0)
+                    .color(secondary(ui)),
+                );
+            }
+            if let Some(error) = &self.controller.fan_error {
+                ui.label(
+                    RichText::new(&error.message)
+                        .size(14.0)
+                        .color(error_color(ui)),
+                );
+                egui::CollapsingHeader::new("风扇错误详情")
+                    .id_salt("fan-error-details")
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(&error.code).size(13.0).color(secondary(ui)));
+                        for detail in &error.details {
+                            ui.label(detail);
+                        }
+                    });
+            }
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                let label = if self.controller.fan_state.is_some() {
+                    "刷新风扇状态"
+                } else {
+                    "检查风扇接口"
+                };
+                if ui
+                    .add_enabled(!self.controller.busy(), egui::Button::new(label))
+                    .clicked()
+                {
+                    let result = if self.controller.fan_session_held {
+                        self.controller.refresh_fan()
+                    } else {
+                        self.controller.probe_fan()
+                    };
+                    if let Err(error) = result {
+                        self.controller.fan_error = Some(mechrevo_console_core::ControlError::new(
+                            "fan_request_unavailable",
+                            format!("暂不能检查风扇状态：{error:?}"),
+                        ));
+                    }
+                }
+                let needs_recovery = self.controller.fan_session_held
+                    || !self.controller.fan_helper_reaped
+                    || !self.controller.fan_cleanup_complete
+                    || phase == Some(BrokerPhase::RecoveryRequired);
+                if needs_recovery
+                    && ui
+                        .add_enabled(!self.controller.busy(), egui::Button::new("恢复旧表并释放"))
+                        .clicked()
+                {
+                    if let Err(error) = self.controller.restore_fan() {
+                        self.controller.fan_error = Some(mechrevo_console_core::ControlError::new(
+                            "fan_restore_unavailable",
+                            format!("暂不能提交恢复请求：{error:?}"),
+                        ));
+                    }
+                }
+            });
+        });
+        ui.add_space(16.0);
+        surface(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("曲线草稿").size(18.0));
+                let status = match (&self.controller.fan_draft, &self.controller.fan_applied) {
+                    (Some(draft), Some(applied)) if draft == applied => "与已应用曲线一致",
+                    (Some(_), Some(_)) => "有尚未应用的更改",
+                    (Some(_), None) => "尚未应用",
+                    _ => "等待导入",
+                };
+                ui.label(RichText::new(status).size(13.0).color(amber(ui)));
+            });
+            self.fan_editor.show(
+                ui,
+                !self.controller.write_in_progress() && !self.pending_close,
+                self.controller.fan_applied.as_ref(),
+            );
+        });
+        // An edit is published before handling any preview/apply action from
+        // this frame, so it cannot reuse the preceding curve's confirmation.
+        self.publish_fan_edit();
+        ui.add_space(16.0);
+        surface(ui, |ui| {
+            ui.label(RichText::new("预览与应用").size(18.0));
+            if let Some(preview) = &self.controller.fan_preview {
+                ui.label(RichText::new("草稿格式有效，尚未写入设备。").size(14.0));
+                ui.label(format!(
+                    "目标模式  {}",
+                    if preview.curve().respective {
+                        "独立控制"
+                    } else {
+                        "同步控制"
+                    }
+                ));
+                egui::CollapsingHeader::new("查看草稿差异").id_salt("fan-draft-diff").show(ui, |ui| {
+                    if let Some(state) = self.controller.fan_state.as_ref().filter(|state| state.state_is_current && state.live_error == 0) {
+                        if let Some(raw) = state.live_table.as_ref().and_then(|bytes| <[u8; TABLE_BYTES]>::try_from(bytes.as_slice()).ok()) {
+                            let original = RawFanTable::from_bytes(raw);
+                            let target = original.with_curve(preview);
+                            let changed = original.as_bytes().iter().zip(target.as_bytes()).filter(|(left, right)| left != right).count();
+                            ui.label(format!("当前硬件表中将改动 {changed} 个曲线字节；恢复始终使用完整原表。"));
+                        }
+                    }
+                    if let Some(applied) = &self.controller.fan_applied {
+                        for (name, previous, next) in [("CPU", &applied.curve().cpu, &preview.curve().cpu), ("GPU", &applied.curve().gpu, &preview.curve().gpu)] {
+                            for stage in 0..16 {
+                                if previous.duty_raw[stage] != next.duty_raw[stage] {
+                                    ui.label(format!("{name} 第 {} 档占空比  {:.1}% → {:.1}%", stage + 1, f32::from(previous.duty_raw[stage]) / 2.0, f32::from(next.duty_raw[stage]) / 2.0));
+                                }
+                                if stage < 15 && (previous.rise_celsius[stage] != next.rise_celsius[stage] || previous.fall_celsius[stage] != next.fall_celsius[stage]) {
+                                    ui.label(format!("{name} 第 {} 档温界  升温 {} → {} °C，降温 {} → {} °C", stage + 1, previous.rise_celsius[stage], next.rise_celsius[stage], previous.fall_celsius[stage], next.fall_celsius[stage]));
+                                }
+                            }
+                        }
+                    } else {
+                        ui.label("尚无已核验的应用曲线可做逐档对比。当前原表只作为完整恢复材料保留，不转换为编辑输入。");
+                    }
+                });
+            } else {
+                ui.label(
+                    RichText::new("先预览当前草稿，再申请应用。预览不需要管理员授权。")
+                        .size(14.0)
+                        .color(secondary(ui)),
+                );
+            }
+            let valid = self.fan_editor.is_valid() && self.controller.fan_draft.is_some();
+            let unavailable = self
+                .controller
+                .fan_apply_unavailable_reason()
+                .map(str::to_owned);
+            let available = unavailable.is_none();
+            if let Some(reason) = unavailable {
+                ui.label(RichText::new(reason).size(13.0).color(secondary(ui)));
+            }
+            ui.label(
+                RichText::new("点击应用时才请求管理员授权。硬件原表逐字节保存，恢复不依赖草稿。")
+                    .size(13.0)
+                    .color(secondary(ui)),
+            );
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        valid && !self.controller.busy() && !self.pending_close,
+                        egui::Button::new("预览曲线"),
+                    )
+                    .clicked()
+                {
+                    let _ = self.controller.preview_fan();
+                }
+                if self.controller.fan_preview.is_some()
+                    && ui
+                        .add_enabled(
+                            valid && available && !self.controller.busy() && !self.pending_close,
+                            primary_button(ui, "应用曲线"),
+                        )
+                        .clicked()
+                {
+                    if let Err(error) = self.controller.apply_fan() {
+                        self.controller.fan_error = Some(mechrevo_console_core::ControlError::new(
+                            "fan_apply_unavailable",
+                            format!("暂不能应用草稿，请重新预览：{error:?}"),
+                        ));
+                    }
+                }
+            });
         });
     }
 
@@ -2316,5 +2596,113 @@ mod tests {
                 output.drop_without_applying_deltas();
             }
         }
+    }
+
+    #[test]
+    fn fan_lifecycle_events_wake_idle_frames_without_sensor_sampling() {
+        struct NoHardware;
+        impl crate::Backend for NoHardware {
+            fn snapshot(&mut self) -> Snapshot {
+                panic!("idle lifecycle polling must not sample hardware")
+            }
+            fn catalog(&mut self) -> Vec<mechrevo_console_core::CatalogModel> {
+                unreachable!()
+            }
+            fn plan(
+                &mut self,
+                _: PowerProfile,
+            ) -> Result<mechrevo_console_core::ProfilePlan, mechrevo_console_core::ControlError>
+            {
+                unreachable!()
+            }
+            fn apply(
+                &mut self,
+                _: &mechrevo_console_core::ProfilePlan,
+            ) -> Result<mechrevo_console_core::ApplyResult, mechrevo_console_core::ControlError>
+            {
+                unreachable!()
+            }
+        }
+        fn frame(ctx: &egui::Context, app: &mut DesktopApp, time: f64) -> Duration {
+            let output = ctx.run_pass(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ctx| app.tick(ctx),
+            );
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.drop_without_applying_deltas();
+            delay
+        }
+        let mut app = DesktopApp::with_controller(
+            Controller::new(NoHardware).unwrap(),
+            Preferences {
+                auto_refresh: false,
+                ..Default::default()
+            },
+        );
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        // Drain the context's startup repaint requests before observing idle.
+        for _ in 0..5 {
+            frame(&ctx, &mut app, time);
+            time += 0.25;
+        }
+        assert!(
+            frame(&ctx, &mut app, time) > Duration::from_secs(1),
+            "a clean manual-sampling console must stay idle"
+        );
+        time += 0.25;
+        app.controller.fan_session_held = true;
+        app.controller.fan_helper_reaped = false;
+        app.controller.fan_cleanup_complete = false;
+        assert!(!app.controller.busy());
+        assert!(
+            frame(&ctx, &mut app, time) <= Duration::from_millis(200),
+            "a retained helper needs a future frame even when sampling is off"
+        );
+        time += 0.25;
+        let (events, incoming) = std::sync::mpsc::sync_channel(1);
+        app.controller.fan_events = incoming;
+        events
+            .send(crate::FanEvent {
+                sequence: 1,
+                update: mechrevo_console_core::fan_curve::client::FanClientUpdate {
+                    error: Some(mechrevo_console_core::ControlError::new(
+                        "fixture_helper_exited",
+                        "后台退出，恢复尚未确认",
+                    )),
+                    session_held: false,
+                    helper_reaped: true,
+                    cleanup_complete: false,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        assert!(frame(&ctx, &mut app, time) <= Duration::from_millis(200));
+        assert_eq!(app.controller.fan_error.as_ref().unwrap().code, "fixture_helper_exited", "the next scheduled frame must publish the background failure without pointer/key input");
+        assert!(!app.controller.busy());
+        assert!(!app.controller.fan_cleanup_complete);
+        time += 0.25;
+        events
+            .send(crate::FanEvent {
+                sequence: 2,
+                update: Default::default(),
+            })
+            .unwrap();
+        for _ in 0..5 {
+            frame(&ctx, &mut app, time);
+            time += 0.25;
+        }
+        assert!(
+            app.controller.fan_helper_reaped
+                && app.controller.fan_cleanup_complete
+                && !app.controller.fan_session_held
+        );
+        assert!(
+            frame(&ctx, &mut app, time) > Duration::from_secs(1),
+            "confirmed cleanup must return a manual-sampling console to idle"
+        );
     }
 }

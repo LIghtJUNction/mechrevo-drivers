@@ -26,7 +26,10 @@ GUI_EMBEDDED_FONTS = (
     "crates/gui/assets/fonts/CormorantGaramond-Italic.ttf",
     "crates/gui/assets/fonts/Manrope.ttf",
 )
-CONSOLE_REQUIRED_RESOURCES = ("resources/org.mechrevo.console.oem.policy",)
+CONSOLE_REQUIRED_RESOURCES = (
+    "resources/org.mechrevo.console.oem.policy",
+    "resources/org.mechrevo.console.fan.policy",
+)
 TEST_LOG_MAX_BYTES = 16 * 1024 * 1024
 TEST_LOG_MAX_LINE_BYTES = 4096
 TEST_SUMMARY = re.compile(
