@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T11:10:19.667259+00:00",
+  "status": "linux_console_r174_installed_readonly_cli_isolated_native_gui_and_cleanup_verified",
+  "source": {
+    "commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+    "commit_signature": "G",
+    "packaging_metadata_commit": "c0b11920db7a03a5bc32fb033bd9a470bd1db12c",
+    "packaging_metadata_commit_signature": "G",
+    "snapshot_sha256": "2d8e7d31acbdf89ae7b02cb73afc583378af3d02c7bead0ae3e34db64ef9303f",
+    "input_files": 92,
+    "matches_green_verification_source": true,
+    "candidate_evidence_ref": "docs/verification/windows-fnlock-control.json",
+    "candidate_scope": "The candidate receipt records Windows source/offline verification. Its uninstalled/no-runtime fields refer to Windows artifacts and acceptance; this receipt separately records the later Linux console package installation."
+  },
+  "verification": {
+    "rust_workspace_all_features_tests": {
+      "passed": 519,
+      "failed": 0,
+      "ignored": 0
+    },
+    "python_console_tests": {
+      "passed": 140,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "installed_linux_feature_configuration_tests": {
+      "passed": 518,
+      "failed": 0,
+      "features": "mechrevo-console-gui/gui",
+      "scope": "Offline tests of the actual Linux package feature selection, not installed runtime or hardware acceptance."
+    },
+    "fmt": "passed",
+    "clippy": "passed",
+    "windows_target_compile": "passed",
+    "windows_all_targets_compile": {
+      "exit_code": 0,
+      "unused_warnings": 2,
+      "scope": "Additional compile-only check completed with two unused warnings. No Windows binary execution or hardware acceptance."
+    },
+    "scope": "Whole local suite counts, not per-model or per-feature acceptance. Earlier failed attempts and tracking limitations remain in the candidate evidence."
+  },
+  "installation": {
+    "installed_package": "mechrevo-console 0.1.0.r174.g256fb05-1",
+    "previous_console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+    "unchanged_packages": {
+      "power": "mechrevo-power-control 0.1.0-18",
+      "driver": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1"
+    },
+    "verified_regular_payload_files": 11,
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "pacman_integrity": {
+      "console": {
+        "files": 23,
+        "altered": 0
+      },
+      "power": {
+        "files": 26,
+        "altered": 0
+      },
+      "driver": {
+        "files": 126,
+        "altered": 0
+      }
+    },
+    "runtime_guard_before_and_after": true,
+    "protected_policy": {
+      "cpu_pl1_watts": 55,
+      "target_celsius": 90,
+      "polling_seconds": 1,
+      "rapl_debounce_seconds": 0,
+      "unchanged": true
+    },
+    "protected_services": {
+      "count": 4,
+      "pids_and_start_times_unchanged": true
+    },
+    "efi": {
+      "checked_files": 4,
+      "hashes_unchanged": true
+    },
+    "loaded_module_identities_unchanged": true,
+    "loaded_module_count": 6,
+    "new_fan_interface_loaded": false,
+    "power_reinstalled": false,
+    "driver_reinstalled": false,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "boot_write_executed": false,
+    "hardware_setter_executed_during_install": false,
+    "backup_directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/windows-fn-console-0.1.0.r174.g256fb05-1",
+    "private_installed_verification_filename": "installed-verification.json",
+    "private_installed_verification_sha256": "d917b2e9f2790fdb77ed0d4b2954ca11389fd81a8bd8bcc85dbf5406ce2e9c68",
+    "evidence_basis": "Installation facts supplied by the parent after independent root version, package-integrity, payload and protected-runtime verification. Private root-only content was not bypassed by this documentation agent."
+  },
+  "archive": {
+    "filename": "mechrevo-console-0.1.0.r174.g256fb05-1-x86_64.pkg.tar.zst",
+    "sha256": "6bf922043d8aebd1b668cf26aa730a0231261748b486d67f9a208c0aba97c2a8",
+    "bytes": 7503901,
+    "recipe_sha256": "3cdac3dd18ffc99c0be16a5de0e32dd053dcab8d11119557cb4d0c4e80975000",
+    "BUILDINFO_recipe_hash_matches": true,
+    "provenance_sha256": "492f757513c0379efd5a384e839d5504999db3b7aa0cb5b7e252d5e4e4e63e9a",
+    "release_build": "--release --workspace --features mechrevo-console-gui/gui --locked --offline",
+    "reused_target": true,
+    "fresh_target_directory": false,
+    "workspace_crates_recompiled": [
+      "mechrevo-console-cli",
+      "mechrevo-console-core",
+      "mechrevo-console-gui"
+    ],
+    "scope": "Existing Cargo target reused in place. Current build log and rustc evidence bind all three workspace crates to the new clean pinned checkout; no claim that the cache was empty or fresh. Immutable build-time provenance installed=false describes its earlier build stage.",
+    "private_backup_manifest_sha256": "3a5213d3794b38e90d50b70e15bc05bc7477703f1a432d4dbff5190cd990fe48",
+    "backup_inventory": {
+      "original_files": 28,
+      "items_including_manifest": 29,
+      "fresh_independent_directory_descriptor": true,
+      "exact_expected_inventory": true,
+      "all_file_hashes_verified_twice": true,
+      "scope": "New r174 archive uses a fresh directory descriptor and an exact inventory. This does not rewrite or erase the separate historical r171 empty-manifest defect.",
+      "all_original_files_root_owned_mode_0600_single_link": true,
+      "root_independent_reread_verified": true
+    }
+  },
+  "payload_files": {
+    "usr/bin/mechrevo-console": {
+      "sha256": "bad2b455d3dfdf4e1d622e69fd51f1e976f92ff21e8b1d2927e6787c2b618921",
+      "bytes": 2608528,
+      "mode": 493
+    },
+    "usr/bin/mechrevo-console-gui": {
+      "sha256": "a0df17644c3fda0762179fd7766eae2de267073d81c158bf73bf318923b46380",
+      "bytes": 23398824,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/fan-helper": {
+      "sha256": "981486fccfddcb729f25cfd205dae7ca75d3c1a7d88bb1bdb42d5bccaa3bf1d3",
+      "bytes": 831016,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/oem-helper": {
+      "sha256": "1fb4773acc561fb80f16c6e5d772d622fa82c310131936789e710676be4f2e45",
+      "bytes": 920560,
+      "mode": 493
+    },
+    "usr/share/applications/best.lmm.mechrevo-console.desktop": {
+      "sha256": "0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48",
+      "bytes": 524,
+      "mode": 420
+    },
+    "usr/share/doc/mechrevo-console/MECHREVO-CONSOLE.md": {
+      "sha256": "e25fb5311a6a660c19b56d74a76eb5eeab5110a3e84cc51e2cd345c45279a5f9",
+      "bytes": 3768,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Cormorant-OFL.txt": {
+      "sha256": "60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/LICENSE": {
+      "sha256": "cd6cc5e62e8217ce3c538d256e8c1ef9c9128dc7b30b825c1512676c66461657",
+      "bytes": 1089,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Manrope-OFL.txt": {
+      "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.fan.policy": {
+      "sha256": "ca2b1b6bef6a8acd42047c2caae3edb7626c2346e72a0a5bbaf78c7571a4d76d",
+      "bytes": 1056,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.oem.policy": {
+      "sha256": "61872098435090906cb0b4d6ada336edd883dc712e102a8d6e6e07733100d47f",
+      "bytes": 991,
+      "mode": 420
+    }
+  },
+  "installed_runtime_validation": {
+    "readonly_cli": {
+      "status": "passed",
+      "uid": 1000,
+      "receipt_sha256": "3e45a8bbc947dd87b545074c2a5deb5954cd4021d120bd386a51ac337a0e95c2",
+      "cli_sha256": "bad2b455d3dfdf4e1d622e69fd51f1e976f92ff21e8b1d2927e6787c2b618921",
+      "binary_before_and_after_match": true,
+      "commands": {
+        "package": {
+          "exit_code": 0,
+          "stderr_bytes": 0
+        },
+        "ownership": {
+          "exit_code": 0,
+          "stderr_bytes": 0
+        },
+        "qkk": {
+          "exit_code": 0,
+          "stderr_bytes": 0
+        },
+        "status": {
+          "exit_code": 0,
+          "stderr_bytes": 0
+        },
+        "thermal": {
+          "exit_code": 0,
+          "stderr_bytes": 0
+        }
+      },
+      "status_readings": 38,
+      "thermal_frame_count": 2,
+      "scope": "Installed ordinary-user Linux package/ownership/Qkk/status and two readonly hwmon frames. No setters or Windows runtime; r171 brightness writes and r168 CPU helper transactions were not rerun."
+    },
+    "native_gui": {
+      "status": "limited_isolated_startup_navigation_and_visual_check_passed",
+      "gui_sha256": "a0df17644c3fda0762179fd7766eae2de267073d81c158bf73bf318923b46380",
+      "binary_before_and_after_match": true,
+      "run_receipt_sha256": "1fe6fa2acd810a084347a2b75e001bddd03e1b44e444b4d30a0e5ca2e22bfaac",
+      "capture_receipt_sha256": "b4a938d83ade454fe05952e2ad1e41a2c577cacb94f0cb3cd8fbcdc4eb900d1c",
+      "environment": "Private Cage, XDG, D-Bus and AT-SPI; own-PID selectors. No actual user desktop access.",
+      "runner_elapsed_monotonic_seconds": 11.59275666600297,
+      "screenshots": {
+        "overview.png": {
+          "sha256": "ff8d4b433520f72be8c6f13fbf95ea83c47e1d4fd71a0becc388a2d566071ef1",
+          "width": 1280,
+          "height": 720
+        },
+        "controls.png": {
+          "sha256": "43a0330477187f86910a04ca0678f73bb0de3620c1698e7e97cd1535cc6b0e8f",
+          "width": 1280,
+          "height": 720
+        },
+        "cpu-power-unprobed.png": {
+          "sha256": "a4ac5fe1684317dab9f9cc67bfc1cad04250a0a2b55ee89e4b6e454841bc3d6c",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "screenshots_visually_reviewed": true,
+      "overview_independently_viewed_by_root": true,
+      "navigation": [
+        "控制",
+        "CPU 功耗上限"
+      ],
+      "cpu_page_unprobed": true,
+      "windows_fn_entry_absent_on_linux": true,
+      "authorization_actions_activated": 0,
+      "apply_actions_activated": 0,
+      "hardware_setter_executed": false,
+      "owned_processes": {
+        "app": {
+          "pid": 2168992,
+          "reaped": true,
+          "exit_code": -15,
+          "termination": "SIGTERM"
+        },
+        "registry": {
+          "pid": 2168980,
+          "reaped": true,
+          "exit_code": -15,
+          "termination": "SIGTERM"
+        },
+        "compositor": {
+          "pid": 2168934,
+          "reaped": true,
+          "exit_code": 0
+        }
+      },
+      "timeout": false,
+      "sigkill_sent": false,
+      "normal_close_verified": false,
+      "existing_user_registry_pid": 5176,
+      "existing_user_registry_unchanged": true,
+      "scope": "Startup/rendering and two selector clicks only; no probe, Apply, authorization, fan lease, failure recovery, graceful-close or Windows GUI acceptance.",
+      "final_independent_owned_pid_and_pgid_cleanup_audit": {
+        "status": "passed",
+        "exact_app_pid": 2168992,
+        "exact_registry_pid": 2168980,
+        "both_exact_pids_absent": true,
+        "private_process_group": 2168934,
+        "remaining_group_members": [],
+        "wrapper_wait_exit_code": 0,
+        "existing_user_registry_pid": 5176,
+        "existing_user_registry_preserved": true,
+        "review_receipt_sha256": "7f8ca1b4297e6728cf09388e558a48ba22baaece62fe5541d5ddc2500060e4cb",
+        "scope": "Exact owned-process and process-group cleanup only; SIGTERM reaping is not graceful-close or in-flight writer recovery acceptance."
+      },
+      "review_receipt_sha256": "7f8ca1b4297e6728cf09388e558a48ba22baaece62fe5541d5ddc2500060e4cb"
+    }
+  },
+  "tracking": {
+    "installation": {
+      "session": "0a70ae94-4156-4f93-9bb3-21a147d138b0",
+      "command_exit_code": 0,
+      "command_status": "succeeded",
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "earlier_rejected_wrapper": {
+      "child_started": false,
+      "reason": "An initial wrapper supplied a root file argument instead of a directory and was rejected before the child began. A directory-scoped wrapper then completed the real installation.",
+      "scope": "Retained as an earlier failed setup attempt, not merged into the successful final installation tracking."
+    },
+    "source": {
+      "session": "8c225e1b-f606-4e85-852f-054ec126d677",
+      "status": "finished",
+      "tracking_status": "complete",
+      "command_status": "not-applicable",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "scope": "Selected-source watcher finished its final scan. Final receipt metadata is written under the separate bounded wrapper identified below."
+    },
+    "installed_cli_and_gui": {
+      "session": "7d39fd18-d514-4fd2-8e8f-56309767cdb2",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "installed_review": {
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "scope": "Final read-only visual review and exact owned-PID/process-group cleanup audit.",
+      "session": "c6595e08-5cf9-452c-a922-ce67029ba95c"
+    },
+    "receipt_finalization_session": "8f0ecb86-2cf0-4a35-abc4-015ff0ea9c9f",
+    "build": {
+      "session": "fe7a6a27-2d16-40eb-a86a-6be8d2b7724d",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 1,
+      "unresolved_event_count": 0,
+      "gap_category": "permission",
+      "scope": "Package build succeeded; this does not repair incomplete filesystem-event coverage."
+    },
+    "python_console": {
+      "session": "b8cec1e4-3c18-4d72-9f3e-8438b8ec3dc5",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 16,
+      "unresolved_event_count": 0
+    },
+    "linux_release_tests": {
+      "session": "c9527f48-946c-4376-8656-395af27b63cb",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 1,
+      "unresolved_event_count": 0
+    },
+    "filesystem_cleanup_performed": false
+  },
+  "publication": {
+    "source_locally_committed": true,
+    "remote_push_verified": false,
+    "aur_published": false,
+    "windows_msi_built": false,
+    "signed_windows_release_published": false
+  },
+  "remaining": [
+    "No Windows MSI build, installation/upgrade/Repair, UAC, native GUI or physical Fn-key/runtime acceptance.",
+    "New fan UAPI remains unloaded; no new fan curve, fan-noise, thermal, restart or suspend acceptance."
+  ],
+  "parity_scope": "No feature family or upstream issue is closed by this Linux package installation."
+}

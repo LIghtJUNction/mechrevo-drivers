@@ -4,10 +4,10 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
+    "status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "Latest installed r171 verifies two ordinary-user Linux logind brightness setters and one isolated GUI preview only. Historical OEM, fan, thermal and r168 CPU records retain their original scopes; CPU power was not retested in r171. All 28 families and 77 upstream issues remain unresolved.",
-    "installation_status": "r171_console_installed_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
+    "scope": "Latest installed Linux r174 verifies package payloads, protected runtime preservation, ordinary-user readonly status/thermal sampling and isolated native GUI overview/control/CPU-unprobed navigation with exact owned-process cleanup. Historical r171 brightness and r168 CPU writes retain original scopes. Windows Fn-lock is source/offline only. All 28 families and 77 upstream issues remain unresolved.",
+    "installation_status": "r174_console_installed_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -85,62 +85,24 @@
     "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
     "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
     "latest_deployment": {
-      "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
-      "evidence_ref": "docs/verification/deployment-console-r171.json",
-      "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
-      "console_source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+      "status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified",
+      "evidence_ref": "docs/verification/deployment-console-r174.json",
+      "evidence_sha256": "6472ccc1aa3f4700b890cf0cb4f752291462574f099dc6dfaabc45aa483d02f2",
+      "console_source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+      "packaging_metadata_commit": "c0b11920db7a03a5bc32fb033bd9a470bd1db12c",
       "source_signature_status": "G",
-      "console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+      "console_package": "mechrevo-console 0.1.0.r174.g256fb05-1",
       "power_package": "mechrevo-power-control 0.1.0-18",
       "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
       "power_and_driver_reinstalled": false,
       "new_driver_loaded": false,
-      "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
-      "installed_brightness_cli": {
-        "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
-        "uid": 1000,
-        "euid": 1000,
-        "backend": "linux_logind",
-        "session_id": "3",
-        "seat_id": "seat0",
-        "device": "intel_backlight",
-        "max_raw": 96000,
-        "requested_percent_sequence": [
-          70,
-          69,
-          70
-        ],
-        "requested_raw_sequence": [
-          67200,
-          66240,
-          67200
-        ],
-        "actual_raw_sequence": [
-          67200,
-          66240,
-          67200
-        ],
-        "explicit_setter_requests": 2,
-        "outcomes": [
-          "confirmed",
-          "confirmed"
-        ],
-        "recovery": [
-          "not_needed",
-          "not_needed"
-        ],
-        "writer_may_continue": [
-          false,
-          false
-        ],
-        "implicit_retries": 0,
-        "original_requested_state_restored": true,
-        "restoration_scope": "The second explicit setter restored the original requested value; no induced failure recovery was exercised."
-      },
-      "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
-      "installed_native_gui_cleanup_scope": "All owned processes reaped. App and accessibility registry were SIGTERM -15; compositor exited 0. Not normal-close or in-flight-writer recovery acceptance.",
+      "payloads_verified": 11,
+      "package_integrity_files": 23,
+      "package_integrity_altered": 0,
       "runtime_guard_before_and_after_passed": true,
-      "installed_cpu_helper_scope": "No CPU transaction was rerun for r171; retain the separate historical r168 55W to 54W to 55W record.",
+      "installed_cli_scope": "Ordinary UID 1000 package/ownership/Qkk/status checks and two readonly thermal frames passed; status had 38 readings and all five commands exited 0 with empty stderr. No r171 brightness or r168 CPU writes were rerun.",
+      "installed_native_gui_scope": "Private Cage/XDG/D-Bus/AT-SPI overview, Controls and CPU-unprobed views visually verified; only two own-PID selector clicks, zero authorization/Apply. Linux Windows-Fn entry absent; no user desktop or hardware action.",
+      "hardware_setter_executed_this_installation": false,
       "real_fan_transaction_verified": false,
       "normal_user_administrator_dialog_verified": false,
       "gui_apply_verified": false,
@@ -148,18 +110,8 @@
       "AUR_published": false,
       "remote_pushed": false,
       "complete_family_resolved": false,
-      "remaining_scope": [
-        "GUI brightness Apply and authorization",
-        "runtime failure recovery",
-        "optical luminance",
-        "custom display presets and issue #113",
-        "refresh rate",
-        "color and MiniLED",
-        "external displays",
-        "Windows runtime",
-        "real fan transactions and noise acceptance"
-      ],
-      "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
+      "record_scope": "Linux package installation only. Historical r171 brightness and r168 CPU write records remain separate; Windows source/offline checks are not Windows installation or runtime acceptance.",
+      "installed_native_gui_cleanup_scope": "App and owned registry reaped after SIGTERM -15, compositor/wrapper reaped exit0; exact app/registry PIDs absent and owned process group empty. No timeout/SIGKILL; user registry unchanged. This is not graceful-close or in-flight-writer recovery acceptance."
     },
     "thermal_sampling_development": {
       "status": "partial_linux_source_and_r166_installed_read_only_subset_verified",
@@ -328,6 +280,96 @@
         "real fan transactions and noise acceptance"
       ],
       "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
+    },
+    "historical_r171_deployment": {
+      "status": "partial_linux_r171_installed_cli_brightness_and_isolated_gui_preview_verified",
+      "evidence_ref": "docs/verification/deployment-console-r171.json",
+      "evidence_sha256": "563995b419620a0c0a2ad01434ae812a3de7534908ebc6a13c11144331c5f4a5",
+      "console_source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+      "source_signature_status": "G",
+      "console_package": "mechrevo-console 0.1.0.r171.g00e3998-1",
+      "power_package": "mechrevo-power-control 0.1.0-18",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "power_and_driver_reinstalled": false,
+      "new_driver_loaded": false,
+      "installed_cli_scope": "Two explicit ordinary-user brightness setters through the installed CLI and linux_logind session 3 / seat0. Requested and driver-reported actual raw values read back; not optical luminance acceptance.",
+      "installed_brightness_cli": {
+        "receipt_sha256": "7d20cd78d9f084ea65181130181cf6d2b6e2c39da19ff066e05beab09595d929",
+        "uid": 1000,
+        "euid": 1000,
+        "backend": "linux_logind",
+        "session_id": "3",
+        "seat_id": "seat0",
+        "device": "intel_backlight",
+        "max_raw": 96000,
+        "requested_percent_sequence": [
+          70,
+          69,
+          70
+        ],
+        "requested_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "actual_raw_sequence": [
+          67200,
+          66240,
+          67200
+        ],
+        "explicit_setter_requests": 2,
+        "outcomes": [
+          "confirmed",
+          "confirmed"
+        ],
+        "recovery": [
+          "not_needed",
+          "not_needed"
+        ],
+        "writer_may_continue": [
+          false,
+          false
+        ],
+        "implicit_retries": 0,
+        "original_requested_state_restored": true,
+        "restoration_scope": "The second explicit setter restored the original requested value; no induced failure recovery was exercised."
+      },
+      "installed_native_gui_scope": "One 70% brightness preview in an isolated private D-Bus / Cage overview, visually checked. Preview raw 67200 to 67200; bounded before/after requested and actual endpoint reads stayed 67200. No slider change, Apply, authorization or OEM/fan operation.",
+      "installed_native_gui_cleanup_scope": "All owned processes reaped. App and accessibility registry were SIGTERM -15; compositor exited 0. Not normal-close or in-flight-writer recovery acceptance.",
+      "runtime_guard_before_and_after_passed": true,
+      "installed_cpu_helper_scope": "No CPU transaction was rerun for r171; retain the separate historical r168 55W to 54W to 55W record.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false,
+      "complete_family_resolved": false,
+      "remaining_scope": [
+        "GUI brightness Apply and authorization",
+        "runtime failure recovery",
+        "optical luminance",
+        "custom display presets and issue #113",
+        "refresh rate",
+        "color and MiniLED",
+        "external displays",
+        "Windows runtime",
+        "real fan transactions and noise acceptance"
+      ],
+      "record_scope": "Installed r171 brightness subset only. Offline candidate suites and historical r168 CPU acceptance retain separate scopes; no complete feature family or upstream issue is closed."
+    },
+    "windows_fnlock_development": {
+      "status": "windows_fnlock_source_offline_verified_windows_runtime_pending",
+      "source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+      "evidence_ref": "docs/verification/windows-fnlock-control.json",
+      "evidence_sha256": "e8d0672d334e53bc4718120c8db3e3b628214093837219e864f8792f2985fe06",
+      "implemented": "Native fixed EC transport, complete-byte transaction and conditional recovery, independent firmware/driver qualification, authenticated UAC pipe, helper lifetime/wait, shared mutex and persistent maintenance gate, CLI and GUI explicit probe/preview/apply wiring.",
+      "support": "One fixed candidate contract; candidate compile feature off by default; zero runtime_accepted contracts.",
+      "verification": "519 all-feature Rust and 140 Python console checks plus compile-only Windows target verification; MinGW maintenance DLL compile/link is separate from MSVC or WiX/MSI.",
+      "windows_installed": false,
+      "windows_runtime_verified": false,
+      "physical_fn_key_verified": false,
+      "scope": "Source/offline subset only. No Windows MSI build, UAC, installation/maintenance, native GUI or hardware acceptance; full feature family remains incomplete."
     }
   },
   "upstream": {
@@ -1109,7 +1151,9 @@
         "docs/verification/deployment-r158.json",
         "docs/verification/oem-controls.json",
         "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-        "docs/verification/deployment-console-r160.json"
+        "docs/verification/deployment-console-r160.json",
+        "docs/verification/windows-fnlock-control.json",
+        "docs/verification/deployment-console-r174.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -1147,6 +1191,19 @@
         "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
         "normal_user_auth_dialog_verified": false,
         "gui_apply_verified": false
+      },
+      "windows_fnlock_progress": {
+        "status": "windows_fnlock_source_offline_verified_windows_runtime_pending",
+        "source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+        "evidence_ref": "docs/verification/windows-fnlock-control.json",
+        "evidence_sha256": "e8d0672d334e53bc4718120c8db3e3b628214093837219e864f8792f2985fe06",
+        "implemented": "Native fixed EC transport, complete-byte transaction and conditional recovery, independent firmware/driver qualification, authenticated UAC pipe, helper lifetime/wait, shared mutex and persistent maintenance gate, CLI and GUI explicit probe/preview/apply wiring.",
+        "support": "One fixed candidate contract; candidate compile feature off by default; zero runtime_accepted contracts.",
+        "verification": "519 all-feature Rust and 140 Python console checks plus compile-only Windows target verification; MinGW maintenance DLL compile/link is separate from MSVC or WiX/MSI.",
+        "windows_installed": false,
+        "windows_runtime_verified": false,
+        "physical_fn_key_verified": false,
+        "scope": "Source/offline subset only. No Windows MSI build, UAC, installation/maintenance, native GUI or hardware acceptance; full feature family remains incomplete."
       }
     },
     {
@@ -1993,7 +2050,7 @@
         "G15"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_r171_installed_brightness_cli_and_isolated_gui_preview_verified",
+      "current_work_status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified_windows_source_candidate",
       "baseline_notes": [
         "Linux原生概览与CLI已安装并有只读记录。",
         "托盘、OSD、完整服务、权限、升级和双端OEM控制待完成。"
@@ -2005,8 +2062,8 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r171_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
-          "loading": "r171_installed_ordinary_user_cli_brightness_and_isolated_gui_preview_verified_gui_apply_pending",
+          "installation": "r174_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
+          "loading": "r174_installed_readonly_cli_and_isolated_gui_navigation_cleanup_verified_no_setters_no_gui_apply",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -2040,7 +2097,9 @@
         "docs/verification/thermal-sampling.json",
         "docs/verification/deployment-console-r166.json",
         "docs/verification/deployment-cpu-r168.json",
-        "docs/verification/deployment-console-r171.json"
+        "docs/verification/deployment-console-r171.json",
+        "docs/verification/windows-fnlock-control.json",
+        "docs/verification/deployment-console-r174.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -2108,6 +2167,25 @@
         "normal_close_verified": false,
         "physical_effect_acceptance": false,
         "complete_family_resolved": false
+      },
+      "windows_fnlock_progress": {
+        "status": "windows_fnlock_source_offline_verified_windows_runtime_pending",
+        "source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+        "evidence_ref": "docs/verification/windows-fnlock-control.json",
+        "evidence_sha256": "e8d0672d334e53bc4718120c8db3e3b628214093837219e864f8792f2985fe06",
+        "implemented": "Native fixed EC transport, complete-byte transaction and conditional recovery, independent firmware/driver qualification, authenticated UAC pipe, helper lifetime/wait, shared mutex and persistent maintenance gate, CLI and GUI explicit probe/preview/apply wiring.",
+        "support": "One fixed candidate contract; candidate compile feature off by default; zero runtime_accepted contracts.",
+        "verification": "519 all-feature Rust and 140 Python console checks plus compile-only Windows target verification; MinGW maintenance DLL compile/link is separate from MSVC or WiX/MSI.",
+        "windows_installed": false,
+        "windows_runtime_verified": false,
+        "physical_fn_key_verified": false,
+        "scope": "Source/offline subset only. No Windows MSI build, UAC, installation/maintenance, native GUI or hardware acceptance; full feature family remains incomplete."
+      },
+      "historical_r171_installation_state": {
+        "current_work_status": "partial_linux_r171_installed_brightness_cli_and_isolated_gui_preview_verified",
+        "installation": "r171_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
+        "loading": "r171_installed_ordinary_user_cli_brightness_and_isolated_gui_preview_verified_gui_apply_pending",
+        "scope": "Original r171 current fields retained when the later r174 package/read-only smoke became current; r171 brightness write/preview proof remains in brightness_deployment."
       }
     },
     {

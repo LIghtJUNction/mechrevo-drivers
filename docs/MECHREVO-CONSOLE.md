@@ -2,6 +2,16 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
+## r174 控制台已安装（2026-10-18）
+
+Linux 控制台 `0.1.0.r174.g256fb05-1` 已真实安装，功能源码为本地签名提交 `256fb05aded292eca662bc0eaf1d876320596a24`，打包元数据另由签名提交 `c0b11920db7a03a5bc32fb033bd9a470bd1db12c` 固定。92 份输入匹配最终 519 项全特性 Rust／140 项 Python 控制台检查；实际 Linux 包只启用 GUI 特性，对应离线测试 518 项通过、0 失败。另一次 Windows all-targets 仅编译检查退出 0，保留两条 unused 警告，不能算 Windows 运行通过。[r174 安装收据](verification/deployment-console-r174.json)
+
+11 项载荷的字节、模式和 root 归属均与包匹配；控制台／功耗工具／驱动包完整性为 23／26／126 项、零改动。旧 Cargo target 在原位复用，本轮日志确认三个工作区 crate 从新固定干净源码重新编译，没有宣称缓存为空。新备份以独立目录句柄、精确清单和两次摘要核验覆盖 28 份文件及清单自身，共 29 项；旧 r171 的空清单缺陷与补充证明仍按历史保留。安装版普通 UID 1000 的包版本／归属／完整性、38 项状态读数及两帧温度／转速采样均通过，五个命令退出 0、stderr 为空。CLI／GUI 摘要前后匹配。
+
+已安装原生 GUI 在私有 Cage／XDG／D-Bus／AT-SPI 环境中完成概览、“控制”和未检查的 CPU 功耗页核对，三张 1280×720 截图经人工复核；根代理另看过概览。只点击本进程两个选择器，未检查 CPU、授权或应用，Linux 界面没有 Windows Fn 入口。应用和自有 registry 经 SIGTERM 回收，compositor 退出 0；无超时或 SIGKILL，原有用户 registry 不变，没有访问实际用户桌面。这是隔离启动／显示验收，不是正常关窗或硬件控制验收；独立清理检查确认自有应用与 registry 的精确 PID 已消失、私有进程组为空，wrapper 已等待结束且退出 0。r171 亮度写入与 r168 CPU 事务仍只属于各自历史版本。
+
+本次仅升级控制台：功耗工具仍为 `0.1.0-18`，驱动仍为 `4.24.0.r162.ge4bfb3f-1`，未重装两者、重载、重启或执行硬件 setter。55W／90°C／1 秒／0 秒策略、四个服务的 PID／启动时间、四份 EFI 摘要和六个加载模块身份均不变，新风扇接口仍未加载。安装跟踪 complete、0 gap／0 unresolved；更早的 wrapper 因把文件作为 root 参数而拒绝，子进程未开始，这次失败另记，不覆盖。源码未推送，未发布 AUR；真实风扇写入、噪声效果及 Windows 兼容均未增加验收结论。
+
 ## Windows Fn 锁源码候选（尚未安装）
 
 本轮 Windows Fn 锁源码已接入真实 Win32 设备读写、完整 EC 字节的条件修改／独立回读／条件恢复、固件与官方驱动资格检查，以及受保护安装位置内的限权 helper。GUI／CLI 保持普通用户身份，只有显式检查或应用才请求 UAC；自动刷新和本地缓存预览不提权。CLI 候选入口为：
@@ -14,11 +24,11 @@ mechrevo-console.exe oem windows-fn set off
 
 `windows-fn set --dry-run` 先授权只读检查，再做本地预览，不写 Fn 状态；它与不会提权的通用 `oem set --dry-run` 不同。应用不会因退出自动撤销，失败或未知结果不会自动重试；helper 尚未确认退出时保留待完成状态。GUI 已接检查、预览、显式应用和等待完成流程，但没有 Windows 原生 GUI 或实际 Fn 按键验收。
 
-固定支持清单当前只有未验收 candidate；默认关闭 `windows-fnlock-candidate` 编译功能，没有正式 `runtime_accepted` 名单，也没有用户自填清单、地址或跳过资格的运行开关。MSI 配方及维护 gate 已落源码；维护 DLL 仅通过 MinGW 交叉编译／链接，MSVC／WiX／MSI 构建、签名发布、Windows 安装升级／Repair、UAC 及硬件读写均待验收。最终离线套件仍待本轮验证结果，不能把此前检查当作最终源码通过。[候选收据](verification/windows-fnlock-control.json)、[历史设计约束](WINDOWS-FNLOCK-CONTROL-DESIGN.md)、[Windows 构建说明](../packaging/windows/README.md)。
+固定支持清单当前只有未验收 candidate；默认关闭 `windows-fnlock-candidate` 编译功能，没有正式 `runtime_accepted` 名单，也没有用户自填清单、地址或跳过资格的运行开关。MSI 配方及维护 gate 已落源码；维护 DLL 仅通过 MinGW 交叉编译／链接，MSVC／WiX／MSI 构建、签名发布、Windows 安装升级／Repair、UAC 及硬件读写均待验收。最终离线检查已通过 519 项 Rust／140 项 Python 控制台测试，格式、Clippy 和 Windows 目标编译通过；这不代替 Windows 实机验收。[候选收据](verification/windows-fnlock-control.json)、[历史设计约束](WINDOWS-FNLOCK-CONTROL-DESIGN.md)、[Windows 构建说明](../packaging/windows/README.md)。
 
-本机已安装控制台仍为下文 Linux `0.1.0.r171.g00e3998-1`，本轮没有安装 Windows 候选、重载驱动或重启，也不增加完整兼容或问题已解决的结论。
+本机已安装控制台现为上文 Linux `0.1.0.r174.g256fb05-1`；“候选尚未安装”指 Windows 产物。本轮没有安装 Windows 候选、重载驱动或重启，也不增加完整兼容或问题已解决的结论。
 
-## r171 控制台已安装（2026-10-18）
+## r171 历史安装验收（2026-10-18）
 
 控制台 `0.1.0.r171.g00e3998-1` 已真实安装，功能源码为本地签名提交 `00e3998a5bc35acde240c08b91b2693ac444e5c8`。59 份输入与最终 395 项 Rust／135 项 Python 控制台检查一致；格式、Clippy 和 Windows 目标编译通过，Windows 仍未实机验收。11 项载荷的字节、模式和 root 归属与包一致；控制台、原功耗工具、原驱动包完整性分别为 23／26／126 项，均为零改动。[r171 安装收据](verification/deployment-console-r171.json)
 

@@ -127,18 +127,22 @@
     "hardware_setter_executed_this_round": false,
     "driver_reloaded": false,
     "rebooted": false,
-    "current_installed_linux_console": "0.1.0.r171.g00e3998-1",
-    "installed_linux_receipt_ref": "docs/verification/deployment-console-r171.json",
-    "scope": "The existing Linux r171 installation is separate from this uninstalled Windows source candidate."
+    "current_installed_linux_console": "0.1.0.r174.g256fb05-1",
+    "installed_linux_receipt_ref": "docs/verification/deployment-console-r174.json",
+    "scope": "Linux console r174 has been installed and verified separately. this_candidate_installed=false refers to the unbuilt/uninstalled Windows candidate artifact; Windows MSI and runtime acceptance remain absent.",
+    "this_candidate_installed_scope": "Windows candidate artifact only; not the Linux package containing platform-conditional source."
   },
   "tracking": {
     "source": {
       "session": "8c225e1b-f606-4e85-852f-054ec126d677",
-      "status": "running",
-      "gap_count_observed": 0,
-      "unresolved_event_count_observed": 0,
-      "scope": "Live source watcher at documentation time, not a finalized gap-free claim. Root will record its final result."
-    }
+      "status": "finished",
+      "tracking_status": "complete",
+      "command_status": "not-applicable",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "scope": "Selected-source watcher finished its final scan. Final receipt metadata is written under the separate bounded wrapper identified below."
+    },
+    "receipt_finalization_session": "8f0ecb86-2cf0-4a35-abc4-015ff0ea9c9f"
   },
   "remaining": [
     "Run PowerShell parser/native verifier, MSVC and WiX MSI build on native Windows x64.",
