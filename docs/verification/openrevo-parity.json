@@ -4,10 +4,10 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "partial_linux_r166_installed_read_only_subset_verified",
+    "status": "partial_linux_r168_installed_bounded_cpu_pl1_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "r166 console fixed source, payloads, ordinary-user CLI and isolated native startup/navigation verified; existing driver/config/service identities unchanged. New fan interface, real fan transactions, physical effect and Windows runtime remain unaccepted. Historical candidate and older deployment fields retain their original scopes.",
-    "installation_status": "r166_console_installed_r162_driver_signed_image_not_loaded",
+    "scope": "r168 console and power-control 18 are locally installed. Fixed installed CPU helper completed two correlated root-pkexec transactions, 55W to 54W and full 55W/90C/1s/0s restoration. Ordinary-user read-only CLI and isolated native overview/unprobed CPU-page navigation are verified. Rust CLI CPU execution, ordinary-user administrator dialog, GUI writes, real fan transactions, physical cooling/noise and Windows runtime remain unaccepted. Historical source/candidate and older deployment fields retain their original scopes; newer brightness work is separate from this installed release.",
+    "installation_status": "r168_console_and_power18_installed_r162_driver_signed_image_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -85,20 +85,24 @@
     "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
     "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
     "latest_deployment": {
-      "evidence_ref": "docs/verification/deployment-console-r166.json",
-      "evidence_sha256": "fb3cc3493081f0c1027bf4741109736168937a267b51dee5b1b61407d9e826a2",
-      "console_source_commit": "e3b785274eb4923eff311bb9c11f6074601411d6",
-      "console_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+      "evidence_ref": "docs/verification/deployment-cpu-r168.json",
+      "evidence_sha256": "c2a9dba980988f79da2283272da57438739402f92f162ec2ed7671dfb1450c29",
+      "console_source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
+      "console_package": "mechrevo-console 0.1.0.r168.gd2d50f7-1",
+      "power_package": "mechrevo-power-control 0.1.0-18",
       "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
       "new_driver_loaded": false,
-      "installed_cli_scope": "Ordinary-user status/OEM/capabilities and three thermal frames, 33 readings each, zero ioctl/writable opens in thermal trace.",
-      "installed_native_gui_scope": "Installed Linux headless startup/overview and unprobed fan-page read-only navigation only; SIGTERM reaped.",
+      "installed_cli_scope": "Installed ordinary-user help/status/OEM/capabilities and three thermal frames, 33 readings each; CPU authorized probe and local dry-run recorded separately. No Rust CLI CPU execute acceptance.",
+      "installed_cpu_helper_scope": "Two correlated fixed installed helper transactions via root pkexec: 55W to 54W and full original 55W/90C/1s/0s policy restoration; MSR/MMIO requested PL1 readback confirmed. No stress workload, PL2/Tau/TCC/fan writes or physical cooling acceptance.",
+      "installed_cpu_helper_transactions": 2,
+      "installed_native_gui_scope": "Isolated Linux headless startup/overview and exact own-process read-only selectors to the unprobed CPU page verified in QA3. No authorization, GUI write or normal-close acceptance.",
       "real_fan_transaction_verified": false,
       "normal_user_administrator_dialog_verified": false,
       "gui_apply_verified": false,
       "physical_effect_acceptance": false,
       "AUR_published": false,
-      "remote_pushed": false
+      "remote_pushed": false,
+      "record_scope": "Latest recorded installed release only; newer display-brightness candidate changes are not included in this deployment receipt."
     },
     "thermal_sampling_development": {
       "status": "partial_linux_source_and_r166_installed_read_only_subset_verified",
@@ -135,6 +139,39 @@
       "physical_effect_acceptance": false,
       "AUR_published": false,
       "record_scope": "Historical last recorded installation only; newer thermal sampling source is not covered by this installed r163 receipt."
+    },
+    "historical_r166_deployment": {
+      "evidence_ref": "docs/verification/deployment-console-r166.json",
+      "evidence_sha256": "fb3cc3493081f0c1027bf4741109736168937a267b51dee5b1b61407d9e826a2",
+      "console_source_commit": "e3b785274eb4923eff311bb9c11f6074601411d6",
+      "console_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "new_driver_loaded": false,
+      "installed_cli_scope": "Ordinary-user status/OEM/capabilities and three thermal frames, 33 readings each, zero ioctl/writable opens in thermal trace.",
+      "installed_native_gui_scope": "Installed Linux headless startup/overview and unprobed fan-page read-only navigation only; SIGTERM reaped.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false
+    },
+    "display_brightness_development": {
+      "status": "partial_linux_brightness_candidate_offline_verified_not_installed",
+      "evidence_ref": "docs/verification/display-brightness-control.json",
+      "evidence_sha256": "43ed1e391e38da74b31d27b42777b9332bb38a5a8951c3ffa2ef9cac36836688",
+      "source_snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
+      "rust_workspace_tests_passed": 395,
+      "python_console_tests_passed": 135,
+      "count_scope": "Whole offline suites, not brightness-only or per-family counts; earlier failures and partial tracking are retained in the receipt.",
+      "linux_scope": "Active local-session logind delegation plus shared conditional recovery, typed errors, raw CLI expected-current and GUI unknown-state/writer gating. No new runtime setter or physical luminance acceptance yet.",
+      "installation": "candidate_not_installed",
+      "windows_scope": "Compile check only; runtime not verified",
+      "custom_presets_issue_113": "not_implemented_not_closed",
+      "complete_family_resolved": false,
+      "source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+      "isolated_behavior_mutations_detected": 3,
+      "gui_close_scope": "Remote possible writer keeps new brightness writes locked. Actual local in-flight work/worker exit gates closing; after local return, remote uncertainty alone does not prohibit close."
     }
   },
   "upstream": {
@@ -1376,7 +1413,7 @@
         "G14"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "open_not_claimed_complete",
+      "current_work_status": "partial_linux_brightness_candidate_offline_verified_not_installed",
       "baseline_notes": [
         "双端系统亮度后端已有，不代表刷新率/色彩已实现。",
         "逐屏能力、面板/native、回读、恢复及实体显示待验。"
@@ -1384,10 +1421,10 @@
       "platforms": {
         "linux": {
           "read": "partial_read_only_runtime_recorded",
-          "write": "partial_os_controls_implemented_not_complete_feature",
-          "readback": "partial_os_controls_implemented_not_complete_feature",
-          "recovery": "partial_os_controls_implemented_not_complete_feature",
-          "automated_tests": "partial_offline_coverage",
+          "write": "partial_active_local_session_logind_and_direct_backend_offline_verified_runtime_pending",
+          "readback": "partial_requested_state_transactions_offline_verified_not_physical_luminance",
+          "recovery": "partial_shared_conditional_recovery_and_unknown_writer_gates_offline_verified",
+          "automated_tests": "partial_395_workspace_135_console_tests_complete_family_pending",
           "installation": "baseline_packages_installed_not_feature_acceptance",
           "loading": "feature_activation_not_verified",
           "physical_acceptance": "not_accepted_for_complete_feature"
@@ -1415,9 +1452,27 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/display-brightness-control.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "brightness_development": {
+        "status": "partial_linux_brightness_candidate_offline_verified_not_installed",
+        "evidence_ref": "docs/verification/display-brightness-control.json",
+        "evidence_sha256": "43ed1e391e38da74b31d27b42777b9332bb38a5a8951c3ffa2ef9cac36836688",
+        "source_snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
+        "rust_workspace_tests_passed": 395,
+        "python_console_tests_passed": 135,
+        "count_scope": "Whole offline suites, not brightness-only or per-family counts; earlier failures and partial tracking are retained in the receipt.",
+        "linux_scope": "Active local-session logind delegation plus shared conditional recovery, typed errors, raw CLI expected-current and GUI unknown-state/writer gating. No new runtime setter or physical luminance acceptance yet.",
+        "installation": "candidate_not_installed",
+        "windows_scope": "Compile check only; runtime not verified",
+        "custom_presets_issue_113": "not_implemented_not_closed",
+        "complete_family_resolved": false,
+        "source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+        "isolated_behavior_mutations_detected": 3,
+        "gui_close_scope": "Remote possible writer keeps new brightness writes locked. Actual local in-flight work/worker exit gates closing; after local return, remote uncertainty alone does not prohibit close."
+      }
     },
     {
       "id": "F19",
@@ -1715,8 +1770,8 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
-          "loading": "r163_installed_cli_native_readonly_navigation_and_fan_helper_inspect_verified_gui_apply_pending",
+          "installation": "r168_console_power18_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
+          "loading": "r168_installed_readonly_cli_and_isolated_overview_unprobed_cpu_page_navigation_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -1748,7 +1803,8 @@
         "docs/verification/deployment-console-r160.json",
         "docs/verification/deployment-fan-r162-r163.json",
         "docs/verification/thermal-sampling.json",
-        "docs/verification/deployment-console-r166.json"
+        "docs/verification/deployment-console-r166.json",
+        "docs/verification/deployment-cpu-r168.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -1789,7 +1845,7 @@
         "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
         "normal_user_auth_dialog_verified": false,
         "gui_apply_verified": false,
-        "record_scope": "Historical four-control OEM candidate and r160 installed Fn acceptance. Current r163 installation and smoke are recorded in current_work.latest_deployment; old write results are not transferred."
+        "record_scope": "Historical four-control OEM candidate and r160 installed Fn acceptance. Later installations and their own smoke scopes are recorded separately in current_work.latest_deployment and historical deployment fields; old write results are not transferred."
       },
       "thermal_sampling_progress": {
         "status": "partial_linux_candidate_sampling_verified_not_installed",

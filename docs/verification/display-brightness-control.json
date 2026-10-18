@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T09:33:57.744233+00:00",
+  "outcome": "candidate_offline_verified_not_installed_no_hardware_acceptance",
+  "scope": "Linux operating-system display-brightness candidate: active local-session logind delegation, shared typed transactions and conditional recovery, CLI raw expected-current guard and GUI unknown-state gating. Offline verification is separate from installed release, requested-state runtime readback and physical luminance acceptance.",
+  "source": {
+    "base_commit_at_documentation": "a0ce13d803c69e76d53860e9da7dbeee038c8f28",
+    "source_snapshot_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
+    "source_input_files": 59,
+    "source_unchanged_during_verification": true,
+    "snapshot_scope": "59 production/test inputs verified unchanged during the final suite and isolated behavior regressions; feature source now has a fixed signed local commit. No new installed release is claimed.",
+    "source_commit": "00e3998a5bc35acde240c08b91b2693ac444e5c8",
+    "source_commit_signature": "git verification G; fixed local source commit, not evidence of remote publication or installation"
+  },
+  "implemented": {
+    "linux_write_routes": "Retain direct sysfs writes when permitted; otherwise validate the fixed system logind service, effective UID, active local primary session, foreground seat and canonical backlight binding before delegated writes. Preview eligibility does not guarantee later authorization.",
+    "permissions": "Normal-user logind delegation does not chmod sysfs, start a custom root helper or run the full GUI as root. Device/session/seat and original raw value are revalidated before a setter.",
+    "readback_scope": "Requested brightness and actual_brightness are separately retained; OS requested-state readback is not a measurement of emitted luminance.",
+    "transaction": "Typed confirmed/not_applied/conflict/restored/recovery_failed/unknown outcomes retain primary, rollback and readback errors separately. Direct conditional recovery does not overwrite an observed third-party value. A lost delegated reply or writer that may continue remains unknown and does not trigger speculative rollback.",
+    "cli": "--expected-current accepts a raw unsigned brightness value and binds the observed original plan, not a percentage. A mismatch rejects before apply; core and setter recheck the same original baseline. Failed or unknown operations are not automatically retried.",
+    "gui": "Unknown brightness state blocks new brightness preview/application until an explicit valid reconciliation. If the returned transaction says a remote writer may continue, this process keeps its brightness write gate latched, including after explicit observation. Closing waits only for actual local in-flight work and worker exit; once that local work returns, remote writer uncertainty alone does not prevent close. Closing does not retry or restore brightness. Other pending-control previews keep their established invalidation and refusal contracts.",
+    "windows": "Existing WMI brightness and shared transaction code compile for the Windows target; no Windows runtime or hardware qualification is established."
+  },
+  "verification": {
+    "rust": {
+      "checks": {
+        "fmt": "passed",
+        "test": "passed",
+        "clippy": "passed",
+        "windows": "passed"
+      },
+      "whole_workspace_tests_passed": 395,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 0,
+      "count_scope": "One whole workspace suite, not brightness-only or per-family counts. Windows is a compile check only."
+    },
+    "python_console": {
+      "ran": 135,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "scope": "One offline console-domain suite; no hardware acceptance."
+    },
+    "python_power_domain": {
+      "rerun_this_round": false,
+      "historical_tests_passed": 219,
+      "scope": "Historical CPU round only; power-domain source was not changed. Not counted as a new brightness verification run."
+    },
+    "isolated_production_regressions": {
+      "outcome": "three_production_behavior_mutations_detected",
+      "baseline_tests_passed": 3,
+      "mutations": 3,
+      "cargo_command_count": 6,
+      "scope": "Three exact Fake BrightnessIo tests in an isolated clone; each baseline ran one passing test, each mutated production implementation recompiled and produced one actual behavioral assertion failure. These are not schema/missing-fixture panics, full-suite reruns or hardware tests.",
+      "production_source_unchanged": true,
+      "production_source_after_sha256": "281ce7a8802e3747892d38e2fe5d1fc88b8296dd28feea8e559c62b73c3f22ec",
+      "clone_baseline_restored": true,
+      "cases": [
+        {
+          "name": "conflict-overwrite",
+          "test": "brightness::tests::third_party_change_not_overwritten",
+          "exit_code": 101,
+          "compiled": true,
+          "tests_passed": 0,
+          "tests_failed": 1,
+          "behavioral_assertion_failure": true,
+          "assertion_left": "20",
+          "assertion_right": "77",
+          "assertion_source": "assert_eq!(io.value, 77);",
+          "log_sha256": "e0c855de061106f2d69889326234a087ad13db23daf12f998a93036eba32f135"
+        },
+        {
+          "name": "failed-rollback-confirmed",
+          "test": "brightness::tests::failed_rollback_old_cached_value_never_confirmed",
+          "exit_code": 101,
+          "compiled": true,
+          "tests_passed": 0,
+          "tests_failed": 1,
+          "behavioral_assertion_failure": true,
+          "assertion_left": "Restored",
+          "assertion_right": "RecoveryFailed",
+          "assertion_source": "assert_eq!(tx.outcome, BrightnessOutcome::RecoveryFailed);",
+          "log_sha256": "5dafdda32868449f5c8345fcfa5d4541bb40f91210ce639ef43e98c6ab07e6c9"
+        },
+        {
+          "name": "unknown-write-rollback",
+          "test": "brightness::tests::delegated_write_lands_then_lost_reply_is_unknown_with_zero_rollback",
+          "exit_code": 101,
+          "compiled": true,
+          "tests_passed": 0,
+          "tests_failed": 1,
+          "behavioral_assertion_failure": true,
+          "assertion_left": "20",
+          "assertion_right": "80",
+          "assertion_source": "assert_eq!(io.value, 80);",
+          "log_sha256": "dd9223de5d7909408feb8a44b98122771282e84506dfc269c96ced24c295bf28"
+        }
+      ]
+    },
+    "native_gui_runtime": {
+      "performed_for_this_candidate": false,
+      "scope": "GUI worker, transaction and layout contracts are offline tests; no new native GUI brightness action is accepted."
+    },
+    "gui_close_boundary": {
+      "test": "possible_continuing_writer_remains_locked_after_explicit_observation_but_can_be_closed_after_return",
+      "scope": "Included in the final passing offline workspace suite. Remote-writer uncertainty keeps new brightness writes blocked; after actual local worker completion the controller can close, without automatic retry or restoration. Not native graceful-close/runtime evidence."
+    }
+  },
+  "earlier_failures_retained": {
+    "scope": "Earlier GUI syntax, cross-control invalidation semantics and collapsed-content assertions failed in private attempts. Their receipts remain separate; final green results do not erase these failures.",
+    "rust_attempts": [
+      {
+        "receipt_sha256": "b038693d9d5c7276dbdb341240fdb33d62977987e644e97554b8931a0d993504",
+        "outcome": "failed",
+        "commands": [
+          {
+            "name": "fmt",
+            "status": "passed",
+            "exit_code": 0
+          },
+          {
+            "name": "test",
+            "status": "failed",
+            "exit_code": 101
+          },
+          {
+            "name": "clippy",
+            "status": "failed",
+            "exit_code": 101
+          },
+          {
+            "name": "windows",
+            "status": "passed",
+            "exit_code": 0
+          }
+        ]
+      },
+      {
+        "receipt_sha256": "da1a16d6621bbd6ed7c8f2238bc61e0781dfb41806f74111c0df59755068061d",
+        "outcome": "failed",
+        "commands": [
+          {
+            "name": "fmt",
+            "status": "passed",
+            "exit_code": 0
+          },
+          {
+            "name": "test",
+            "status": "failed",
+            "exit_code": 101
+          },
+          {
+            "name": "clippy",
+            "status": "passed",
+            "exit_code": 0
+          },
+          {
+            "name": "windows",
+            "status": "passed",
+            "exit_code": 0
+          }
+        ]
+      }
+    ]
+  },
+  "deployment": {
+    "this_candidate_installed": false,
+    "hardware_setter_executed_for_this_candidate": false,
+    "requested_state_write_restore_verified": false,
+    "physical_luminance_verified": false,
+    "windows_runtime_verified": false,
+    "latest_recorded_installed_release_ref": "docs/verification/deployment-cpu-r168.json",
+    "latest_recorded_installed_release_scope": "Historical r168 console and power18 installation; does not contain this new brightness candidate."
+  },
+  "tracking": {
+    "source": {
+      "session": "86989324-e5d5-4c7e-8478-c9402c1f7564",
+      "status": "running",
+      "gap_count": 0,
+      "unresolved_event_count_at_readback": 10,
+      "scope": "Ready selected-source watcher still running at documentation. Counts are session cumulative/retained and are not a finalized tracking receipt; parent owns finalization."
+    },
+    "rust": {
+      "session": "9d942f52-9d1b-4e5d-9f49-a44facf0c4eb",
+      "command_exit_code": 0,
+      "status": "finished",
+      "tracking_status": "partial",
+      "gap_count": 0,
+      "unresolved_event_count": 39
+    },
+    "python_console": {
+      "session": "d5ca328e-80c8-43af-a9f6-987c382e10d2",
+      "command_exit_code": 0,
+      "status": "finished",
+      "tracking_status": "partial",
+      "gap_count": 4,
+      "unresolved_event_count": 179
+    },
+    "untracked_backup_bytecode": {
+      "artifact": "__pycache__/runtime_guard.cpython-314.pyc",
+      "bytes": 12435,
+      "creation_tracked": false,
+      "cause": "Root validation omitted Python -B; incidental bytecode was created inside an older backup directory.",
+      "classification": "temporary_retained_not_deleted",
+      "original_guard_baseline_and_historical_manifest_unchanged": true,
+      "record_basis": "Root-reported accidental output and independent preservation check; no complete creation history is claimed."
+    },
+    "cleanup_performed": false,
+    "isolated_regressions": {
+      "session": "86a46d86-7a0a-44da-9a49-2e29353ee9ac",
+      "command_exit_code": 0,
+      "status": "finished",
+      "tracking_status": "partial",
+      "gap_count": 0,
+      "unresolved_event_count": 293,
+      "scope": "Command success and partial transient-fixture tracking remain separate; production/source and log hashes are independently retained."
+    }
+  },
+  "evidence_sha256": {
+    "rust_verification_3": "2c06c31e0fa572e8beff37bb8e87a2d7f60dca372c8520c281b49e960907bcde",
+    "python_console_2": "ad29e71aaf283f26d08131b71ef8fac37650e85e37143570f0781d487ce5c56c",
+    "isolated_production_regressions": "ef9aebe48b538a4b238c7a83ef85fa7d6850c12c58d24b7ef31148ff07c70d8a"
+  },
+  "remaining": [
+    "New release installation and ordinary-user logind setter/write/restore runtime acceptance",
+    "Native GUI brightness application, unknown-state runtime recovery and normal-close acceptance",
+    "Physical luminance and long-term display behavior",
+    "Saved/reapplied custom brightness presets requested by issue 113",
+    "Refresh rate, color/ICC, MiniLED and external-display control",
+    "Windows runtime and other hardware/session combinations"
+  ],
+  "complete_families_closed": 0,
+  "upstream_issues_closed": 0,
+  "updated_at_utc": "2026-10-18T09:36:16.389835+00:00"
+}

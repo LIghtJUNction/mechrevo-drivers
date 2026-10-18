@@ -4,8 +4,8 @@
 `mechrevo-control`、TCC 或已有热键守护进程。安装不新增服务、不修改风扇曲线，
 GUI 从应用菜单中的“机械革命控制台”启动。
 
-当前配方固定源码提交 `e3b785274eb4923eff311bb9c11f6074601411d6`，包版本为
-`0.1.0.r166.ge3b7852-1`。这是本地部署配方，不表示已经发布到 AUR。
+当前配方固定源码提交 `00e3998a5bc35acde240c08b91b2693ac444e5c8`，包版本为
+`0.1.0.r171.g00e3998-1`。这是本地部署配方，不表示已经发布到 AUR。
 后续更新应一并修改提交、版本和部署验证记录，不能只替换安装目录里的二进制。
 
 本配方包含风扇编辑器、会话 helper 和预览／风扇会话期间的只读温度与转速采样；源码回归见
@@ -15,7 +15,7 @@ GUI 从应用菜单中的“机械革命控制台”启动。
 对应的 Cargo 缓存。Cargo 使用 `--release --workspace --all-features --locked --offline`，
 缺少依赖时直接失败，不安装依赖或修改锁文件。内嵌字体和型号目录随二进制分发；
 中文字体通过 fontconfig 使用系统回退字体，可选安装 `noto-fonts-cjk`。
-运行依赖包含 `polkit`。桌面会话需有可用的授权代理才能显示管理员认证；本包不安装
+运行依赖包含 `polkit`。Linux 活动会话亮度通道可选使用 `systemd` 提供的 `busctl`／`udevadm`；缺失时保留设备读数并报告通道不可用，不放宽 sysfs 权限。桌面会话需有可用的授权代理才能显示管理员认证；本包不安装
 新的常驻服务，也不自动启动授权代理。
 
 在此目录执行；将本地仓库路径设为实际位置，Git 只取固定提交，工作区改动不进入包：
@@ -34,8 +34,8 @@ makepkg 的 `src/cargo-target` 中。不要并行复用正在被其他 Cargo 构
 检查包内容和部署材料后，通过 pacman 安装本地产物：
 
 ```sh
-pacman -Qlp mechrevo-console-0.1.0.r166.ge3b7852-1-x86_64.pkg.tar.zst
-sudo pacman -U ./mechrevo-console-0.1.0.r166.ge3b7852-1-x86_64.pkg.tar.zst
+pacman -Qlp mechrevo-console-0.1.0.r171.g00e3998-1-x86_64.pkg.tar.zst
+sudo pacman -U ./mechrevo-console-0.1.0.r171.g00e3998-1-x86_64.pkg.tar.zst
 mechrevo-console --version
 mechrevo-console status --json
 ```
