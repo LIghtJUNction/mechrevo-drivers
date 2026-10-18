@@ -96,7 +96,7 @@
     "tracking_gap_count": 0,
     "tracking_unresolved_event_count": 3,
     "tracking_limitation": "Transient Wayland socket and lock lifecycle events; runtime success does not imply complete file history.",
-    "scope": "Candidate GUI overview and four OEM control panels rendered and navigated; no GUI preview/apply, authorization dialog or hardware write was exercised."
+    "scope": "Candidate GUI overview and Controls navigation rendered; four OEM selectors and the Fn-lock panel were visually confirmed. The other three panels, GUI preview/apply, authorization dialog and hardware writes were not exercised in this native run."
   },
   "hardware": {
     "outcome": "driver_readback_verified_and_restored",
@@ -143,12 +143,14 @@
       "mechrevo-console": "6afc8870f17b8a2d5df17bc8b64197fff51a5223a084a522b7baf73135844c3f",
       "mechrevo-console-gui": "b2feca34ddac7aa66021ebe968760c74110a79a05bbb9a183e8b471315277c3a"
     },
-    "new_oem_source_installed": false,
-    "new_oem_helper_and_policy_installed": false,
     "loaded_kernel_driver_revision": "r106",
     "installed_kernel_driver_revision": "r158",
     "new_kernel_code_loaded": false,
-    "note": "Source/candidate verification does not update installed binaries, register the helper policy, reload modules or prove the prepared r158 kernel behavior."
+    "note": "Historical candidate capture before r160 installation. The false installed-at-capture values describe that earlier phase; current release installation and installed acceptance are recorded separately in deployment-console-r160.json.",
+    "recorded_before_r160_install": true,
+    "subsequent_deployment_receipt": "deployment-console-r160.json",
+    "new_oem_source_installed_at_capture": false,
+    "new_oem_helper_and_policy_installed_at_capture": false
   },
   "markref": {
     "version": "0.2.2",
@@ -174,5 +176,7 @@
     "Fn-lock success is EC readback, not physical Fn-key or persistence validation.",
     "No fan/noise, CPU/GPU power, suspend/resume, reboot or persistence acceptance is claimed.",
     "Installed pkexec/polkit authorization and installed GUI write flows remain outside this candidate receipt."
-  ]
+  ],
+  "recorded_before_r160_install": true,
+  "subsequent_deployment_receipt": "deployment-console-r160.json"
 }

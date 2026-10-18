@@ -4,9 +4,63 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "implementation_in_progress",
-    "scope": "OEM backend wiring, CLI/GUI controls and a restricted privilege helper are under development after the baseline. No new OEM control is claimed complete by this index.",
-    "completion_requires": "Each feature and platform must acquire separate implementation, test, installation/loading and physical-effect evidence."
+    "status": "partial_linux_installed_subset_verified",
+    "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+    "scope": "Four typed Linux OEM controls are wired through core, CLI, GUI and restricted helper. Four-control requested-state candidate transactions remain separate evidence. The r160 console/helper/policy payload is installed; ordinary-user read-only CLI and root pkexec installed-helper Fn toggle/restore are verified. No complete family, normal-user authorization dialog, GUI apply or physical-effect acceptance is claimed.",
+    "installation_status": "r160_console_helper_policy_installed_payload_verified_subset",
+    "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
+    "evidence_ref": "docs/verification/oem-controls.json",
+    "evidence_sha256": "aa3a19ca656b7cc979b545f3b5e1b5f859e31a73dd842ab0086ff7d656ffce75",
+    "candidate_verification": {
+      "rust_tests_passed": 146,
+      "python_console_tests_passed": 95,
+      "test_count_scope": "Whole candidate verification suites; not separate per-feature counts and not added repeatedly.",
+      "hardware_scope": "Local GM6PX0X only",
+      "helper_execution": "Candidate helper as root through a held executable file descriptor; installation/polkit flow not exercised",
+      "helper_transactions": 18,
+      "applied_verified": 11,
+      "rejected_before_write": 7,
+      "already_at_target_without_write": 2,
+      "count_semantics": "18 actual helper processes: 11 successful applied_verified transactions plus 7 rejections before writing. Two additional already-at-target plan targets were skipped by the runner before invoking the helper; they are outside the 18 helper transactions and not a subset of the 11. A helper transaction is not a count of individual sysfs stores.",
+      "all_controls_restored": true,
+      "conditional_recovery_scope": "Offline failure/conditional-recovery contracts plus successful candidate state restoration; no induced real hardware failure is claimed.",
+      "native_gui_scope": "Candidate GUI overview and Controls navigation rendered; four OEM selectors and the Fn-lock panel were visually confirmed. The other three panels, GUI preview/apply, authorization dialog and hardware writes were not exercised in this native run.",
+      "kernel_state": {
+        "loaded_revision": "r106",
+        "installed_revision": "r158",
+        "new_kernel_code_loaded": false
+      },
+      "physical_effect_scope": "Driver EC/LED requested-state readback only. No stop-charging, emitted-light, fan/noise, power, reboot, or persistence acceptance is inferred.",
+      "skipped_plan_targets_before_helper": 2,
+      "indexed_step_files": 56,
+      "step_index_semantics": "18 helper transactions times 3 intent/raw/terminal steps, plus 2 pre-helper skipped-plan steps."
+    },
+    "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+    "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+    "deployment_verification": {
+      "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+      "installed_package": "0.1.0.r160.g5542b9d-1",
+      "verified_regular_payload_files": 9,
+      "package_integrity_files": 21,
+      "package_integrity_altered": 0,
+      "all_payload_bytes_modes_root_ownership_match": true,
+      "installed_cli_scope": "Ordinary-user version/status/OEM-list and registration/integrity checks; no setters in read-only smoke.",
+      "installed_helper_scope": "Root pkexec installed fixed-helper path only; not normal-user authorization dialog or GUI apply; only Fn changed/restored, other controls read-only",
+      "installed_helper_applied_verified": 2,
+      "fn_changed_and_restored": true,
+      "helper_is_daemon": false,
+      "remaining_pkexec_or_helper_processes": 0,
+      "other_three_controls_written_in_release_acceptance": false,
+      "normal_user_administrator_authentication_dialog_verified": false,
+      "gui_apply_verified": false,
+      "installed_native_gui_scope": "Installed release Linux native GUI startup, overview, four OEM selectors and Fn-lock panel rendering/navigation only. No OEM preview/application or hardware setter; no user desktop/HOME/system settings changed. Other OEM panels, Windows runtime, and physical hardware behavior are not accepted by this smoke.",
+      "kernel_state": {
+        "installed_driver_revision": "r158",
+        "loaded_driver_revision": "r106",
+        "new_kernel_code_loaded": false
+      },
+      "physical_acceptance": "not_changed_by_requested_state_or_rendering_results"
+    }
   },
   "upstream": {
     "repository": "https://github.com/faintonce/open-revo",
@@ -76,20 +130,20 @@
         "G13"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "implementation_in_progress",
+      "current_work_status": "partial_linux_installed_subset_verified",
       "baseline_notes": [
         "Linux传输与错误传播源码已有；Rust OEM后端在基线未接入。",
         "启动、解绑、权限、完整ABI及恢复待验。"
       ],
       "platforms": {
         "linux": {
-          "read": "not_integrated_at_baseline",
-          "write": "not_integrated_at_baseline",
-          "readback": "not_integrated_at_baseline",
-          "recovery": "not_integrated_at_baseline",
-          "automated_tests": "feature_complete_suite_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "read": "partial_listed_control_subset_candidate_requested_state_verified",
+          "write": "partial_typed_control_subset_candidate_root_helper_verified",
+          "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
+          "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
+          "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
+          "installation": "r160_console_helper_policy_payload_verified_subset",
+          "loading": "r160_installed_helper_root_pkexec_fn_toggle_restore_verified_helper_exited",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -115,9 +169,50 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/oem-controls.json",
+        "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "docs/verification/deployment-console-r160.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "baseline_linux_state": {
+        "read": "not_integrated_at_baseline",
+        "write": "not_integrated_at_baseline",
+        "readback": "not_integrated_at_baseline",
+        "recovery": "not_integrated_at_baseline",
+        "automated_tests": "feature_complete_suite_pending",
+        "installation": "baseline_packages_installed_not_feature_acceptance",
+        "loading": "r158_kernel_changes_pending_activation_at_baseline",
+        "physical_acceptance": "not_accepted_for_complete_feature"
+      },
+      "linux_progress": {
+        "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "evidence_ref": "docs/verification/oem-controls.json",
+        "scope": "Partial subcapabilities only; full family remains incomplete.",
+        "control_ids": [
+          "fn-lock",
+          "charging-profile",
+          "keyboard-brightness:rgb:kbd_backlight",
+          "keyboard-color:rgb:kbd_backlight"
+        ],
+        "source_status": "typed_core_cli_gui_and_restricted_helper_implemented",
+        "candidate_hardware_scope": "Local GM6PX0X only; requested-state readback and restoration.",
+        "read_write_readback": "candidate_root_helper_verified_for_listed_controls",
+        "conditional_recovery": "offline_contracts_verified",
+        "candidate_restoration": "listed_controls_restored_and_independently_read_back",
+        "installation": "r160_payload_verified_installed_subset",
+        "installed_authorization_flow": "root_pkexec_fn_only_normal_user_dialog_not_verified",
+        "limitations": [
+          "Four typed Linux controls only; no arbitrary path/register or full transport lifecycle qualification.",
+          "Installed root pkexec acceptance toggled/restored Fn only; normal-user administrator dialog and GUI apply remain unverified. Prepared r158 kernel code is still not loaded."
+        ],
+        "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+        "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+        "installed_write_scope": "fn_lock_toggle_restore_only",
+        "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
+        "normal_user_auth_dialog_verified": false,
+        "gui_apply_verified": false
+      }
     },
     {
       "id": "F02",
@@ -619,20 +714,20 @@
         "G14"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "implementation_in_progress",
+      "current_work_status": "partial_linux_installed_subset_verified",
       "baseline_notes": [
         "Linux接口及事务修复已有；Rust基线未接入。",
         "全部实体组合键、OSD、重复事件及睡眠恢复待验。"
       ],
       "platforms": {
         "linux": {
-          "read": "not_integrated_at_baseline",
-          "write": "not_integrated_at_baseline",
-          "readback": "not_integrated_at_baseline",
-          "recovery": "not_integrated_at_baseline",
-          "automated_tests": "feature_complete_suite_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "read": "partial_listed_control_subset_candidate_requested_state_verified",
+          "write": "partial_typed_control_subset_candidate_root_helper_verified",
+          "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
+          "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
+          "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
+          "installation": "r160_console_helper_policy_payload_verified_subset",
+          "loading": "r160_installed_helper_root_pkexec_fn_toggle_restore_verified_helper_exited",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -658,9 +753,48 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/oem-controls.json",
+        "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "docs/verification/deployment-console-r160.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "baseline_linux_state": {
+        "read": "not_integrated_at_baseline",
+        "write": "not_integrated_at_baseline",
+        "readback": "not_integrated_at_baseline",
+        "recovery": "not_integrated_at_baseline",
+        "automated_tests": "feature_complete_suite_pending",
+        "installation": "baseline_packages_installed_not_feature_acceptance",
+        "loading": "r158_kernel_changes_pending_activation_at_baseline",
+        "physical_acceptance": "not_accepted_for_complete_feature"
+      },
+      "linux_progress": {
+        "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "evidence_ref": "docs/verification/oem-controls.json",
+        "scope": "Partial subcapabilities only; full family remains incomplete.",
+        "control_ids": [
+          "fn-lock"
+        ],
+        "source_status": "typed_core_cli_gui_and_restricted_helper_implemented",
+        "candidate_hardware_scope": "Local GM6PX0X only; requested-state readback and restoration.",
+        "read_write_readback": "candidate_root_helper_verified_for_listed_controls",
+        "conditional_recovery": "offline_contracts_verified",
+        "candidate_restoration": "listed_controls_restored_and_independently_read_back",
+        "installation": "r160_payload_verified_installed_subset",
+        "installed_authorization_flow": "root_pkexec_fn_only_normal_user_dialog_not_verified",
+        "limitations": [
+          "EC Fn-lock requested-state readback only.",
+          "Physical Fn-key behavior, all hotkeys, OSD, reboot and persistence remain unverified.",
+          "Installed root pkexec acceptance toggled/restored Fn only; normal-user administrator dialog and GUI apply remain unverified. Prepared r158 kernel code is still not loaded."
+        ],
+        "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+        "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+        "installed_write_scope": "fn_lock_toggle_restore_only",
+        "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
+        "normal_user_auth_dialog_verified": false,
+        "gui_apply_verified": false
+      }
     },
     {
       "id": "F12",
@@ -673,20 +807,20 @@
         "G13"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "implementation_in_progress",
+      "current_work_status": "partial_linux_installed_subset_verified",
       "baseline_notes": [
         "本机单区RGB能力与Linux接口有依据；不能扩为逐键资格。",
         "控制器、亮度、效果、闲置、交接和实体状态待验。"
       ],
       "platforms": {
         "linux": {
-          "read": "not_integrated_at_baseline",
-          "write": "not_integrated_at_baseline",
-          "readback": "not_integrated_at_baseline",
-          "recovery": "not_integrated_at_baseline",
-          "automated_tests": "feature_complete_suite_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "read": "partial_listed_control_subset_candidate_requested_state_verified",
+          "write": "partial_typed_control_subset_candidate_root_helper_verified",
+          "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
+          "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
+          "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
+          "installation": "r160_console_helper_policy_payload_verified_subset",
+          "loading": "r160_installed_readonly_enumeration_verified_release_control_writes_not_exercised",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -712,9 +846,49 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/oem-controls.json",
+        "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "docs/verification/deployment-console-r160.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "baseline_linux_state": {
+        "read": "not_integrated_at_baseline",
+        "write": "not_integrated_at_baseline",
+        "readback": "not_integrated_at_baseline",
+        "recovery": "not_integrated_at_baseline",
+        "automated_tests": "feature_complete_suite_pending",
+        "installation": "baseline_packages_installed_not_feature_acceptance",
+        "loading": "r158_kernel_changes_pending_activation_at_baseline",
+        "physical_acceptance": "not_accepted_for_complete_feature"
+      },
+      "linux_progress": {
+        "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "evidence_ref": "docs/verification/oem-controls.json",
+        "scope": "Partial subcapabilities only; full family remains incomplete.",
+        "control_ids": [
+          "keyboard-brightness:rgb:kbd_backlight",
+          "keyboard-color:rgb:kbd_backlight"
+        ],
+        "source_status": "typed_core_cli_gui_and_restricted_helper_implemented",
+        "candidate_hardware_scope": "Local GM6PX0X only; requested-state readback and restoration.",
+        "read_write_readback": "candidate_root_helper_verified_for_listed_controls",
+        "conditional_recovery": "offline_contracts_verified",
+        "candidate_restoration": "listed_controls_restored_and_independently_read_back",
+        "installation": "r160_payload_verified_installed_subset",
+        "installed_authorization_flow": "root_pkexec_fn_only_normal_user_dialog_not_verified",
+        "limitations": [
+          "LED core requested-state brightness/color readback only.",
+          "Emitted light, optical brightness/color, effects, multizone/per-key hardware, lid/idle and persistence remain unverified.",
+          "Installed root pkexec acceptance toggled/restored Fn only; normal-user administrator dialog and GUI apply remain unverified. Prepared r158 kernel code is still not loaded."
+        ],
+        "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+        "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+        "installed_write_scope": "listed_release_controls_read_only_candidate_write_evidence_remains_separate",
+        "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
+        "normal_user_auth_dialog_verified": false,
+        "gui_apply_verified": false
+      }
     },
     {
       "id": "F13",
@@ -728,20 +902,20 @@
         "G13"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "implementation_in_progress",
+      "current_work_status": "partial_linux_installed_subset_verified",
       "baseline_notes": [
         "Linux有充电档位接口；Rust基线未接入。",
         "真实停充/恢复、阈值、持久化与事件恢复待验。"
       ],
       "platforms": {
         "linux": {
-          "read": "not_integrated_at_baseline",
-          "write": "not_integrated_at_baseline",
-          "readback": "not_integrated_at_baseline",
-          "recovery": "not_integrated_at_baseline",
-          "automated_tests": "feature_complete_suite_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "read": "partial_listed_control_subset_candidate_requested_state_verified",
+          "write": "partial_typed_control_subset_candidate_root_helper_verified",
+          "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
+          "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
+          "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
+          "installation": "r160_console_helper_policy_payload_verified_subset",
+          "loading": "r160_installed_readonly_enumeration_verified_release_control_writes_not_exercised",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -767,9 +941,48 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/oem-controls.json",
+        "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "docs/verification/deployment-console-r160.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "baseline_linux_state": {
+        "read": "not_integrated_at_baseline",
+        "write": "not_integrated_at_baseline",
+        "readback": "not_integrated_at_baseline",
+        "recovery": "not_integrated_at_baseline",
+        "automated_tests": "feature_complete_suite_pending",
+        "installation": "baseline_packages_installed_not_feature_acceptance",
+        "loading": "r158_kernel_changes_pending_activation_at_baseline",
+        "physical_acceptance": "not_accepted_for_complete_feature"
+      },
+      "linux_progress": {
+        "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "evidence_ref": "docs/verification/oem-controls.json",
+        "scope": "Partial subcapabilities only; full family remains incomplete.",
+        "control_ids": [
+          "charging-profile"
+        ],
+        "source_status": "typed_core_cli_gui_and_restricted_helper_implemented",
+        "candidate_hardware_scope": "Local GM6PX0X only; requested-state readback and restoration.",
+        "read_write_readback": "candidate_root_helper_verified_for_listed_controls",
+        "conditional_recovery": "offline_contracts_verified",
+        "candidate_restoration": "listed_controls_restored_and_independently_read_back",
+        "installation": "r160_payload_verified_installed_subset",
+        "installed_authorization_flow": "root_pkexec_fn_only_normal_user_dialog_not_verified",
+        "limitations": [
+          "EC charging-profile requested-state readback only.",
+          "Actual stop/resume charging, custom thresholds, active discharge and persistence remain unverified.",
+          "Installed root pkexec acceptance toggled/restored Fn only; normal-user administrator dialog and GUI apply remain unverified. Prepared r158 kernel code is still not loaded."
+        ],
+        "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+        "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+        "installed_write_scope": "listed_release_controls_read_only_candidate_write_evidence_remains_separate",
+        "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
+        "normal_user_auth_dialog_verified": false,
+        "gui_apply_verified": false
+      }
     },
     {
       "id": "F14",
@@ -1330,20 +1543,20 @@
         "G15"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "implementation_in_progress",
+      "current_work_status": "partial_linux_installed_subset_verified",
       "baseline_notes": [
         "Linux原生概览与CLI已安装并有只读记录。",
         "托盘、OSD、完整服务、权限、升级和双端OEM控制待完成。"
       ],
       "platforms": {
         "linux": {
-          "read": "partial_read_only_runtime_recorded",
-          "write": "partial_os_controls_implemented_not_complete_feature",
-          "readback": "partial_os_controls_implemented_not_complete_feature",
-          "recovery": "partial_os_controls_implemented_not_complete_feature",
-          "automated_tests": "partial_offline_coverage",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "feature_activation_not_verified",
+          "read": "partial_listed_control_subset_candidate_requested_state_verified",
+          "write": "partial_typed_control_subset_candidate_root_helper_verified",
+          "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
+          "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
+          "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
+          "installation": "r160_console_helper_policy_payload_verified_subset",
+          "loading": "r160_installed_cli_native_readonly_and_root_helper_fn_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -1369,9 +1582,51 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/oem-controls.json",
+        "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "docs/verification/deployment-console-r160.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "baseline_linux_state": {
+        "read": "partial_read_only_runtime_recorded",
+        "write": "partial_os_controls_implemented_not_complete_feature",
+        "readback": "partial_os_controls_implemented_not_complete_feature",
+        "recovery": "partial_os_controls_implemented_not_complete_feature",
+        "automated_tests": "partial_offline_coverage",
+        "installation": "baseline_packages_installed_not_feature_acceptance",
+        "loading": "feature_activation_not_verified",
+        "physical_acceptance": "not_accepted_for_complete_feature"
+      },
+      "linux_progress": {
+        "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
+        "evidence_ref": "docs/verification/oem-controls.json",
+        "scope": "Partial subcapabilities only; full family remains incomplete.",
+        "control_ids": [
+          "fn-lock",
+          "charging-profile",
+          "keyboard-brightness:rgb:kbd_backlight",
+          "keyboard-color:rgb:kbd_backlight"
+        ],
+        "source_status": "typed_core_cli_gui_and_restricted_helper_implemented",
+        "candidate_hardware_scope": "Local GM6PX0X only; requested-state readback and restoration.",
+        "read_write_readback": "candidate_root_helper_verified_for_listed_controls",
+        "conditional_recovery": "offline_contracts_verified",
+        "candidate_restoration": "listed_controls_restored_and_independently_read_back",
+        "installation": "r160_payload_verified_installed_subset",
+        "installed_authorization_flow": "root_pkexec_fn_only_normal_user_dialog_not_verified",
+        "limitations": [
+          "Native run confirmed four OEM selectors and the Fn-lock panel only; the other three panels, preview/apply and authentication dialog were not exercised.",
+          "Tray, OSD and the complete service family remain incomplete.",
+          "Installed root pkexec acceptance toggled/restored Fn only; normal-user administrator dialog and GUI apply remain unverified. Prepared r158 kernel code is still not loaded."
+        ],
+        "deployment_evidence_ref": "docs/verification/deployment-console-r160.json",
+        "deployment_evidence_sha256": "3381550829722450b98900a3c84920cb99360995ddfa64a3fd60928e9f86a88e",
+        "installed_write_scope": "fn_lock_toggle_restore_only",
+        "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
+        "normal_user_auth_dialog_verified": false,
+        "gui_apply_verified": false
+      }
     },
     {
       "id": "F25",

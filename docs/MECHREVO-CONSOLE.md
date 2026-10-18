@@ -2,7 +2,17 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
-## r158 安装基线（2026-10-18）
+## r160 已安装（2026-10-18）
+
+`mechrevo-console 0.1.0.r160.g5542b9d-1` 已从固定提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60` 构建并通过 pacman 安装。CLI、GUI、受限 OEM helper 与授权策略已落盘；21 个包文件零改动，9 个正规载荷的字节、权限及 root 归属逐项一致。release 的 31 份输入与通过 146 项 Rust、95 项 Python 检查的快照相同；release 与早期 debug 候选的二进制摘要分别保留。
+
+安装版普通用户 CLI 的版本、状态和 OEM 枚举通过，策略注册可见。另用普通用户已安装 CLI 生成新预览，再由 root 经 `pkexec` 调用固定已安装 helper，完成两次 Fn 切换／恢复；四项控制独立回读恢复，运行保护状态保持不变。这证明已安装路径可执行，不证明普通用户管理员认证弹窗或 GUI 应用流程已验收；其余三项控制没有在这次 release 验收中写入。
+
+安装版 GUI 在独立 headless compositor 中持续运行约 25.58 秒，1280×720 的概览、四个 OEM 选择项及 Fn 当前值面板已人工复核。没有访问其他三个面板、预览或应用，也没有通过 GUI 写硬件；自有进程均已结束。来源、包摘要、恢复材料与跟踪缺口见 [r160 部署收据](verification/deployment-console-r160.json)。
+
+本次只更新控制台，没有更改 EFI、TCC、风扇或功耗配置，没有重载驱动或重启。磁盘驱动仍为 r158，运行中仍为 r106。Windows OEM 与 Windows 实机验收未完成；没有发布 AUR。本轮源码已在本地提交，远端推送因系统密钥环锁定待完成。
+
+## r158 历史安装基线（2026-10-18）
 
 `mechrevo-console 0.1.0.r158.ga190455-1` 已通过 pacman 安装，固定源码为
 `a1904557bbea55f39aadab03dbc31813e64c3f9b`。
@@ -23,9 +33,9 @@ mechrevo-console status --json
 未发布 AUR，Windows 仍只有编译检查和开发产物，没有 Windows 实机验收。
 后文各次候选验收保留当时的范围，不能将其中“未安装”理解为当前安装状态。
 
-## Linux OEM 控制候选
+## Linux OEM 控制
 
-本轮源码已通过 146 项 Rust 测试、95 项 Python 检查、格式、Clippy 和 Windows 编译检查。本机四项控制完成 11 次可逆写入及 7 次写前拒绝，独立回读确认全部恢复原值，配置、服务与加载模块保持不变；候选原生窗口的概览和控制页已人工复核。[OEM 验收收据](verification/oem-controls.json)记录源码指纹、二进制摘要及具体边界。这些是新安装包的构建前验收，上述 r158 基线安装不包含新控制。完整 Windows／Linux 目标继续以 [28 个功能族及 77 项问题的对齐清单](OPENREVO-PARITY.md)为准。
+本轮源码已通过 146 项 Rust 测试、95 项 Python 检查、格式、Clippy 和 Windows 编译检查。本机四项控制完成 11 次可逆写入及 7 次写前拒绝，独立回读确认全部恢复原值，配置、服务与加载模块保持不变；候选原生窗口的概览和控制页已人工复核。[OEM 验收收据](verification/oem-controls.json)记录源码指纹、二进制摘要及具体边界。这些是 r160 构建前 debug 候选验收，18 次事务与已安装 release 的两次 Fn 验收分别记录；r158 历史基线不含这些新控制，当前 r160 已安装。完整 Windows／Linux 目标继续以 [28 个功能族及 77 项问题的对齐清单](OPENREVO-PARITY.md)为准。
 
 核心、CLI 和 GUI 共用 OEM 后端。它只接入已加载 `tuxedo_keyboard` 驱动实际暴露并通过绑定校验的固定 sysfs 接口，不从相似型号推测寄存器。状态文档新增 `oem_controls`，逐项保留 ID、类型、当前值、允许范围、来源、驱动绑定、可写状态及 `readback_scope`。没有接口就不生成控制项，接口无效或权限不足也不伪造可用状态。
 
@@ -39,18 +49,18 @@ mechrevo-console status --json
 
 ```sh
 # 先查看本机真实 ID、选项和回读范围
-cargo run --manifest-path console/Cargo.toml -p mechrevo-console-cli -- oem list
+mechrevo-console oem list
 # 仅在上一步确实列出 fn-lock 时预览；不会写入或提权
-cargo run --manifest-path console/Cargo.toml -p mechrevo-console-cli -- oem set fn-lock on --dry-run
+mechrevo-console oem set fn-lock on --dry-run
 ```
 
 CLI `oem set ID VALUE` 在没有 `--dry-run` 时生成计划并显式应用。GUI 顶部新增“控制”，按选择功能、调整目标、预览更改、应用并回读的顺序执行，继续使用单个后台任务。计划记录原值、驱动与设备绑定、范围及伴随亮度；应用前重新校验，拒绝过期、绑定已变或已失效的计划。写事务、回读及恢复期间延后关窗；不自动重放旧计划。
 
-Linux 普通用户对真实 `/sys` 的 OEM 写入由 `pkexec` 调用固定 `/usr/lib/mechrevo-console/oem-helper`。helper 重新使用 `Service::new()` 访问真实 `/sys`，校验类型化计划，并以 `flock` 互斥；不接受任意路径、替代 sysfs 根、shell 或插件。无需将整个应用作为 root 运行，也不将 sysfs 改为全局可写。授权只发生在显式应用，枚举和 `--dry-run` 不提权；随包策略对活动会话使用 `auth_admin_keep`，管理员授权可短时缓存，非活动会话要求 `auth_admin`，`allow_any` 为 `no`。helper 与策略尚需随新版本安装，旧 r158 安装不具备这条通路。
+Linux 普通用户对真实 `/sys` 的 OEM 写入由 `pkexec` 调用固定 `/usr/lib/mechrevo-console/oem-helper`。helper 重新使用 `Service::new()` 访问真实 `/sys`，校验类型化计划，并以 `flock` 互斥；不接受任意路径、替代 sysfs 根、shell 或插件。无需将整个应用作为 root 运行，也不将 sysfs 改为全局可写。授权只发生在显式应用，枚举和 `--dry-run` 不提权；随包策略对活动会话使用 `auth_admin_keep`，管理员授权可短时缓存，非活动会话要求 `auth_admin`，`allow_any` 为 `no`。helper 与策略已随 r160 安装并核对，旧 r158 不具备这条通路；当前实测范围仍按前述 root pkexec 验收区分，不扩写为普通用户认证或 GUI 应用通过。
 
 特权 helper 必须等待真实退出，不以超时杀进程宣称写入已取消。输出失败但进程已退出时报告 `outcome_unknown`；若进程存活状态也未知，继续阻止后续写入和关窗。写入原始错误、恢复写入、恢复回读分别保留；检测到第三方修改或状态未知时不覆盖他人的值。RGB 恢复写入失败，即使 LED 缓存仍显示旧值，也按状态未知处理。这些流程不等于已完成实体恢复验收。
 
-Windows OEM 后端尚未实现，已有 Windows 系统亮度与电源策略后端继续保留。此候选不接入风扇曲线或功耗模式，不代表风扇异响已解决；充电、按键、灯光及持久化都需在对应驱动加载版本上分别验证。
+Windows OEM 后端尚未实现，已有 Windows 系统亮度与电源策略后端继续保留。当前实现不接入风扇曲线或功耗模式，不代表风扇异响已解决；充电、按键、灯光及持久化都需在对应驱动加载版本上分别验证。
 
 ## 型号与证据
 
@@ -116,7 +126,7 @@ python -B scripts/verify_console.py --output .local-tests/console-result.json
 
 首页 CPU / GPU 分别显示同类当前最高读数，曲线只显示当前选定实际来源的真实温度历史，不推断物理热管拓扑。历史按机器与传感器身份隔离，每来源最多 120 点；未知读数保留断点，不补零、不补齐历史。实时采样默认开启、可关闭，距上次快照至少 3 秒且空闲时只读刷新，待确认的操作预览期间暂停；开启时空闲界面每 1 秒重绘。选中导航与常规控件的过渡为 180 ms，后台忙碌时刷新图标旋转，动画可关闭且偏好会保存。界面读取仍放在单个后台任务中，重复刷新不堆积，主线程不等待硬件调用。
 
-电源与亮度保留预览、应用、回读、必要恢复及写事务结束后关窗的流程。新 OEM 源码候选在相同事务框架内接入有限驱动控制，范围与验证状态见前文；OEM 性能模式、风扇曲线、MUX、水冷及 Windows OEM 控制仍待完成。已有界面验收记录不覆盖这些新硬件控制，也不增加 Windows 实机写入结论。
+电源与亮度保留预览、应用、回读、必要恢复及写事务结束后关窗的流程。r160 OEM 实现在相同事务框架内接入有限驱动控制，范围与验证状态见前文；OEM 性能模式、风扇曲线、MUX、水冷及 Windows OEM 控制仍待完成。已有界面验收记录不覆盖这些新硬件控制，也不增加 Windows 实机写入结论。
 
 ## 石墨界面改版验收（2026-10-18）
 
