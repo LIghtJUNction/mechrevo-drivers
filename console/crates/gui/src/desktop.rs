@@ -21,6 +21,8 @@ const GREEN: Color32 = Color32::from_rgb(167, 192, 140);
 const AMBER: Color32 = Color32::from_rgb(221, 187, 124);
 const ERROR: Color32 = Color32::from_rgb(237, 154, 140);
 const HISTORY_LIMIT: usize = 120;
+#[path = "cpu_power_ui.rs"]
+mod cpu_power_ui;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMetrics {
@@ -51,6 +53,13 @@ pub enum Section {
     Fans,
     Sensors,
     Catalog,
+}
+
+#[derive(Default, PartialEq, Eq, Clone, Copy)]
+pub enum ControlSection {
+    #[default]
+    DeviceFunctions,
+    CpuPower,
 }
 
 #[derive(Default)]
@@ -165,6 +174,7 @@ pub struct DesktopApp {
     pub controller: Controller,
     pub preferences: Preferences,
     section: Section,
+    control_section: ControlSection,
     catalog_query: String,
     bottom_requested: bool,
     last_metrics: RenderMetrics,
@@ -200,6 +210,7 @@ impl DesktopApp {
             controller,
             preferences,
             section: Section::Dashboard,
+            control_section: ControlSection::DeviceFunctions,
             catalog_query: String::new(),
             bottom_requested: false,
             last_metrics: RenderMetrics::default(),
@@ -217,6 +228,10 @@ impl DesktopApp {
     }
     pub fn select_section(&mut self, section: Section) {
         self.section = section;
+    }
+    pub fn select_control_section(&mut self, section: ControlSection) {
+        self.section = Section::Controls;
+        self.control_section = section;
     }
     pub fn fan_editor(&self) -> &FanEditor {
         &self.fan_editor
@@ -369,7 +384,8 @@ impl DesktopApp {
             }
         }
         if self.controller.busy() {
-            if !self.controller.oem_write_state_unknown() {
+            if !self.controller.oem_write_state_unknown() && self.controller.cpu_power_helper_reaped
+            {
                 ctx.request_repaint_after(Duration::from_millis(80));
             }
         } else if self.controller.fan_session_held
@@ -494,7 +510,7 @@ impl DesktopApp {
             ui.add_space(8.0);
             match self.section {
                 Section::Dashboard => thermal_panel_rect = self.dashboard(ui),
-                Section::Controls => self.oem_controls(ui),
+                Section::Controls => self.device_controls(ui),
                 Section::Fans => self.fan_controls(ui),
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
@@ -550,7 +566,10 @@ impl DesktopApp {
     fn header_actions(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 10.0;
         let response = ui.add_enabled(
-            !self.controller.busy() && self.controller.worker_available && !self.pending_close,
+            !self.controller.busy()
+                && self.controller.worker_available
+                && !self.pending_close
+                && !self.controller.cpu_power_preview_pending(),
             egui::Button::new(RichText::new("刷新").size(13.0))
                 .min_size(Vec2::new(80.0, 34.0))
                 .frame(false),
@@ -580,7 +599,9 @@ impl DesktopApp {
                 ));
             }
         }
-        response.on_hover_text(if narrow {
+        response.on_hover_text(if self.controller.cpu_power_preview_pending() {
+            "CPU 功耗预览待确认；先应用或取消预览，再刷新完整设备信息。"
+        } else if narrow {
             "只读更新温度与转速；设备控制信息保持上次完整采集的时间。"
         } else {
             "重新采集完整设备信息、控制状态与传感器。"
@@ -650,6 +671,7 @@ impl DesktopApp {
         let status = if matches!(self.controller.activity(), Some((JobKind::Refresh, _)))
             && !self.controller.thermal_sampling()
             && self.controller.fan_activity().is_none()
+            && !self.controller.cpu_power_activity()
         {
             "正在采集".to_owned()
         } else if let Some(last) = self.controller.last_refresh {
@@ -1179,7 +1201,24 @@ impl DesktopApp {
 
     fn feedback(&self, ui: &mut egui::Ui) {
         if self.pending_close {
-            ui.label(RichText::new("正在完成操作、恢复控制并等待后台结束。").color(amber(ui)));
+            ui.label(RichText::new("正在完成后台事务并等待进程退出。").color(amber(ui)));
+        }
+        if !self.controller.cpu_power_helper_reaped {
+            ui.add(
+                egui::Label::new(
+                    RichText::new("CPU 授权辅助进程尚未确认退出；后续写入和关闭已阻止。")
+                        .color(error_color(ui)),
+                )
+                .wrap(),
+            );
+        } else if self.controller.cpu_power_state_unknown {
+            ui.add(
+                egui::Label::new(
+                    RichText::new("CPU 功耗状态未确认，其他写入已阻止。请在控制页显式检查。")
+                        .color(amber(ui)),
+                )
+                .wrap(),
+            );
         }
         if let Some((kind, elapsed)) = self.controller.activity() {
             if kind != JobKind::Refresh || elapsed > Duration::from_secs(10) {
@@ -1258,6 +1297,26 @@ impl DesktopApp {
                     .size(13.0)
                     .color(secondary(ui)),
             );
+        }
+    }
+
+    fn device_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(
+                &mut self.control_section,
+                ControlSection::DeviceFunctions,
+                "设备功能",
+            );
+            ui.selectable_value(
+                &mut self.control_section,
+                ControlSection::CpuPower,
+                "CPU 功耗上限",
+            );
+        });
+        ui.add_space(12.0);
+        match self.control_section {
+            ControlSection::DeviceFunctions => self.oem_controls(ui),
+            ControlSection::CpuPower => self.cpu_power_controls(ui),
         }
     }
 

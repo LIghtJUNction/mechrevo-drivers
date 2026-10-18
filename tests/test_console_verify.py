@@ -47,6 +47,12 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.uapi = self.root / "src/uniwill_fan_curve_ioctl.h"
         self.uapi.parent.mkdir()
         self.uapi.write_text("/* fixture shared fan ABI */\n")
+        self.runtime_inputs = [self.root / name for name in verify.ROOT_REQUIRED_RUNTIME_INPUTS]
+        self.test_runtime_inputs = [self.root / name for name in verify.ROOT_REQUIRED_TEST_RUNTIME_INPUTS]
+        self.fixed_inputs = self.runtime_inputs + self.test_runtime_inputs
+        for runtime_input in self.fixed_inputs:
+            runtime_input.parent.mkdir(parents=True, exist_ok=True)
+            runtime_input.write_text("# fixture fixed runtime input: " + runtime_input.name + "\n")
         self.calls = []
         self.windows_installed = True
         self.failure = None
@@ -95,9 +101,12 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 12)
-        for asset in (*self.fonts, self.font_license, self.oem_policy, self.fan_policy, self.uapi):
+        self.assertEqual(len(result["source_before"]["files"]), 17)
+        for asset in (*self.fonts, self.font_license, self.oem_policy, self.fan_policy, self.uapi,
+                      *self.fixed_inputs):
             self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
+        self.assertIn("production backend and protocol-test input fingerprints", result["scope"])
+        self.assertIn("no standalone Python CPU-power domain suite", result["scope"])
         self.assertEqual({row["name"] for row in result["commands"]}, {"fmt", "test", "clippy", "windows"})
         for row in result["commands"] + result["prerequisites"]:
             self.assertEqual((row["status"], row["exit_code"]), ("passed", 0))
@@ -284,6 +293,60 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertFalse(result["source_unchanged"])
         self.assertNotEqual(result["source_before"]["files"]["src/uniwill_fan_curve_ioctl.h"],
                             result["source_after"]["files"]["src/uniwill_fan_curve_ioctl.h"])
+
+    def test_each_fixed_backend_or_test_input_edit_changes_its_hash_and_total_fingerprint(self):
+        self.assertEqual({str(path.relative_to(self.root)) for path in self.runtime_inputs},
+                         {"scripts/mechrevo_power.py", "scripts/mechrevo-power-console-helper"})
+        self.assertEqual({str(path.relative_to(self.root)) for path in self.test_runtime_inputs},
+                         {"tests/fixtures/power_console_wire.py", "tests/test_power_console_protocol.py",
+                          "tests/test_mechrevo_power.py"})
+        self.assertTrue(set(self.runtime_inputs).isdisjoint(self.test_runtime_inputs))
+        for runtime_input in self.fixed_inputs:
+            with self.subTest(path=runtime_input.name):
+                self.mutate = lambda path=runtime_input: path.write_bytes(path.read_bytes() + b"# changed\n")
+                result = self.run_verifier()
+                relative = str(runtime_input.relative_to(self.root))
+                self.assertEqual((result["exit_code"], result["outcome"]), (2, "incomplete"))
+                self.assertFalse(result["source_unchanged"])
+                self.assertNotEqual(result["source_before"]["files"][relative],
+                                    result["source_after"]["files"][relative])
+                self.assertNotEqual(result["source_before"]["sha256"], result["source_after"]["sha256"])
+                self.assertTrue(all(row["status"] == "passed" for row in result["commands"]))
+
+    def test_each_missing_fixed_backend_or_test_input_is_named_and_blocks_checks(self):
+        for runtime_input in self.fixed_inputs:
+            with self.subTest(path=runtime_input.name):
+                original = runtime_input.read_bytes()
+                runtime_input.unlink()
+                try:
+                    result = self.run_verifier()
+                    relative = str(runtime_input.relative_to(self.root))
+                    self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]),
+                                     (2, "incomplete", 0))
+                    self.assertIn(relative, result["source_before"]["missing"])
+                    self.assertIn(relative, result["incomplete_reasons"][0])
+                finally:
+                    runtime_input.write_bytes(original)
+
+    def test_each_symlink_fixed_backend_or_test_input_is_rejected_before_checks(self):
+        for runtime_input in self.fixed_inputs:
+            with self.subTest(path=runtime_input.name):
+                original = runtime_input.read_bytes()
+                actual = self.directory / ("actual-" + runtime_input.name)
+                actual.write_bytes(original)
+                runtime_input.unlink()
+                runtime_input.symlink_to(actual)
+                self.calls.clear()
+                try:
+                    result = self.run_verifier()
+                    self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]),
+                                     (1, "failed", 0))
+                    self.assertIn("Symlink source input", result["fatal_error"])
+                    self.assertIn(str(runtime_input.relative_to(self.root)), result["fatal_error"])
+                    self.assertEqual(self.calls, [])
+                finally:
+                    runtime_input.unlink()
+                    runtime_input.write_bytes(original)
 
     def test_missing_shared_fan_abi_is_named_and_blocks_checks(self):
         self.uapi.unlink()

@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const CPU_POWER_HELP: &str = "\nCPU PL1 policy (independent of OS power profiles):\n  mechrevo-console cpu-power probe\n  mechrevo-console cpu-power set WATTS [--dry-run]\n      [--target-celsius native|90] [--polling-seconds native|1]\n      [--rapl-debounce-seconds native|0]\n  mechrevo-console cpu-power <clear|recover|reapply> [--dry-run]\n\nCPU commands require explicit authorization for their read-only probe. A CPU\n--dry-run probes, then previews locally without executing a policy change.\nSet preserves every omitted option from the observed complete policy; on a\nnative unmanaged host, absent options remain explicit null. Native and 90/1/0\nare distinct settings. Allowed watts come from the qualified controller.\nClear/recover return to native thermald policy, not a fixed watt value.\nExecuted CPU policies persist after this command exits. JSON output is default.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
     Help,
@@ -29,7 +30,37 @@ enum Action {
     OemSet(String, String, bool),
     FanValidate(PathBuf),
     FanHold(PathBuf),
+    CpuPower(CliCpuPowerAction),
     Export(PathBuf),
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliCpuPolicySetting {
+    Native,
+    Qualified,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CliCpuPolicyOptions {
+    target_celsius: Option<CliCpuPolicySetting>,
+    polling_seconds: Option<CliCpuPolicySetting>,
+    rapl_debounce_seconds: Option<CliCpuPolicySetting>,
+}
+#[derive(Debug, PartialEq, Eq)]
+enum CliCpuPowerAction {
+    Probe,
+    Set {
+        watts: u64,
+        options: CliCpuPolicyOptions,
+        dry_run: bool,
+    },
+    Clear {
+        dry_run: bool,
+    },
+    Recover {
+        dry_run: bool,
+    },
+    Reapply {
+        dry_run: bool,
+    },
 }
 fn text(arg: &OsString) -> Result<&str, ControlError> {
     arg.to_str()
@@ -77,6 +108,7 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             Ok(Action::Thermal { samples: samples.unwrap_or(1), interval_ms: interval_ms.unwrap_or(1000) })
         }
         "capabilities" if rest.is_empty() => Ok(Action::Capabilities),
+        "cpu-power" => parse_cpu_power(rest).map(Action::CpuPower),
         "models" if rest.len() <= 1 => Ok(Action::Models(
             rest.first().map(text).transpose()?.unwrap_or("").into(),
         )),
@@ -170,6 +202,778 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             "export requires --output PATH; existing files are never replaced",
         )),
         _ => Err(usage("Unknown command or invalid options; use --help")),
+    }
+}
+fn parse_cpu_power(args: &[OsString]) -> Result<CliCpuPowerAction, ControlError> {
+    let command = args
+        .first()
+        .map(text)
+        .transpose()?
+        .ok_or_else(|| usage("Use cpu-power probe, set WATTS, clear, recover or reapply"))?;
+    let rest = &args[1..];
+    match command {
+        "probe" if rest.is_empty() => Ok(CliCpuPowerAction::Probe),
+        "clear" | "recover" | "reapply" => {
+            let dry_run = match rest {
+                [] => false,
+                [option] if option == "--dry-run" => true,
+                _ => {
+                    return Err(usage(
+                        "This CPU operation accepts only an optional --dry-run",
+                    ))
+                }
+            };
+            Ok(match command {
+                "clear" => CliCpuPowerAction::Clear { dry_run },
+                "recover" => CliCpuPowerAction::Recover { dry_run },
+                _ => CliCpuPowerAction::Reapply { dry_run },
+            })
+        }
+        "set" => {
+            let raw = rest
+                .first()
+                .map(text)
+                .transpose()?
+                .ok_or_else(|| usage("cpu-power set requires a positive whole-watt value"))?;
+            if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(usage("CPU watts must be a positive whole decimal integer"));
+            }
+            let watts = raw
+                .parse::<u64>()
+                .ok()
+                .filter(|watts| *watts != 0 && *watts <= i32::MAX as u64 / 1_000_000)
+                .ok_or_else(|| {
+                    usage("CPU watts must be 1..=2147 to fit the signed 32-bit microwatt protocol")
+                })?;
+            let mut options = CliCpuPolicyOptions::default();
+            let mut dry_run = false;
+            let mut i = 1;
+            while i < rest.len() {
+                let option = text(&rest[i])?;
+                if option == "--dry-run" {
+                    if dry_run {
+                        return Err(usage("Repeated CPU --dry-run option"));
+                    }
+                    dry_run = true;
+                    i += 1;
+                    continue;
+                }
+                let (slot, qualified) = match option {
+                    "--target-celsius" => (&mut options.target_celsius, "90"),
+                    "--polling-seconds" => (&mut options.polling_seconds, "1"),
+                    "--rapl-debounce-seconds" => (&mut options.rapl_debounce_seconds, "0"),
+                    _ => return Err(usage("Unknown CPU policy option")),
+                };
+                if slot.is_some() {
+                    return Err(usage("Repeated or conflicting CPU policy option"));
+                }
+                i += 1;
+                let value = rest.get(i).map(text).transpose()?.ok_or_else(|| {
+                    usage("CPU policy option requires native or its qualified value")
+                })?;
+                *slot = Some(if value == "native" {
+                    CliCpuPolicySetting::Native
+                } else if value == qualified {
+                    CliCpuPolicySetting::Qualified
+                } else {
+                    return Err(usage(format!("{option} requires native or {qualified}")));
+                });
+                i += 1;
+            }
+            Ok(CliCpuPowerAction::Set {
+                watts,
+                options,
+                dry_run,
+            })
+        }
+        _ => Err(usage(
+            "Use cpu-power probe, set WATTS [options] [--dry-run], clear, recover or reapply",
+        )),
+    }
+}
+
+mod cpu_power_cli {
+    use super::*;
+    use mechrevo_console_core::cpu_power::{
+        Action as CpuAction, Client, CpuPowerUpdate, Outcome, Plan, Policy, Status,
+    };
+
+    trait Backend {
+        fn probe_authorized(&mut self) -> CpuPowerUpdate;
+        fn preview(&self, action: CpuAction) -> Result<Plan, ControlError>;
+        fn execute_authorized(&mut self, plan: &Plan) -> CpuPowerUpdate;
+    }
+    impl Backend for Client {
+        fn probe_authorized(&mut self) -> CpuPowerUpdate {
+            Client::probe_authorized(self)
+        }
+        fn preview(&self, action: CpuAction) -> Result<Plan, ControlError> {
+            Client::preview(self, action)
+        }
+        fn execute_authorized(&mut self, plan: &Plan) -> CpuPowerUpdate {
+            Client::execute_authorized(self, plan)
+        }
+    }
+    fn set_policy(
+        status: &Status,
+        watts: u64,
+        options: &CliCpuPolicyOptions,
+    ) -> Result<Policy, ControlError> {
+        let cap_uw = watts
+            .checked_mul(1_000_000)
+            .filter(|cap| *cap != 0)
+            .ok_or_else(|| {
+                usage("CPU watts cannot be represented as a positive whole-watt policy")
+            })?;
+        let previous = status.current_policy.as_ref();
+        Ok(Policy {
+            cap_uw,
+            target_celsius: match options.target_celsius {
+                None => previous.and_then(|policy| policy.target_celsius),
+                Some(CliCpuPolicySetting::Native) => None,
+                Some(CliCpuPolicySetting::Qualified) => Some(90),
+            },
+            polling_seconds: match options.polling_seconds {
+                None => previous.and_then(|policy| policy.polling_seconds),
+                Some(CliCpuPolicySetting::Native) => None,
+                Some(CliCpuPolicySetting::Qualified) => Some(1),
+            },
+            rapl_debounce_seconds: match options.rapl_debounce_seconds {
+                None => previous.and_then(|policy| policy.rapl_debounce_seconds),
+                Some(CliCpuPolicySetting::Native) => None,
+                Some(CliCpuPolicySetting::Qualified) => Some(0),
+            },
+        })
+    }
+    fn update_error(update: &CpuPowerUpdate, expected: Outcome) -> Option<ControlError> {
+        if let Some(error) = &update.error {
+            return Some(error.clone());
+        }
+        if !update.helper_reaped {
+            return Some(ControlError::new("cpu_power_helper_liveness_unknown", "The helper process has not been confirmed exited; no later policy operation was attempted"));
+        }
+        if update.outcome != expected {
+            return Some(ControlError::new(
+                "cpu_power_unverified_outcome",
+                "The typed transaction outcome did not confirm the requested operation",
+            ));
+        }
+        None
+    }
+    fn emit_update(
+        writer: &mut impl Write,
+        update: &CpuPowerUpdate,
+        expected: Outcome,
+    ) -> Result<(), ControlError> {
+        if let Err(mut error) = write_json(writer, &json!(update)) {
+            error.details.push(format!(
+                "cpu_power_outcome={:?} helper_reaped={}",
+                update.outcome, update.helper_reaped
+            ));
+            error.details.push(
+                serde_json::to_string(update)
+                    .unwrap_or_else(|_| "CPU outcome evidence could not be serialized".into()),
+            );
+            return Err(error);
+        }
+        if let Some(error) = update_error(update, expected) {
+            return Err(error);
+        }
+        Ok(())
+    }
+    fn emit_preparation_error(
+        writer: &mut impl Write,
+        document: &Value,
+        probe: &CpuPowerUpdate,
+        primary: &ControlError,
+    ) -> Result<(), ControlError> {
+        write_json(writer, document).map_err(|mut output_error| {
+            output_error.details.push(format!(
+                "cpu_power_prepare_error={} helper_reaped={}",
+                primary.code, probe.helper_reaped
+            ));
+            output_error.details.push(
+                serde_json::to_string(primary)
+                    .unwrap_or_else(|_| "CPU preparation error could not be serialized".into()),
+            );
+            output_error.details.push(document.to_string());
+            output_error
+        })
+    }
+    fn run_with(
+        command: CliCpuPowerAction,
+        backend: &mut impl Backend,
+        writer: &mut impl Write,
+    ) -> Result<(), ControlError> {
+        // All CLI syntax is checked by parse() before this explicit probe. The
+        // probe is authorized even for --dry-run; preview itself remains local.
+        let probe = backend.probe_authorized();
+        if command == CliCpuPowerAction::Probe {
+            return emit_update(writer, &probe, Outcome::Observed);
+        }
+        if let Some(error) = update_error(&probe, Outcome::Observed) {
+            emit_preparation_error(
+                writer,
+                &json!({"probe":probe,"plan":null,"error":error}),
+                &probe,
+                &error,
+            )?;
+            return Err(error);
+        }
+        let Some(status) = &probe.status else {
+            let error = ControlError::new(
+                "cpu_power_status_unavailable",
+                "The explicit probe returned no complete policy observation",
+            );
+            emit_preparation_error(
+                writer,
+                &json!({"probe":probe,"plan":null,"error":error}),
+                &probe,
+                &error,
+            )?;
+            return Err(error);
+        };
+        let (action, dry_run) = match command {
+            CliCpuPowerAction::Set {
+                watts,
+                options,
+                dry_run,
+            } => (
+                CpuAction::Set {
+                    policy: set_policy(status, watts, &options)?,
+                },
+                dry_run,
+            ),
+            CliCpuPowerAction::Clear { dry_run } => (CpuAction::Clear, dry_run),
+            CliCpuPowerAction::Recover { dry_run } => (CpuAction::Recover, dry_run),
+            CliCpuPowerAction::Reapply { dry_run } => (CpuAction::Reapply, dry_run),
+            CliCpuPowerAction::Probe => unreachable!("probe returned above"),
+        };
+        let plan = match backend.preview(action) {
+            Ok(plan) => plan,
+            Err(error) => {
+                emit_preparation_error(
+                    writer,
+                    &json!({"dry_run":dry_run,"probe":probe,"plan":null,"error":error}),
+                    &probe,
+                    &error,
+                )?;
+                return Err(error);
+            }
+        };
+        if dry_run {
+            return write_json(writer, &json!({"dry_run":true,"probe":probe,"plan":plan}));
+        }
+        let applied = backend.execute_authorized(&plan);
+        emit_update(writer, &applied, Outcome::AppliedVerified)
+    }
+    pub(super) fn run(
+        command: CliCpuPowerAction,
+        writer: &mut impl Write,
+    ) -> Result<(), ControlError> {
+        run_with(command, &mut Client::new(), writer)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use mechrevo_console_core::cpu_power::{self, ActionKind, Management};
+        use std::cell::RefCell;
+
+        fn status(managed: bool) -> Status {
+            serde_json::from_value(json!({
+                "management":if managed {"managed"}else{"native"}, "revision":"a".repeat(64), "qualified":true,
+                "allowed_actions":if managed {json!(["set","clear","reapply"])}else{json!(["set"])},
+                "current_policy":if managed {json!({"cap_uw":55_000_000,"target_celsius":90,"polling_seconds":1,"rapl_debounce_seconds":0})}else{Value::Null},
+                "operational_ceiling_uw":90_000_000,"minimum_limit_uw":35_000_000,"thermal_spec_reference_uw":55_000_000,
+                "observed":[{"interface":"msr","pl1_uw":if managed {55_000_000}else{90_000_000}},
+                    {"interface":"mmio","pl1_uw":if managed {55_000_000}else{90_000_000}}],
+                "thermald_active":true,"holding_now":managed,"blocking_errors":[],"diagnostic_errors":[]
+            })).unwrap()
+        }
+        fn observed(status: Status) -> CpuPowerUpdate {
+            CpuPowerUpdate {
+                status: Some(status),
+                outcome: Outcome::Observed,
+                error: None,
+                receipt: None,
+                helper_reaped: true,
+            }
+        }
+        struct Stub {
+            probe: CpuPowerUpdate,
+            probes: usize,
+            previews: RefCell<Vec<CpuAction>>,
+            executions: Vec<Plan>,
+            result: CpuPowerUpdate,
+        }
+        impl Stub {
+            fn new(managed: bool) -> Self {
+                let probe = observed(status(managed));
+                let mut result = probe.clone();
+                result.outcome = Outcome::AppliedVerified;
+                result.receipt = Some(json!({"fixture_receipt":true}));
+                Self {
+                    probe,
+                    probes: 0,
+                    previews: RefCell::new(Vec::new()),
+                    executions: Vec::new(),
+                    result,
+                }
+            }
+        }
+        impl Backend for Stub {
+            fn probe_authorized(&mut self) -> CpuPowerUpdate {
+                self.probes += 1;
+                self.probe.clone()
+            }
+            fn preview(&self, action: CpuAction) -> Result<Plan, ControlError> {
+                self.previews.borrow_mut().push(action.clone());
+                cpu_power::preview(
+                    self.probe.status.as_ref().expect("probe status fixture"),
+                    action,
+                )
+            }
+            fn execute_authorized(&mut self, plan: &Plan) -> CpuPowerUpdate {
+                self.executions.push(plan.clone());
+                let mut result = self.result.clone();
+                if result.outcome == Outcome::AppliedVerified && result.error.is_none() {
+                    if let Some(status) = &mut result.status {
+                        match &plan.action {
+                            CpuAction::Set { policy } => {
+                                status.management = Management::Managed;
+                                status.current_policy = Some(policy.clone());
+                                status.holding_now = true;
+                                for limit in &mut status.observed {
+                                    limit.pl1_uw = Some(policy.cap_uw);
+                                }
+                            }
+                            CpuAction::Clear | CpuAction::Recover => {
+                                status.management = Management::Native;
+                                status.current_policy = None;
+                                status.holding_now = false;
+                                status.allowed_actions = vec![ActionKind::Set];
+                                for limit in &mut status.observed {
+                                    limit.pl1_uw = status.operational_ceiling_uw;
+                                }
+                            }
+                            CpuAction::Reapply => {}
+                        }
+                        status.revision = Some("b".repeat(64));
+                    }
+                }
+                result
+            }
+        }
+        fn run_args(
+            args: &[&str],
+            backend: &mut Stub,
+            writer: &mut impl Write,
+        ) -> Result<(), ControlError> {
+            let action = super::super::parse(args.iter().map(OsString::from).collect())?;
+            let Action::CpuPower(command) = action else {
+                panic!("CPU command fixture expected");
+            };
+            run_with(command, backend, writer)
+        }
+        #[test]
+        fn invalid_cpu_syntax_is_rejected_before_probe_or_execution() {
+            for args in [
+                vec!["cpu-power"],
+                vec!["cpu-power", "probe", "--json"],
+                vec!["cpu-power", "probe", "--dry-run"],
+                vec!["cpu-power", "set"],
+                vec!["cpu-power", "set", "0"],
+                vec!["cpu-power", "set", "-1"],
+                vec!["cpu-power", "set", "+55"],
+                vec!["cpu-power", "set", "55.0"],
+                vec!["cpu-power", "set", "true"],
+                vec!["cpu-power", "set", "５５"],
+                vec!["cpu-power", "set", "18446744073709551615"],
+                vec!["cpu-power", "set", "55", "--dry-run", "--dry-run"],
+                vec!["cpu-power", "set", "55", "--target-celsius"],
+                vec![
+                    "cpu-power",
+                    "set",
+                    "55",
+                    "--target-celsius",
+                    "90",
+                    "--target-celsius",
+                    "native",
+                ],
+                vec![
+                    "cpu-power",
+                    "set",
+                    "55",
+                    "--polling-seconds",
+                    "1",
+                    "--polling-seconds",
+                    "1",
+                ],
+                vec![
+                    "cpu-power",
+                    "set",
+                    "55",
+                    "--rapl-debounce-seconds",
+                    "0",
+                    "--rapl-debounce-seconds",
+                    "native",
+                ],
+                vec!["cpu-power", "set", "55", "--target-celsius", "95"],
+                vec!["cpu-power", "set", "55", "--polling-seconds", "2"],
+                vec!["cpu-power", "set", "55", "--rapl-debounce-seconds", "1"],
+                vec!["cpu-power", "set", "55", "--root", "/sys"],
+                vec!["cpu-power", "set", "55", "--helper", "/tmp/program"],
+                vec!["cpu-power", "set", "55", "--json"],
+                vec!["cpu-power", "clear", "--target-celsius", "native"],
+                vec!["cpu-power", "recover", "--dry-run", "--dry-run"],
+                vec!["cpu-power", "reapply", "--path", "/tmp/state"],
+                vec!["cpu-power", "apply"],
+            ] {
+                let mut backend = Stub::new(true);
+                assert!(
+                    run_args(&args, &mut backend, &mut Vec::new()).is_err(),
+                    "Accepted {args:?}"
+                );
+                assert_eq!(backend.probes, 0, "Authorized invalid syntax: {args:?}");
+                assert!(backend.previews.borrow().is_empty());
+                assert!(backend.executions.is_empty());
+            }
+        }
+        #[test]
+        fn cpu_protocol_integer_boundary_is_checked_before_authorization() {
+            for args in [
+                vec!["cpu-power", "set", "2148"],
+                vec!["cpu-power", "set", "2148", "--dry-run"],
+            ] {
+                let mut backend = Stub::new(false);
+                assert!(run_args(&args, &mut backend, &mut Vec::new()).is_err());
+                assert_eq!(backend.probes, 0);
+                assert!(backend.previews.borrow().is_empty());
+                assert!(backend.executions.is_empty());
+            }
+            assert!(matches!(
+                super::super::parse(vec![
+                    "cpu-power".into(),
+                    "set".into(),
+                    "2147".into(),
+                    "--dry-run".into()
+                ]),
+                Ok(Action::CpuPower(CliCpuPowerAction::Set {
+                    watts: 2147,
+                    dry_run: true,
+                    ..
+                }))
+            ));
+            let mut backend = Stub::new(false);
+            assert!(run_args(
+                &["cpu-power", "set", "2147", "--dry-run"],
+                &mut backend,
+                &mut Vec::new()
+            )
+            .is_err());
+            assert_eq!(backend.probes, 1);
+            assert!(matches!(backend.previews.borrow().as_slice(),
+                [CpuAction::Set { policy }] if policy.cap_uw == 2_147_000_000));
+            assert!(backend.executions.is_empty());
+        }
+        #[test]
+        fn dry_run_preserves_complete_existing_policy_including_explicit_zero() {
+            let mut backend = Stub::new(true);
+            let mut bytes = Vec::new();
+            run_args(
+                &["cpu-power", "set", "50", "--dry-run"],
+                &mut backend,
+                &mut bytes,
+            )
+            .unwrap();
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(backend.probes, 1);
+            assert!(backend.executions.is_empty());
+            assert_eq!(
+                output["plan"]["action"]["policy"],
+                json!({"cap_uw":50_000_000,"target_celsius":90,"polling_seconds":1,"rapl_debounce_seconds":0})
+            );
+            assert_eq!(
+                output["probe"]["status"]["current_policy"]["rapl_debounce_seconds"],
+                0
+            );
+            assert_eq!(output["dry_run"], true);
+        }
+        #[test]
+        fn new_native_policy_keeps_explicit_nulls_and_uses_operational_not_thermal_reference_bound()
+        {
+            let mut backend = Stub::new(false);
+            let mut bytes = Vec::new();
+            run_args(
+                &["cpu-power", "set", "60", "--dry-run"],
+                &mut backend,
+                &mut bytes,
+            )
+            .unwrap();
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                output["plan"]["action"]["policy"],
+                json!({"cap_uw":60_000_000,"target_celsius":null,"polling_seconds":null,"rapl_debounce_seconds":null})
+            );
+            assert!(output["probe"]["status"]["current_policy"].is_null());
+            assert!(backend.executions.is_empty());
+        }
+        #[test]
+        fn explicit_policy_overrides_are_independent_and_dependencies_are_not_silently_reset() {
+            let mut backend = Stub::new(true);
+            let mut bytes = Vec::new();
+            run_args(
+                &[
+                    "cpu-power",
+                    "set",
+                    "50",
+                    "--target-celsius",
+                    "native",
+                    "--polling-seconds",
+                    "native",
+                    "--rapl-debounce-seconds",
+                    "native",
+                    "--dry-run",
+                ],
+                &mut backend,
+                &mut bytes,
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap()["plan"]["action"]["policy"],
+                json!({"cap_uw":50_000_000,"target_celsius":null,"polling_seconds":null,"rapl_debounce_seconds":null})
+            );
+            let mut backend = Stub::new(true);
+            assert!(run_args(
+                &[
+                    "cpu-power",
+                    "set",
+                    "50",
+                    "--target-celsius",
+                    "native",
+                    "--dry-run"
+                ],
+                &mut backend,
+                &mut Vec::new()
+            )
+            .is_err());
+            assert_eq!(backend.probes, 1);
+            assert!(backend.executions.is_empty());
+            let action = serde_json::to_value(&backend.previews.borrow()[0]).unwrap();
+            assert_eq!(action["policy"]["polling_seconds"], 1);
+            assert_eq!(action["policy"]["rapl_debounce_seconds"], 0);
+            let mut backend = Stub::new(false);
+            run_args(
+                &[
+                    "cpu-power",
+                    "set",
+                    "55",
+                    "--target-celsius",
+                    "90",
+                    "--polling-seconds",
+                    "1",
+                    "--rapl-debounce-seconds",
+                    "0",
+                    "--dry-run",
+                ],
+                &mut backend,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        }
+        #[test]
+        fn core_range_and_allowed_action_checks_fail_before_execution() {
+            for watts in ["34", "91"] {
+                let mut backend = Stub::new(true);
+                assert!(run_args(
+                    &["cpu-power", "set", watts, "--dry-run"],
+                    &mut backend,
+                    &mut Vec::new()
+                )
+                .is_err());
+                assert_eq!(backend.probes, 1);
+                assert!(backend.executions.is_empty());
+            }
+            let mut backend = Stub::new(false);
+            assert!(run_args(&["cpu-power", "clear"], &mut backend, &mut Vec::new()).is_err());
+            assert!(backend.executions.is_empty());
+        }
+        #[test]
+        fn actual_execution_is_explicit_once_and_dry_actions_only_preview() {
+            let mut backend = Stub::new(true);
+            let mut bytes = Vec::new();
+            run_args(&["cpu-power", "set", "50"], &mut backend, &mut bytes).unwrap();
+            assert_eq!(backend.probes, 1);
+            assert_eq!(backend.executions.len(), 1);
+            assert_eq!(
+                serde_json::to_value(&backend.executions[0]).unwrap()["action"]["policy"]
+                    ["target_celsius"],
+                90
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap()["outcome"],
+                "applied_verified"
+            );
+            for operation in ["clear", "reapply"] {
+                let mut backend = Stub::new(true);
+                run_args(
+                    &["cpu-power", operation, "--dry-run"],
+                    &mut backend,
+                    &mut Vec::new(),
+                )
+                .unwrap();
+                assert_eq!(backend.probes, 1);
+                assert!(backend.executions.is_empty());
+            }
+        }
+        #[test]
+        fn explicit_probe_is_read_only_and_recover_uses_the_advertised_pending_action() {
+            let mut backend = Stub::new(true);
+            let mut bytes = Vec::new();
+            run_args(&["cpu-power", "probe"], &mut backend, &mut bytes).unwrap();
+            assert_eq!(backend.probes, 1);
+            assert!(backend.previews.borrow().is_empty());
+            assert!(backend.executions.is_empty());
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap()["outcome"],
+                "observed"
+            );
+            let mut backend = Stub::new(true);
+            let status = backend.probe.status.as_mut().unwrap();
+            status.management = Management::RecoveryPending;
+            status.holding_now = false;
+            status.allowed_actions = vec![ActionKind::Recover];
+            run_args(
+                &["cpu-power", "recover", "--dry-run"],
+                &mut backend,
+                &mut Vec::new(),
+            )
+            .unwrap();
+            assert!(backend.executions.is_empty());
+            run_args(&["cpu-power", "recover"], &mut backend, &mut Vec::new()).unwrap();
+            assert_eq!(backend.executions.len(), 1);
+            assert!(matches!(backend.executions[0].action, CpuAction::Recover));
+        }
+        #[test]
+        fn partial_probe_errors_or_unknown_liveness_block_preview_and_keep_status_visible() {
+            for liveness in [false, true] {
+                let mut backend = Stub::new(true);
+                let mut bytes = Vec::new();
+                backend.probe.helper_reaped = !liveness;
+                if !liveness {
+                    backend.probe.error = Some(ControlError::new(
+                        "partial_probe",
+                        "Qualification failed after partial observation",
+                    ));
+                }
+                assert!(run_args(&["cpu-power", "set", "50"], &mut backend, &mut bytes).is_err());
+                let output: Value = serde_json::from_slice(&bytes).unwrap();
+                assert!(output["probe"]["status"].is_object());
+                assert!(output["plan"].is_null());
+                assert!(backend.previews.borrow().is_empty());
+                assert!(backend.executions.is_empty());
+            }
+        }
+        #[test]
+        fn failed_execution_keeps_typed_outcome_primary_error_and_receipt_without_retry() {
+            let mut backend = Stub::new(true);
+            let mut bytes = Vec::new();
+            backend.result.outcome = Outcome::FailedRestoredVerified;
+            backend.result.error = Some(ControlError::new(
+                "write_failed",
+                "Primary write failed; rollback separately verified",
+            ));
+            backend.result.receipt =
+                Some(json!({"primary_errno":5,"restore_verified":true,"receipt_write_error":null}));
+            assert!(run_args(&["cpu-power", "set", "50"], &mut backend, &mut bytes).is_err());
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(output["outcome"], "failed_restored_verified");
+            assert_eq!(output["error"]["code"], "write_failed");
+            assert_eq!(output["receipt"]["restore_verified"], true);
+            assert_eq!(backend.executions.len(), 1);
+        }
+        #[test]
+        fn broken_output_during_probe_or_preview_failure_keeps_original_error_and_liveness() {
+            struct Broken;
+            impl Write for Broken {
+                fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                    Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "fixture pipe closed",
+                    ))
+                }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+            let mut backend = Stub::new(true);
+            backend.probe.helper_reaped = false;
+            backend.probe.error = Some(ControlError::new("probe_primary", "Original probe error"));
+            let error =
+                run_args(&["cpu-power", "set", "50"], &mut backend, &mut Broken).unwrap_err();
+            assert_eq!(error.code, "output_failed");
+            assert!(error
+                .details
+                .iter()
+                .any(|detail| detail.contains("probe_primary")
+                    && detail.contains("helper_reaped=false")));
+            assert!(backend.executions.is_empty());
+            assert!(backend.previews.borrow().is_empty());
+            let mut backend = Stub::new(true);
+            let error = run_args(
+                &["cpu-power", "set", "91", "--dry-run"],
+                &mut backend,
+                &mut Broken,
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "output_failed");
+            assert!(error
+                .details
+                .iter()
+                .any(|detail| detail.contains("cpu_power_prepare_error=")
+                    && detail.contains("helper_reaped=true")));
+            assert!(error
+                .details
+                .iter()
+                .any(|detail| detail.contains("\"plan\":null") && detail.contains("\"probe\"")));
+            assert!(backend.executions.is_empty());
+        }
+        #[test]
+        fn broken_output_after_execute_retains_outcome_and_never_repeats_policy_write() {
+            struct Broken;
+            impl Write for Broken {
+                fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                    Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "fixture pipe closed",
+                    ))
+                }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+            let mut backend = Stub::new(true);
+            let error =
+                run_args(&["cpu-power", "set", "50"], &mut backend, &mut Broken).unwrap_err();
+            assert_eq!(backend.executions.len(), 1);
+            assert!(error
+                .details
+                .iter()
+                .any(|detail| detail.contains("AppliedVerified")));
+            assert!(error
+                .details
+                .iter()
+                .any(|detail| detail.contains("fixture_receipt")));
+            let mut backend = Stub::new(true);
+            assert!(run_args(
+                &["cpu-power", "set", "50", "--dry-run"],
+                &mut backend,
+                &mut Broken
+            )
+            .is_err());
+            assert!(backend.executions.is_empty());
+        }
     }
 }
 fn select_oem_control<'a>(
@@ -674,7 +1478,7 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
     let mut stdout = io::stdout().lock();
     let output = match action {
         Action::Help => {
-            write!(stdout, "{HELP}")
+            write!(stdout, "{HELP}{CPU_POWER_HELP}")
                 .map_err(|e| ControlError::new("output_failed", e.to_string()))?;
             return Ok(());
         }
@@ -732,6 +1536,7 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         Action::OemList => json!(service.oem_controls()),
         Action::OemSet(id, value, dry_run) => set_oem(service, &id, &value, dry_run)?,
         Action::FanValidate(path) => curve_validation_json(&load_curve_file(&path)?),
+        Action::CpuPower(command) => return cpu_power_cli::run(command, &mut stdout),
         Action::FanHold(path) => {
             #[cfg(target_os = "linux")]
             return fan_hold::run(&path, &mut stdout);

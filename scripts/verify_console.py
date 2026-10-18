@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Verify the Rust console without root or hardware. Exit 0/1/2=passed/failed/incomplete."""
+"""Verify the Rust console and fingerprint fixed runtime inputs without root or hardware.
+
+Python protocol fixtures are fingerprinted separately from production backends.
+The standalone Python CPU-power domain suite is not run here. Exit 0/1/2=passed/failed/incomplete.
+"""
 from __future__ import annotations
 
 import argparse
@@ -29,6 +33,15 @@ GUI_EMBEDDED_FONTS = (
 CONSOLE_REQUIRED_RESOURCES = (
     "resources/org.mechrevo.console.oem.policy",
     "resources/org.mechrevo.console.fan.policy",
+)
+ROOT_REQUIRED_RUNTIME_INPUTS = (
+    "scripts/mechrevo_power.py",
+    "scripts/mechrevo-power-console-helper",
+)
+ROOT_REQUIRED_TEST_RUNTIME_INPUTS = (
+    "tests/fixtures/power_console_wire.py",
+    "tests/test_power_console_protocol.py",
+    "tests/test_mechrevo_power.py",
 )
 TEST_LOG_MAX_BYTES = 16 * 1024 * 1024
 TEST_LOG_MAX_LINE_BYTES = 4096
@@ -67,12 +80,14 @@ def artifact_base(root: Path, env: dict[str, str]) -> Path:
 
 
 def source_snapshot(root: Path) -> dict[str, object]:
-    """Hash source, shared ABI, assets, packaged resources and manifests; not atomic."""
+    """Hash source, ABI, backends, protocol test inputs and resources; not atomic."""
     console = checked_directory(root / "console")
     required = (console / "Cargo.toml", console / "Cargo.lock", root / "data/mechrevo-catalog.json",
                 root / "data/mechrevo-platform-evidence.json", root / "src/uniwill_fan_curve_ioctl.h",
                 *(console / name for name in GUI_EMBEDDED_FONTS),
-                *(console / name for name in CONSOLE_REQUIRED_RESOURCES))
+                *(console / name for name in CONSOLE_REQUIRED_RESOURCES),
+                *(root / name for name in ROOT_REQUIRED_RUNTIME_INPUTS),
+                *(root / name for name in ROOT_REQUIRED_TEST_RUNTIME_INPUTS))
     paths = set(console.rglob("*.rs")) | set(console.rglob("Cargo.toml")) | set(required)
     for directory in (console / "crates/gui/assets", console / "resources"):
         if directory.is_symlink():
@@ -223,7 +238,7 @@ class Report:
     def as_dict(self) -> dict[str, object]:
         return {"schema_version": 1, "outcome": self.outcome,
                 "exit_code": {"passed": 0, "failed": 1, "incomplete": 2}[self.outcome],
-                "scope": "local Cargo contracts and Windows target compile check; no hardware or Windows runtime acceptance",
+                "scope": "local whole Rust workspace Cargo contracts and Windows target compile check; fixed CPU-power production backend and protocol-test input fingerprints; no standalone Python CPU-power domain suite, hardware or Windows runtime acceptance",
                 "checks_expected": self.checks_expected,
                 "checks_executed": sum(row["executed"] for row in self.commands),
                 "commands": self.commands, "prerequisites": self.prerequisites,

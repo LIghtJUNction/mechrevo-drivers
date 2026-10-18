@@ -73,13 +73,24 @@ fn failure(code: &str, message: String, stdout: &[u8], stderr: &[u8]) -> crate::
         error
             .details
             .push(format!("stdout: {}", String::from_utf8_lossy(stdout)));
+        error.details.push(format!("stdout_hex: {}", hex(stdout)));
     }
     if !stderr.is_empty() {
         error
             .details
             .push(format!("stderr: {}", String::from_utf8_lossy(stderr)));
+        error.details.push(format!("stderr_hex: {}", hex(stderr)));
     }
     error
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 /// Run a control helper synchronously without claiming that it can be cancelled.
@@ -458,6 +469,24 @@ mod tests {
             .map(str::len)
             .sum();
         assert_eq!(captured, 8);
+        let captured_hex: usize = error
+            .details
+            .iter()
+            .filter_map(|detail| {
+                detail
+                    .strip_prefix("stdout_hex: ")
+                    .or_else(|| detail.strip_prefix("stderr_hex: "))
+            })
+            .map(str::len)
+            .sum();
+        assert_eq!(captured_hex, 16);
+        assert!(error
+            .details
+            .iter()
+            .filter_map(|detail| detail
+                .strip_prefix("stdout_hex: ")
+                .or_else(|| detail.strip_prefix("stderr_hex: ")))
+            .all(|value| "30313233343536373839616263646566".starts_with(value)));
         fixture.assert_reaped();
     }
 
@@ -508,11 +537,26 @@ mod tests {
     #[test]
     fn control_helper_invalid_utf8_is_unknown_after_reaping() {
         let fixture = ControlFixture::new();
+        let started = Instant::now();
         let error = fixture
-            .run("printf '%s' \"$$\" > \"$1/pid\"; printf '\\377'", 8)
+            .run("printf '%s' \"$$\" > \"$1/pid\"; printf '\\377\\000A'; printf '\\376B' >&2; exec 1>&- 2>&-; sleep 0.15; printf done > \"$1/done\"", 8)
             .unwrap_err();
         assert_eq!(error.code, "oem_outcome_unknown");
         assert!(error.message.contains("UTF-8"));
+        assert!(error.message.contains("exit status 0"));
+        assert!(error
+            .details
+            .iter()
+            .any(|value| value == "stdout_hex: ff0041"));
+        assert!(error
+            .details
+            .iter()
+            .any(|value| value == "stderr_hex: fe42"));
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        assert_eq!(
+            std::fs::read(fixture.directory.join("done")).unwrap(),
+            b"done"
+        );
         fixture.assert_reaped();
     }
 
@@ -584,7 +628,12 @@ mod tests {
         let captured: usize = error
             .details
             .iter()
-            .map(|detail| detail.split_once(": ").unwrap().1.len())
+            .filter_map(|detail| {
+                detail
+                    .strip_prefix("stdout: ")
+                    .or_else(|| detail.strip_prefix("stderr: "))
+            })
+            .map(str::len)
             .sum();
         assert_eq!(captured, 8);
     }

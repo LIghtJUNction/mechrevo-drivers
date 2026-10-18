@@ -10,15 +10,15 @@
 
 pkgname=mechrevo-power-control
 pkgver=0.1.0
-pkgrel=17
+pkgrel=18
 pkgdesc='Qualified CPU package power ceiling control for MECHREVO GM6PX0X'
 arch=('x86_64')
 url='https://github.com/LIghtJUNction/mechrevo-drivers'
 license=('GPL-2.0-or-later')
 # The native thermald control paths were qualified against this upstream version.
 # Omitting pkgrel accepts distribution rebuilds, including 2:2.5.13-1.1.
-depends=('python' 'thermald=2:2.5.13' 'systemd')
-makedepends=('git')
+depends=('python' 'thermald=2:2.5.13' 'systemd' 'polkit')
+makedepends=('git' 'libxml2')
 options=('!strip' '!debug' '!lto')
 
 _source_commit=${MECHREVO_POWER_COMMIT-a07327a656e3b620b9d5cf944928529b64ca09d4}
@@ -30,7 +30,7 @@ fi
 source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}")
 sha256sums=('SKIP')
 
-prepare() {
+_validate_source_tree() {
     cd "${srcdir}/mechrevo-drivers" || return 1
     if [[ $(git rev-parse HEAD) != "$_source_commit" ]]; then
         printf '%s\n' 'Source checkout does not match MECHREVO_POWER_COMMIT.' >&2
@@ -38,33 +38,70 @@ prepare() {
     fi
     local file
     for file in scripts/mechrevo-power scripts/mechrevo_power.py \
+        scripts/mechrevo-power-console-helper \
         scripts/mechrevo-thermal scripts/mechrevo_thermal.py \
         scripts/mechrevo-peak-trial scripts/peak_limit_trial.py \
+        console/resources/org.mechrevo.console.cpu-power.policy \
         docs/POWER-CONTROL.md docs/THERMAL-OBSERVATION.md docs/PEAK-LIMIT-TRIAL.md LICENSE; do
         if [[ ! -f $file || -L $file ]]; then
             printf 'Required regular source file missing: %s\n' "$file" >&2
             return 1
         fi
+        if ! git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+            printf 'Required tracked source file missing: %s\n' "$file" >&2
+            return 1
+        fi
     done
+    if ! git --no-optional-locks diff --quiet HEAD -- ||
+        ! git --no-optional-locks diff --cached --quiet HEAD --; then
+        printf '%s\n' 'Source must be an unchanged checkout of the pinned power-control commit.' >&2
+        return 1
+    fi
+}
+
+prepare() {
+    _validate_source_tree
+}
+
+check() {
+    _validate_source_tree || return 1
+    local policy=console/resources/org.mechrevo.console.cpu-power.policy
+    xmllint --nonet --noout "$policy" || return 1
+    local xpath="boolean(count(/policyconfig)=1 and count(/policyconfig/action)=1 and count(/policyconfig/action/@*)=1 and /policyconfig/action/@id='org.mechrevo.console.cpu-power' and count(/policyconfig/action/annotate)=2 and count(/policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.path'])=1 and /policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.path']='/usr/lib/mechrevo-power-control/console-helper' and count(/policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.argv1'])=1 and /policyconfig/action/annotate[@key='org.freedesktop.policykit.exec.argv1']='--request' and count(/policyconfig/action/defaults)=1 and count(/policyconfig/action/defaults/*)=3 and count(/policyconfig/action/defaults/allow_any)=1 and /policyconfig/action/defaults/allow_any='no' and count(/policyconfig/action/defaults/allow_inactive)=1 and /policyconfig/action/defaults/allow_inactive='auth_admin' and count(/policyconfig/action/defaults/allow_active)=1 and /policyconfig/action/defaults/allow_active='auth_admin_keep')"
+    if [[ $(xmllint --nonet --xpath "$xpath" "$policy") != true ]]; then
+        printf '%s\n' 'CPU power policy does not match its fixed helper, request argument or authorization contract.' >&2
+        return 1
+    fi
 }
 
 package() {
-    cd "${srcdir}/mechrevo-drivers" || return 1
-    install -dm700 "${pkgdir}/var/lib/mechrevo-power"
-    install -Dm755 scripts/mechrevo-power "${pkgdir}/usr/bin/mechrevo-power"
+    check || return 1
+    install -dm700 "${pkgdir}/var/lib/mechrevo-power" || return 1
+    install -Dm755 scripts/mechrevo-power "${pkgdir}/usr/bin/mechrevo-power" || return 1
     install -Dm644 scripts/mechrevo_power.py \
-        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_power.py"
-    install -Dm755 scripts/mechrevo-thermal "${pkgdir}/usr/bin/mechrevo-thermal"
+        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_power.py" || return 1
+    local helper="${pkgdir}/usr/lib/mechrevo-power-control/console-helper"
+    local policy="${pkgdir}/usr/share/polkit-1/actions/org.mechrevo.console.cpu-power.policy"
+    install -Dm755 scripts/mechrevo-power-console-helper "$helper" || return 1
+    install -Dm644 console/resources/org.mechrevo.console.cpu-power.policy "$policy" || return 1
+    if [[ ! -f $helper || -L $helper || ! -f $policy || -L $policy ]] ||
+        ! cmp -s scripts/mechrevo-power-console-helper "$helper" ||
+        ! cmp -s console/resources/org.mechrevo.console.cpu-power.policy "$policy" ||
+        [[ $(stat -c '%a' "$helper") != 755 || $(stat -c '%a' "$policy") != 644 ]]; then
+        printf '%s\n' 'Installed CPU power helper or policy bytes/modes do not match the package contract.' >&2
+        return 1
+    fi
+    install -Dm755 scripts/mechrevo-thermal "${pkgdir}/usr/bin/mechrevo-thermal" || return 1
     install -Dm644 scripts/mechrevo_thermal.py \
-        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_thermal.py"
-    install -Dm755 scripts/mechrevo-peak-trial "${pkgdir}/usr/bin/mechrevo-peak-trial"
+        "${pkgdir}/usr/lib/mechrevo-power-control/mechrevo_thermal.py" || return 1
+    install -Dm755 scripts/mechrevo-peak-trial "${pkgdir}/usr/bin/mechrevo-peak-trial" || return 1
     install -Dm644 scripts/peak_limit_trial.py \
-        "${pkgdir}/usr/lib/mechrevo-power-control/peak_limit_trial.py"
+        "${pkgdir}/usr/lib/mechrevo-power-control/peak_limit_trial.py" || return 1
     install -Dm644 docs/POWER-CONTROL.md \
-        "${pkgdir}/usr/share/doc/${pkgname}/POWER-CONTROL.md"
+        "${pkgdir}/usr/share/doc/${pkgname}/POWER-CONTROL.md" || return 1
     install -Dm644 docs/THERMAL-OBSERVATION.md \
-        "${pkgdir}/usr/share/doc/${pkgname}/THERMAL-OBSERVATION.md"
+        "${pkgdir}/usr/share/doc/${pkgname}/THERMAL-OBSERVATION.md" || return 1
     install -Dm644 docs/PEAK-LIMIT-TRIAL.md \
-        "${pkgdir}/usr/share/doc/${pkgname}/PEAK-LIMIT-TRIAL.md"
-    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+        "${pkgdir}/usr/share/doc/${pkgname}/PEAK-LIMIT-TRIAL.md" || return 1
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE" || return 1
 }

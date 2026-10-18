@@ -1,5 +1,10 @@
 //! The UI never performs blocking platform calls or speculative hardware writes.
 //! A single worker and a one-item channel bound refresh requests and results.
+use mechrevo_console_core::cpu_power::{
+    self, Action as CpuAction, Client as CpuPowerClient, CpuPowerUpdate,
+    Management as CpuManagement, Outcome as CpuOutcome, Plan as CpuPlan, Policy as CpuPolicy,
+    Status as CpuStatus,
+};
 use mechrevo_console_core::fan_curve::{
     broker::{BrokerPhase, BrokerState},
     client::{FanBrokerClient, FanClientUpdate},
@@ -24,6 +29,7 @@ use std::{
 
 #[cfg(feature = "gui")]
 mod appearance;
+mod cpu_power_controller;
 #[cfg(feature = "gui")]
 pub mod desktop;
 #[cfg(feature = "gui")]
@@ -73,6 +79,13 @@ pub trait Backend: Send + 'static {
             "No OEM control backend is available",
         ))
     }
+    /// CPU authorization is opt-in and never falls back to discovery or an OS profile.
+    fn cpu_power_probe(&mut self) -> CpuPowerUpdate {
+        unavailable_cpu_power()
+    }
+    fn cpu_power_execute(&mut self, _plan: &CpuPlan) -> CpuPowerUpdate {
+        unavailable_cpu_power()
+    }
     fn fan_probe(&mut self) -> FanClientUpdate {
         unavailable_fan()
     }
@@ -96,6 +109,19 @@ pub trait Backend: Send + 'static {
     }
 }
 
+fn unavailable_cpu_power() -> CpuPowerUpdate {
+    CpuPowerUpdate {
+        status: None,
+        outcome: CpuOutcome::RejectedBeforeWrite,
+        error: Some(ControlError::new(
+            "cpu_power_unsupported",
+            "此后端没有提供已核验的 CPU 长期功耗策略接口。",
+        )),
+        receipt: None,
+        helper_reaped: true,
+    }
+}
+
 fn unavailable_fan() -> FanClientUpdate {
     FanClientUpdate {
         error: Some(ControlError::new(
@@ -111,6 +137,7 @@ fn unavailable_fan() -> FanClientUpdate {
 pub struct NativeBackend {
     service: Service,
     fan: FanBrokerClient,
+    cpu_power: CpuPowerClient,
 }
 impl Default for NativeBackend {
     fn default() -> Self {
@@ -122,6 +149,7 @@ impl NativeBackend {
         Self {
             service: Service::new(),
             fan: FanBrokerClient::new(),
+            cpu_power: CpuPowerClient::new(),
         }
     }
 }
@@ -159,6 +187,12 @@ impl Backend for NativeBackend {
     }
     fn apply_oem(&mut self, plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
         Backend::apply_oem(&mut self.service, plan)
+    }
+    fn cpu_power_probe(&mut self) -> CpuPowerUpdate {
+        self.cpu_power.probe_authorized()
+    }
+    fn cpu_power_execute(&mut self, plan: &CpuPlan) -> CpuPowerUpdate {
+        self.cpu_power.execute_authorized(plan)
     }
     fn fan_probe(&mut self) -> FanClientUpdate {
         self.fan.probe()
@@ -289,6 +323,8 @@ enum Job {
     ApplyBrightness(BrightnessPlan),
     PreviewOem { control: String, target: OemValue },
     ApplyOem(OemPlan),
+    ProbeCpuPower,
+    ExecuteCpuPower(CpuPlan),
     ProbeFan,
     RefreshFan,
     ApplyFan(ValidatedFanCurve),
@@ -299,15 +335,18 @@ enum Job {
 impl Job {
     fn kind(&self) -> JobKind {
         match self {
-            Self::Refresh | Self::ThermalRefresh | Self::ProbeFan | Self::RefreshFan => {
-                JobKind::Refresh
-            }
+            Self::Refresh
+            | Self::ThermalRefresh
+            | Self::ProbeFan
+            | Self::RefreshFan
+            | Self::ProbeCpuPower => JobKind::Refresh,
             Self::Preview(_) | Self::PreviewBrightness { .. } | Self::PreviewOem { .. } => {
                 JobKind::Preview
             }
             Self::Apply(_)
             | Self::ApplyBrightness(_)
             | Self::ApplyOem(_)
+            | Self::ExecuteCpuPower(_)
             | Self::ApplyFan(_)
             | Self::RestoreFan
             | Self::ShutdownFan => JobKind::Apply,
@@ -340,6 +379,11 @@ enum Reply {
     BrightnessApplied(BrightnessApplyResult, Snapshot, ThermalSample),
     OemPreview(OemPlan),
     OemApplied(OemApplyResult, Snapshot, ThermalSample),
+    CpuPower {
+        probe: bool,
+        update: CpuPowerUpdate,
+        finished_at: Instant,
+    },
     Fan {
         operation: FanOperation,
         curve: Option<ValidatedFanCurve>,
@@ -373,6 +417,7 @@ struct InFlight {
     selection_revision: u64,
     fan_operation: Option<FanOperation>,
     thermal_refresh: bool,
+    cpu_power_operation: bool,
 }
 
 pub struct Controller {
@@ -412,6 +457,21 @@ pub struct Controller {
     shutdown_attempted: bool,
     selection_revision: u64,
     oem_write_uncertain: bool,
+    pub cpu_power_status: Option<CpuStatus>,
+    pub cpu_power_draft: Option<CpuPolicy>,
+    pub cpu_power_preview: Option<CpuPlan>,
+    pub cpu_power_error: Option<ControlError>,
+    pub cpu_power_draft_error: Option<ControlError>,
+    pub cpu_power_receipt: Option<serde_json::Value>,
+    pub cpu_power_outcome: Option<CpuOutcome>,
+    pub cpu_power_helper_reaped: bool,
+    pub cpu_power_state_unknown: bool,
+    pub cpu_power_needs_probe: bool,
+    /// Time that the worker received this status, not a sensor sampling timestamp.
+    pub cpu_power_received_at: Option<std::time::SystemTime>,
+    pub cpu_power_response_finished: Option<Instant>,
+    cpu_power_revision: u64,
+    cpu_power_preview_revision: Option<u64>,
     pub error: Option<ControlError>,
     pub last_refresh: Option<Instant>,
     /// Full-device discovery and thermal samples retain separate clocks.
@@ -526,6 +586,16 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
             }
             Err(error) => Reply::Error(error),
         },
+        Job::ProbeCpuPower => Reply::CpuPower {
+            probe: true,
+            update: backend.cpu_power_probe(),
+            finished_at: Instant::now(),
+        },
+        Job::ExecuteCpuPower(plan) => Reply::CpuPower {
+            probe: false,
+            update: backend.cpu_power_execute(&plan),
+            finished_at: Instant::now(),
+        },
 
         Job::ProbeFan => Reply::Fan {
             operation: FanOperation::Probe,
@@ -606,8 +676,10 @@ impl Controller {
                     }
                     let fan_operation = request.job.fan_operation();
                     let thermal_refresh = matches!(&request.job, Job::ThermalRefresh);
+                    let cpu_power_operation = matches!(&request.job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
+                    let cpu_probe = matches!(&request.job, Job::ProbeCpuPower);
                     let thermal_started_at = Instant::now();
-                    let preserve_backend = fan_may_live || fan_operation.is_some();
+                    let preserve_backend = fan_may_live || fan_operation.is_some() || cpu_power_operation;
                     let result = catch_unwind(AssertUnwindSafe(|| execute_job(&mut backend, request.job)));
                     let panicked = result.is_err();
                     let mut reply = result.unwrap_or_else(|_| {
@@ -616,7 +688,13 @@ impl Controller {
                                 "温度与转速采样异常，自动采样已暂停；请点击刷新重试。"
                             } else { "后台控制发生异常；恢复完成前不能关闭会话。" },
                         );
-                        if thermal_refresh {
+                        if cpu_power_operation {
+                            Reply::CpuPower { probe: cpu_probe, finished_at: Instant::now(), update: CpuPowerUpdate {
+                                status: None, outcome: CpuOutcome::FailedStateUnknown,
+                                error: Some(ControlError::new("cpu_power_worker_panicked", "CPU 功耗后台异常；未确认授权辅助进程退出，后续写入和关闭已阻止。")),
+                                receipt: None, helper_reaped: false,
+                            } }
+                        } else if thermal_refresh {
                             // A failed read-only provider does not revoke or
                             // fabricate a fan ownership/recovery receipt.
                             Reply::ThermalError(error, thermal_started_at, Instant::now())
@@ -685,6 +763,20 @@ impl Controller {
             shutdown_attempted: false,
             selection_revision: 0,
             oem_write_uncertain: false,
+            cpu_power_status: None,
+            cpu_power_draft: None,
+            cpu_power_preview: None,
+            cpu_power_error: None,
+            cpu_power_draft_error: None,
+            cpu_power_receipt: None,
+            cpu_power_outcome: None,
+            cpu_power_helper_reaped: true,
+            cpu_power_state_unknown: false,
+            cpu_power_needs_probe: true,
+            cpu_power_received_at: None,
+            cpu_power_response_finished: None,
+            cpu_power_revision: 0,
+            cpu_power_preview_revision: None,
             error: None,
             last_refresh: None,
             thermal_sample: None,
@@ -698,6 +790,7 @@ impl Controller {
     pub fn busy(&self) -> bool {
         self.in_flight.is_some()
             || self.oem_write_uncertain
+            || !self.cpu_power_helper_reaped
             || (self.close_requested
                 && self.shutdown_attempted
                 && self.fan_cleanup_complete
@@ -708,6 +801,7 @@ impl Controller {
 
     pub fn write_in_progress(&self) -> bool {
         self.oem_write_uncertain
+            || !self.cpu_power_helper_reaped
             || self
                 .in_flight
                 .as_ref()
@@ -729,6 +823,12 @@ impl Controller {
     }
 
     pub fn fan_apply_unavailable_reason(&self) -> Option<&str> {
+        if self.cpu_power_state_unknown || !self.cpu_power_helper_reaped {
+            return Some("CPU 功耗事务尚未确认，不能开始其他写入。请先检查其状态。");
+        }
+        if self.cpu_power_preview.is_some() {
+            return Some("CPU 功耗预览待确认，请先完成或取消该预览。");
+        }
         let Some(state) = self.fan_state.as_ref() else {
             return Some("先只读检测本机风扇接口；旧驱动或未知接口不能应用曲线。");
         };
@@ -818,6 +918,7 @@ impl Controller {
     pub fn request_close(&mut self) {
         self.close_requested = true;
         self.invalidate_previews();
+        self.invalidate_cpu_power_preview();
         self.drive_close();
     }
 
@@ -825,6 +926,7 @@ impl Controller {
         self.close_requested
             && self.in_flight.is_none()
             && !self.oem_write_uncertain
+            && self.cpu_power_helper_reaped
             && self.worker.is_none()
             && !self.fan_session_held
             && self.fan_helper_reaped
@@ -836,6 +938,7 @@ impl Controller {
             && !self.shutdown_attempted
             && self.in_flight.is_none()
             && !self.oem_write_uncertain
+            && self.cpu_power_helper_reaped
             && self.worker_available
             && self.enqueue(Job::ShutdownFan).is_ok()
         {
@@ -844,6 +947,9 @@ impl Controller {
     }
 
     pub fn refresh(&mut self) -> Result<(), SubmitError> {
+        if self.cpu_power_preview.is_some() {
+            return Err(SubmitError::Busy);
+        }
         self.submit(Job::Refresh)?;
         self.invalidate_previews();
         Ok(())
@@ -904,6 +1010,7 @@ impl Controller {
             || self.brightness_preview.is_some()
             || self.oem_preview.is_some()
             || self.fan_preview.is_some()
+            || self.cpu_power_preview.is_some()
     }
 
     fn invalidate_previews(&mut self) {
@@ -954,6 +1061,9 @@ impl Controller {
 
     /// Preview checks the typed input without probing, authorizing or leasing.
     pub fn preview_fan(&mut self) -> Result<(), SubmitError> {
+        if self.cpu_power_preview.is_some() {
+            return Err(SubmitError::Busy);
+        }
         if self.busy() {
             return Err(SubmitError::Busy);
         }
@@ -970,6 +1080,12 @@ impl Controller {
     }
 
     pub fn policy_unavailable_reason(&self) -> Option<&str> {
+        if self.cpu_power_state_unknown {
+            return Some("CPU 功耗状态未确认，请先显式检查；其他写入已阻止。");
+        }
+        if self.cpu_power_preview.is_some() {
+            return Some("CPU 功耗预览待确认，请先完成或取消该预览。");
+        }
         let Some(snapshot) = self.snapshot.as_ref() else {
             return Some("设备检测完成后才能预览电源策略。");
         };
@@ -996,6 +1112,9 @@ impl Controller {
     }
 
     pub fn preview_profile(&mut self) -> Result<(), SubmitError> {
+        if self.cpu_power_preview.is_some() {
+            return Err(SubmitError::Busy);
+        }
         if self.policy_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
@@ -1057,6 +1176,12 @@ impl Controller {
     }
 
     pub fn brightness_unavailable_reason(&self) -> Option<&str> {
+        if self.cpu_power_state_unknown {
+            return Some("CPU 功耗状态未确认，请先显式检查；其他写入已阻止。");
+        }
+        if self.cpu_power_preview.is_some() {
+            return Some("CPU 功耗预览待确认，请先完成或取消该预览。");
+        }
         let Some(snapshot) = &self.snapshot else {
             return Some("设备检测完成后才能预览亮度。");
         };
@@ -1092,6 +1217,9 @@ impl Controller {
     }
 
     pub fn preview_brightness(&mut self) -> Result<(), SubmitError> {
+        if self.cpu_power_preview.is_some() {
+            return Err(SubmitError::Busy);
+        }
         if self.brightness_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
@@ -1152,6 +1280,12 @@ impl Controller {
     }
 
     pub fn oem_unavailable_reason(&self) -> Option<&str> {
+        if self.cpu_power_state_unknown {
+            return Some("CPU 功耗状态未确认，请先显式检查；其他写入已阻止。");
+        }
+        if self.cpu_power_preview.is_some() {
+            return Some("CPU 功耗预览待确认，请先完成或取消该预览。");
+        }
         let Some(control) = self.selected_oem() else {
             return Some("请选择本机实际提供的设备控制接口。");
         };
@@ -1193,6 +1327,9 @@ impl Controller {
     }
 
     pub fn preview_oem(&mut self) -> Result<(), SubmitError> {
+        if self.cpu_power_preview.is_some() {
+            return Err(SubmitError::Busy);
+        }
         if self.oem_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
@@ -1236,6 +1373,9 @@ impl Controller {
             || self.fan_session_held
             || !self.fan_cleanup_complete
             || !self.fan_helper_reaped
+            || (self.cpu_power_preview.is_some()
+                && !matches!(&job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_)))
+            || (self.cpu_power_state_unknown && job.kind() == JobKind::Apply)
         {
             return Err(SubmitError::Busy);
         }
@@ -1253,6 +1393,7 @@ impl Controller {
         let kind = job.kind();
         let fan_operation = job.fan_operation();
         let thermal_refresh = matches!(&job, Job::ThermalRefresh);
+        let cpu_power_operation = matches!(&job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
         let result = self
             .requests
             .as_ref()
@@ -1268,11 +1409,12 @@ impl Controller {
                     selection_revision: self.selection_revision,
                     fan_operation,
                     thermal_refresh,
+                    cpu_power_operation,
                 });
                 // Fan lifecycle housekeeping has its own error channel. In
                 // particular, closing must retain an earlier write/rollback
                 // failure instead of erasing it while queuing ShutdownFan.
-                if fan_operation.is_none() && !thermal_refresh {
+                if fan_operation.is_none() && !thermal_refresh && !cpu_power_operation {
                     self.error = None;
                 }
                 Ok(())
@@ -1327,6 +1469,13 @@ impl Controller {
                         self.thermal_error = Some(error);
                         self.thermal_last_attempt = Some(started_at);
                         self.thermal_last_finished = Some(finished_at);
+                    }
+                    Reply::CpuPower {
+                        probe,
+                        update,
+                        finished_at,
+                    } => {
+                        self.accept_cpu_power_update(probe, update, finished_at);
                     }
                     Reply::Preview(plan) => {
                         // A selection made while a request ran must invalidate its late result.
@@ -1525,6 +1674,18 @@ impl Controller {
         if self
             .in_flight
             .as_ref()
+            .is_some_and(|job| job.cpu_power_operation)
+        {
+            self.cpu_power_state_unknown = true;
+            self.cpu_power_helper_reaped = false;
+            self.cpu_power_error = Some(ControlError::new(
+                "cpu_power_worker_disconnected",
+                "CPU 功耗后台断开，未确认授权辅助进程退出；后续写入和关闭已阻止。",
+            ));
+        }
+        if self
+            .in_flight
+            .as_ref()
             .is_some_and(|job| job.fan_operation.is_some())
         {
             self.fan_session_held = true;
@@ -1543,6 +1704,7 @@ impl Controller {
         self.brightness_preview = None;
         self.oem_preview = None;
         self.fan_preview = None;
+        self.invalidate_cpu_power_preview();
         if self.error.is_none() {
             self.error = Some(ControlError::new(
                 "worker_stopped",

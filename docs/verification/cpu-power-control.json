@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T08:23:42.074298+00:00",
+  "status": "linux_cpu_pl1_candidate_verified_offline_not_installed",
+  "source_snapshot_sha256": "6b836131a210d535b786fa23e0f7cce4ab497672bbdd15168e368e59766c4fc6",
+  "source_input_files": 56,
+  "rust_workspace_tests": 342,
+  "python_power_domain_tests": 219,
+  "python_console_domain_tests": 135,
+  "failed_or_skipped": 0,
+  "fmt_clippy_windows_compile": "passed",
+  "actual_python_to_rust_wire_cases": 15,
+  "hardware_acceptance": false,
+  "scope": "Whole local suites; Windows compile only. CPU PL1 protocol, CLI and GUI reuse the existing qualified Linux PowerController; no PL2, Tau, TCC or fan adjustment.",
+  "regressions": [
+    "Full policy retains explicit native values or qualified 90/1/0 options",
+    "Persistent revision compared inside the existing transaction lock before staging",
+    "Initial-lock baseline controls reapply and verified restoration",
+    "Receipt failure cannot replace primary or rollback errors",
+    "Native restoration below 35W remains a valid observed status without offering a write",
+    "Actual helper process output is drained and reaped; unknown lifetime blocks later writes and close",
+    "GUI preserves foreign previews, complete drafts and errors; persistent CPU policy survives close"
+  ],
+  "negative_evidence": {
+    "isolated_production_mutations": 3,
+    "expected_assertion_failures": 11,
+    "import_or_type_errors": 0,
+    "proof_sha256": "d021be26fb28dae5605644d89e00c05b7ebc7c2e652cc435cc2f0849a1f3e180"
+  },
+  "evidence": {
+    "rust-1.json": "76f23d2ff5b22ef1b50c058f81263f2026a77a64264b805e0c290f43d4ea725f",
+    "rust-2.json": "9e4230a9b9ff9ebe6ee52791efb26657dd573c384ccb0ea81194476bedbd322f",
+    "rust-3.json": "9ce99a068cb493852d6a6a14e34d2890305fcadffcf5429b407a4db97dfb5ffe",
+    "power-1.json": "64a9c231acdc1cb05d0b0319c56655564648b069c8ccc5278fe746fa12796536",
+    "power-1-inputs.json": "7de9d1d0d0eb2fc4910b91825962a608defec3ffe873ef2bdf85d0f0491c7af7",
+    "console-python-2.json": "9377ff9041090ec633a2a641ef5e70740b1813af2d72d71eb6a2d8e43f9ecfb4",
+    "python-mutations/proof.json": "d021be26fb28dae5605644d89e00c05b7ebc7c2e652cc435cc2f0849a1f3e180"
+  },
+  "remaining": [
+    "Installed helper and package acceptance",
+    "Actual bounded write and restoration on qualified hardware",
+    "Ordinary-user authentication UI and native GUI write path",
+    "Windows CPU PL1 backend",
+    "PL2/PL4/Tau, all other model qualifications and full OpenRevo issue acceptance"
+  ],
+  "upstream_issues_closed": 0
+}

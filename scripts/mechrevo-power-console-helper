@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Installed-only, bounded CPU policy protocol entry; no checkout fallback."""
+import os
+import runpy
+import sys
+
+os.environ["PATH"] = "/usr/bin:/usr/sbin:/bin:/sbin"
+controller = runpy.run_path("/usr/lib/mechrevo-power-control/mechrevo_power.py")
+raise SystemExit(controller["console_main"](sys.argv[1:]))

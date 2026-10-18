@@ -18,11 +18,14 @@ SOURCE_FILES = (
     "console/crates/cli/Cargo.toml", "console/crates/cli/src/main.rs",
     "console/crates/cli/src/oem_helper.rs", "console/crates/cli/src/fan_helper.rs",
     "console/crates/core/src/privilege.rs", "console/crates/core/src/fan_curve.rs",
+    "console/crates/core/src/cpu_power.rs",
     "console/crates/core/src/fan_curve/linux.rs",
     "console/crates/core/src/fan_curve/broker.rs", "console/crates/core/src/fan_curve/client.rs",
     "console/crates/gui/src/main.rs",
     "console/resources/org.mechrevo.console.oem.policy",
     "console/resources/org.mechrevo.console.fan.policy",
+    "console/resources/org.mechrevo.console.cpu-power.policy",
+    "scripts/mechrevo_power.py", "scripts/mechrevo-power-console-helper",
     "console/crates/gui/assets/fonts/Cormorant-OFL.txt",
     "console/crates/gui/assets/fonts/Manrope-OFL.txt",
     "docs/MECHREVO-CONSOLE-USER-GUIDE.md", "LICENSE",
@@ -175,6 +178,18 @@ class ConsoleFanPackagingTests(unittest.TestCase):
         for function in ("prepare", "check", "package"):
             with self.subTest(function=function):
                 self.assert_rejected(function, "Required tracked regular source file missing")
+
+    def test_each_phase_rejects_untracked_cpu_runtime_inputs(self):
+        for relative in ("console/crates/core/src/cpu_power.rs",
+                         "console/resources/org.mechrevo.console.cpu-power.policy",
+                         "scripts/mechrevo_power.py", "scripts/mechrevo-power-console-helper"):
+            with self.subTest(relative=relative):
+                self.git("rm", "--cached", relative)
+                self.git("commit", "--quiet", "-m", "untrack CPU runtime input")
+                self.commit_id = self.git("rev-parse", "HEAD")
+                for function in ("prepare", "check", "package"):
+                    self.assert_rejected(function, "Required tracked regular source file missing")
+                self.commit()
 
     def test_each_phase_rejects_missing_fan_policy(self):
         (self.source / "console/resources/org.mechrevo.console.fan.policy").unlink()

@@ -62,7 +62,38 @@ CPU_COOLING_ORDER = "/etc/thermald/thermal-cpu-cdev-order.xml"
 
 
 class PowerError(RuntimeError):
-    pass
+    def __init__(self, message, *, code="power_control_failed", outcome=None,
+                 details=(), receipt=None):
+        super().__init__(message)
+        self.code = code
+        self.outcome = outcome
+        self.details = list(details)
+        self.receipt = receipt
+
+
+def operation_error(operation, primary, *, outcome, rollback=None,
+                    receipt_error=None, backup=None, receipt=None):
+    """Keep failure channels separate; never classify failures from prose."""
+    details = ["primary_error: " + str(primary)]
+    if isinstance(primary, PowerError):
+        details.extend(primary.details)
+    if rollback is not None:
+        details.append("rollback_error: " + str(rollback))
+    if receipt_error is not None:
+        details.append("receipt_error: " + str(receipt_error))
+    if backup is not None:
+        details.append("recovery_backup: " + str(backup))
+    message = f"{operation.capitalize()} failed: {primary}"
+    if rollback is not None:
+        message += "; ROLLBACK FAILED: " + str(rollback)
+    elif outcome == "failed_restored_verified":
+        message += "; previous configuration restored and thermald active"
+    if receipt_error is not None:
+        message += "; failure receipt could not be saved: " + str(receipt_error)
+    if backup is not None:
+        message += "; recovery backup: " + str(backup)
+    return PowerError(message, code=operation + "_failed", outcome=outcome,
+                      details=details, receipt=receipt)
 
 
 def digest(data):
@@ -457,7 +488,8 @@ class PowerController:
 
     def require_root(self):
         if self.env.uid != 0:
-            raise PowerError("set, clear and apply require root")
+            raise PowerError("set, clear and apply require root", code="permission_denied",
+                             outcome="rejected_before_write")
 
     @contextmanager
     def lock(self):
@@ -469,7 +501,8 @@ class PowerController:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             os.close(fd)
-            raise PowerError("Another mechrevo-power operation is running") from exc
+            raise PowerError("Another mechrevo-power operation is running", code="busy",
+                             outcome="rejected_before_write") from exc
         try:
             yield
         finally:
@@ -792,7 +825,7 @@ class PowerController:
             raise PowerError("thermald must be active or starting before apply")
         return service
 
-    def qualify(self, state, *, require_running=True):
+    def qualify_platform(self, state):
         self.qualify_target(state.get("target_celsius") if state else None)
         host = {key: self.env.read_control("/sys/class/dmi/id/" + key) for key in IDENTITY}
         if host != IDENTITY:
@@ -823,6 +856,10 @@ class PowerController:
                 tcc[path] = value
             else:
                 tcc[path] = None
+        return host, tcc
+
+    def qualify(self, state, *, require_running=True):
+        host, tcc = self.qualify_platform(state)
         service = self.configuration(state, require_running=require_running)
         preference = self.preference()
         observed = self.observe()
@@ -890,6 +927,13 @@ class PowerController:
         name = str(uuid.uuid4())
         self.env.atomic(RECEIPTS + "/" + name + ".json", json_bytes(value))
         return value
+
+    def failure_receipt(self, operation, **details):
+        """A second storage failure must not replace the operation's error."""
+        try:
+            return self.receipt(operation, False, **details), None
+        except (Exception, KeyboardInterrupt) as exc:
+            return None, exc
 
     def backup(self, operation, old_files, snapshot):
         date = time.strftime("%Y%m%d", time.localtime(self.env.clock()))
@@ -968,8 +1012,12 @@ class PowerController:
                                                         cap_uw=current["cap_uw"], transaction=transaction)
                 self.env.atomic(STATE, json_bytes(current))
 
-    def _stage_set(self, watts, transaction, context, target_celsius=None, polling_seconds=None, rapl_debounce_seconds=None):
+    def _stage_set(self, watts, transaction, context, target_celsius=None, polling_seconds=None,
+                   rapl_debounce_seconds=None, expected_revision=None, console_context=None):
         with self.lock():
+            before = self.check_console_revision(expected_revision, "set")
+            if console_context is not None and before is not None:
+                console_context["before"] = before
             previous = self.load_state()
             if previous and previous.get("transaction"):
                 raise PowerError("Another transaction is pending; inspect recovery receipts")
@@ -1011,21 +1059,32 @@ class PowerController:
                 self.env.atomic(DROPIN, dropin, 0o644)
             except (Exception, KeyboardInterrupt) as exc:
                 # Service has not been reloaded. Restore only bytes this operation owns.
-                for path in (XML, DROPIN, STATE):
-                    raw = self.env.regular(path, missing=True)
-                    allowed = (old_files[path], xml if path == XML else dropin if path == DROPIN else json_bytes(state))
-                    if raw not in allowed and raw is not None:
-                        raise PowerError(f"Staging failed; foreign bytes retained: {path}; backup {backup}") from exc
-                    if old_files[path] is None:
-                        self.env.remove(path)
-                    else:
-                        self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
-                self.receipt("set", False, error=str(exc), backup=backup, phase="staging")
-                context["phase"] = "restored"
-                raise PowerError(f"Configuration staging failed: {exc}") from exc
+                rollback = None
+                try:
+                    for path in (XML, DROPIN, STATE):
+                        raw = self.env.regular(path, missing=True)
+                        allowed = (old_files[path], xml if path == XML else dropin if path == DROPIN else json_bytes(state))
+                        if raw not in allowed and raw is not None:
+                            raise PowerError(f"Staging failed; foreign bytes retained: {path}; backup {backup}")
+                        if old_files[path] is None:
+                            self.env.remove(path)
+                        else:
+                            self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
+                    if any(self.env.regular(path, missing=True) != old_files[path] for path in (XML, DROPIN, STATE)):
+                        raise PowerError("Staging restoration readback failed")
+                except (Exception, KeyboardInterrupt) as restore_error:
+                    rollback = restore_error
+                receipt, receipt_error = self.failure_receipt("set", error=str(exc), backup=backup, phase="staging",
+                                                              restoration_verified=rollback is None,
+                                                              rollback_error=str(rollback) if rollback is not None else None)
+                context["phase"] = "restored" if rollback is None else "unknown"
+                raise operation_error("set", exc, rollback=rollback, receipt_error=receipt_error, backup=backup,
+                                      receipt=receipt, outcome="failed_restored_verified" if rollback is None
+                                      else "failed_state_unknown") from exc
             context["phase"] = "staged"
 
-    def set_limit(self, watts, target_celsius=None, polling_seconds=None, rapl_debounce_seconds=None):
+    def set_limit(self, watts, target_celsius=None, polling_seconds=None, rapl_debounce_seconds=None,
+                  expected_revision=None, console_context=None):
         self.require_root()
         self.validate_target(target_celsius)
         polling_target(polling_seconds, target_celsius)
@@ -1037,7 +1096,8 @@ class PowerController:
         try:
             # Includes lock.__exit__: signals during the staging/restart handoff
             # receive the same rollback as signals in the service command.
-            self._stage_set(watts, transaction, context, target_celsius, polling_seconds, rapl_debounce_seconds)
+            self._stage_set(watts, transaction, context, target_celsius, polling_seconds,
+                            rapl_debounce_seconds, expected_revision, console_context)
             cap, backup = context["cap"], context["backup"]
             self.restart()
             with self.lock():
@@ -1062,19 +1122,31 @@ class PowerController:
                 return status
         except (Exception, KeyboardInterrupt) as exc:
             if context.get("phase") != "staged":
-                raise
+                if isinstance(exc, PowerError) and exc.outcome is not None:
+                    raise
+                raise operation_error("set", exc, outcome="failed_state_unknown"
+                                      if context.get("phase") in ("staging", "unknown") else "rejected_before_write") from exc
             backup = context["backup"]
+            rollback_error = None
             try:
                 self.restore(context["old_files"], context["hashes"], transaction)
                 recovery = "configuration restored and thermald active"
             except (Exception, KeyboardInterrupt) as rollback:
+                rollback_error = rollback
                 recovery = f"ROLLBACK FAILED: {rollback}"
-            self.receipt("set", False, error=str(exc), recovery=recovery, backup=backup)
-            raise PowerError(f"Set failed: {exc}; {recovery}; recovery backup: {backup}") from exc
+            receipt, receipt_error = self.failure_receipt("set", error=str(exc), recovery=recovery, backup=backup,
+                                                          restoration_verified=rollback_error is None,
+                                                          rollback_error=str(rollback_error) if rollback_error is not None else None)
+            raise operation_error("set", exc, rollback=rollback_error, receipt_error=receipt_error, backup=backup,
+                                  receipt=receipt, outcome="failed_restored_verified" if rollback_error is None
+                                  else "failed_state_unknown") from exc
 
-    def apply(self):
+    def apply(self, expected_revision=None, console_context=None):
         self.require_root()
         with self.lock():
+            before = self.check_console_revision(expected_revision, "reapply")
+            if console_context is not None and before is not None:
+                console_context["before"] = before
             state = self.load_state()
             if state is None:
                 raise PowerError("No managed power limit is configured")
@@ -1101,16 +1173,27 @@ class PowerController:
                 receipt = self.receipt("apply", True, cap_uw=state["cap_uw"], observed=observed,
                                        writes=writes, transaction=transaction)
             except (Exception, KeyboardInterrupt) as exc:
-                receipt = self.receipt("apply", False, error=str(exc), writes=writes, transaction=transaction)
-                state["last_apply"] = receipt
-                self.env.atomic(STATE, json_bytes(state))
-                raise PowerError(f"Apply failed: {exc}") from exc
+                receipt, receipt_error = self.failure_receipt("apply", error=str(exc), writes=writes, transaction=transaction)
+                state_error = None
+                try:
+                    state["last_apply"] = receipt
+                    self.env.atomic(STATE, json_bytes(state))
+                except (Exception, KeyboardInterrupt) as store_error:
+                    state_error = store_error
+                failure = operation_error("apply", exc, receipt_error=receipt_error, receipt=receipt,
+                                          outcome="failed_state_unknown")
+                if state_error is not None:
+                    failure.details.append("state_write_error: " + str(state_error))
+                raise failure from exc
             state["last_apply"] = receipt
             self.env.atomic(STATE, json_bytes(state))
             return receipt
 
-    def _stage_clear(self, transaction, context):
+    def _stage_clear(self, transaction, context, expected_revision=None, console_context=None):
         with self.lock():
+            before = self.check_console_revision(expected_revision, "clear")
+            if console_context is not None and before is not None:
+                console_context["before"] = before
             state = self.load_state()
             if state is None:
                 self.configuration(None)
@@ -1135,24 +1218,34 @@ class PowerController:
                 self.env.remove(DROPIN)
             except (Exception, KeyboardInterrupt) as exc:
                 # The running daemon has not been restarted. Restore its files.
-                for path in (XML, DROPIN, STATE):
-                    raw = self.env.regular(path, missing=True)
-                    allowed = (old_files[path], json_bytes(pending) if path == STATE else None)
-                    if raw not in allowed and raw is not None:
-                        raise PowerError(f"Clear staging failed; foreign bytes retained: {path}; backup {backup}") from exc
-                    self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
-                self.receipt("clear", False, error=str(exc), backup=backup, phase="staging")
-                context["phase"] = "restored"
-                raise PowerError(f"Clear staging failed: {exc}") from exc
+                rollback = None
+                try:
+                    for path in (XML, DROPIN, STATE):
+                        raw = self.env.regular(path, missing=True)
+                        allowed = (old_files[path], json_bytes(pending) if path == STATE else None)
+                        if raw not in allowed and raw is not None:
+                            raise PowerError(f"Clear staging failed; foreign bytes retained: {path}; backup {backup}")
+                        self.env.atomic(path, old_files[path], 0o644 if path != STATE else 0o600)
+                    if any(self.env.regular(path, missing=True) != old_files[path] for path in (XML, DROPIN, STATE)):
+                        raise PowerError("Clear staging restoration readback failed")
+                except (Exception, KeyboardInterrupt) as restore_error:
+                    rollback = restore_error
+                receipt, receipt_error = self.failure_receipt("clear", error=str(exc), backup=backup, phase="staging",
+                                                              restoration_verified=rollback is None,
+                                                              rollback_error=str(rollback) if rollback is not None else None)
+                context["phase"] = "restored" if rollback is None else "unknown"
+                raise operation_error("clear", exc, rollback=rollback, receipt_error=receipt_error, backup=backup,
+                                      receipt=receipt, outcome="failed_restored_verified" if rollback is None
+                                      else "failed_state_unknown") from exc
             context["phase"] = "staged"
         return True
 
-    def clear(self):
+    def clear(self, expected_revision=None, console_context=None):
         self.require_root()
         transaction = str(uuid.uuid4())
         context = {}
         try:
-            if not self._stage_clear(transaction, context):
+            if not self._stage_clear(transaction, context, expected_revision, console_context):
                 return self.status()
             backup = context["backup"]
             self.restart()
@@ -1169,37 +1262,52 @@ class PowerController:
                                     observed=observed, backup=backup, preference_preserved=preference)
         except (Exception, KeyboardInterrupt) as exc:
             if context.get("phase") != "staged":
-                raise
+                if isinstance(exc, PowerError) and exc.outcome is not None:
+                    raise
+                raise operation_error("clear", exc, outcome="failed_state_unknown"
+                                      if context.get("phase") in ("staging", "unknown") else "rejected_before_write") from exc
             backup = context["backup"]
+            rollback_error = None
             try:
                 self.restore(context["old_files"], context["state"]["managed_hashes"], transaction)
                 recovery = "previous configuration restored and thermald active"
             except (Exception, KeyboardInterrupt) as rollback:
+                rollback_error = rollback
                 recovery = f"ROLLBACK FAILED: {rollback}"
-            self.receipt("clear", False, error=str(exc), recovery=recovery, backup=backup)
-            raise PowerError(f"Clear failed: {exc}; {recovery}; recovery backup: {backup}") from exc
+            receipt, receipt_error = self.failure_receipt("clear", error=str(exc), recovery=recovery, backup=backup,
+                                                          restoration_verified=rollback_error is None,
+                                                          rollback_error=str(rollback_error) if rollback_error is not None else None)
+            raise operation_error("clear", exc, rollback=rollback_error, receipt_error=receipt_error, backup=backup,
+                                  receipt=receipt, outcome="failed_restored_verified" if rollback_error is None
+                                  else "failed_state_unknown") from exc
 
-    def recover(self):
+    def validate_recovery_owner(self, pending):
+        owner = pending.get("owner")
+        if (not isinstance(owner, dict) or set(owner) != {"pid", "start_ticks", "boot_id"}
+                or type(owner["pid"]) is not int or owner["pid"] <= 0
+                or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
+                or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
+            raise PowerError("Missing or invalid transaction owner; automatic recovery refused")
+        if owner["boot_id"] == self.env.boot_id():
+            current_owner = self.env.process_identity(owner["pid"])
+            if current_owner == owner:
+                raise PowerError("Transaction owner is still running; recovery refused")
+
+    def recover(self, expected_revision=None, console_context=None):
         """Explicitly restore stock policy after an interrupted owner has exited."""
         self.require_root()
         transaction = str(uuid.uuid4())
         backup = None
         try:
             with self.lock():
+                before = self.check_console_revision(expected_revision, "recover")
+                if console_context is not None and before is not None:
+                    console_context["before"] = before
                 state = self.load_state()
                 pending = (state or {}).get("transaction")
                 if not pending:
                     raise PowerError("No interrupted transaction to recover; use clear for an active cap")
-                owner = pending.get("owner")
-                if (not isinstance(owner, dict) or set(owner) != {"pid", "start_ticks", "boot_id"}
-                        or type(owner["pid"]) is not int or owner["pid"] <= 0
-                        or type(owner["start_ticks"]) is not int or owner["start_ticks"] < 0
-                        or not isinstance(owner["boot_id"], str) or not owner["boot_id"]):
-                    raise PowerError("Missing or invalid transaction owner; automatic recovery refused")
-                if owner["boot_id"] == self.env.boot_id():
-                    current_owner = self.env.process_identity(owner["pid"])
-                    if current_owner == owner:
-                        raise PowerError("Transaction owner is still running; recovery refused")
+                self.validate_recovery_owner(pending)
                 # A clear may have removed either file before it was interrupted.
                 # Any existing file must still be ours; never replace foreign bytes.
                 self.configuration(state, disk_only=True, allow_missing_managed=True)
@@ -1233,12 +1341,133 @@ class PowerController:
                                     preference_preserved=preference)
         except (Exception, KeyboardInterrupt) as exc:
             if backup is not None:
-                self.receipt("recover", False, error=str(exc), backup=backup,
-                             recovery="pending state retained; retry recover after this owner exits")
-                raise PowerError(f"Recovery failed: {exc}; recovery backup: {backup}") from exc
-            if isinstance(exc, PowerError):
+                receipt, receipt_error = self.failure_receipt("recover", error=str(exc), backup=backup,
+                                                              recovery="pending state retained; retry recover after this owner exits")
+                raise operation_error("recover", exc, receipt_error=receipt_error, receipt=receipt,
+                                      backup=backup, outcome="failed_state_unknown") from exc
+            if isinstance(exc, PowerError) and exc.outcome is not None:
                 raise
-            raise PowerError(f"Recovery preflight failed: {exc}") from exc
+            raise operation_error("recover", exc, outcome="rejected_before_write") from exc
+
+    def console_revision(self, state, observed, host, preference, tcc):
+        """Fingerprint owned policy/qualification, not live thermal telemetry."""
+        raw_state = self.env.regular(STATE, missing=True)
+        if (raw_state is None) != (state is None) or (raw_state is not None and json.loads(raw_state) != state):
+            raise PowerError("Managed state changed during observation", code="snapshot_changed")
+        files = {}
+        for path in (STATE, XML, DROPIN, PREF, STOCK_UNIT, FEATURES, "/usr/bin/thermald", CPU_COOLING_ORDER):
+            raw = raw_state if path == STATE else self.env.regular(path, missing=True)
+            files[path] = None if raw is None else digest(raw)
+        interfaces = {zone: {"physical_path": observed[zone]["physical_path"],
+                             "max_power_uw": observed[zone]["max_power_uw"]}
+                      for zone in ZONES}
+        for zone in ZONES:
+            interfaces[zone]["identities"] = {}
+            for suffix in ("", "/name", "/enabled", "/constraint_0_name", "/constraint_0_power_limit_uw",
+                           "/constraint_0_max_power_uw"):
+                identity = self.env.path(zone + suffix).stat()
+                interfaces[zone]["identities"][suffix] = [identity.st_dev, identity.st_ino]
+        # On a native host the current values establish the initial operational
+        # bound. Managed cooling can lower PL1 at any moment and is not a revision.
+        if state is None:
+            for zone in ZONES:
+                interfaces[zone]["initial_pl1_uw"] = observed[zone]["pl1_uw"]
+        value = {"protocol": 1, "boot_id": self.env.boot_id(), "host": host,
+                 "cpu_model": CPU_MODEL, "preference": preference,
+                 "files": files, "interfaces": interfaces, "tcc": tcc}
+        return digest(json_bytes(value))
+
+    def console_snapshot_locked(self):
+        """The caller owns the existing coordination lock; never restarts."""
+        result = console_empty_status()
+        legacy = self.status()
+        result["diagnostic_errors"] = list(legacy["diagnostic_errors"])
+        service = legacy["thermald"]
+        result["thermald_active"] = service.get("ActiveState") == "active" if service else None
+        for interface, zone in zip(("msr", "mmio"), ZONES):
+            result["observed"].append({"interface": interface,
+                                       "pl1_uw": legacy["observed"].get(zone, {}).get("pl1_uw")})
+        try:
+            # A failure here is unknown, not an absent/unmanaged state.
+            state = self.load_state()
+            if state is not None:
+                result["current_policy"] = console_policy(state)
+                result["operational_ceiling_uw"] = state["initial_ceiling_uw"]
+            pending = (state or {}).get("transaction")
+            if pending:
+                result["management"] = "recovery_pending"
+                # Recovery must work while a restart is interrupted. Validate
+                # platform, disk ownership and dead owner without demanding the
+                # partially transitioned daemon's loaded command match the XML.
+                host, tcc = self.qualify_platform(None)
+                self.configuration(state, disk_only=True, allow_missing_managed=True)
+                self.validate_recovery_owner(pending)
+                preference, observed = self.preference(), self.observe()
+                allowed = ["recover"]
+            else:
+                host, preference, observed, service, tcc = self.qualify(state)
+                result["management"] = "managed" if state is not None else "native"
+                result["thermald_active"] = service["ActiveState"] == "active"
+                allowed = ["set", "clear", "reapply"] if state is not None else ["set"]
+                if state is None:
+                    result["operational_ceiling_uw"] = min(v["pl1_uw"] for v in observed.values())
+                    if result["operational_ceiling_uw"] < MIN_LIMIT_UW:
+                        allowed = []
+                        result["diagnostic_errors"].append(
+                            "The native observed operating bound is below the supported minimum; no set action is available.")
+                else:
+                    applied = state.get("last_apply") or {}
+                    result["holding_now"] = (applied.get("success") is True
+                                              and all(v["pl1_uw"] <= state["cap_uw"] for v in observed.values()))
+                    if not result["holding_now"]:
+                        result["diagnostic_errors"].extend("Current PL1 holding check: " + error
+                                                           for error in legacy["errors"])
+            result["observed"] = [{"interface": interface, "pl1_uw": observed[zone]["pl1_uw"]}
+                                  for interface, zone in zip(("msr", "mmio"), ZONES)]
+            result["revision"] = self.console_revision(state, observed, host, preference, tcc)
+            result["qualified"] = True
+            result["allowed_actions"] = allowed
+        except (PowerError, OSError, ValueError, KeyError, TypeError) as exc:
+            result["blocking_errors"].append(str(exc))
+            result["revision"] = None
+            result["qualified"] = False
+            result["holding_now"] = False
+            result["allowed_actions"] = []
+        reference = legacy["temperature_target"]
+        policy = result["current_policy"]
+        software = policy["target_celsius"] if policy is not None else None
+        activation = reference.get("tcc_activation_celsius")
+        if reference.get("available") and type(software) is int and type(activation) is int and activation <= software:
+            result["diagnostic_errors"].append(
+                f"Hardware TCC activation reference is {activation} Celsius, at or below the configured "
+                f"{software} Celsius software passive target; hardware may throttle first. "
+                "The software target is not a hard temperature ceiling.")
+        result["blocking_errors"] = [console_text(value, 1024) for value in result["blocking_errors"][:16]]
+        result["diagnostic_errors"] = [console_text(value, 1024) for value in result["diagnostic_errors"][:16]]
+        return result
+
+    def console_probe(self):
+        with self.lock():
+            return self.console_snapshot_locked()
+
+    def check_console_revision(self, expected_revision, action):
+        """Only called inside an operation's initial lock, before staging."""
+        if expected_revision is None:
+            return  # Existing root CLI and thermald ExecStartPost contract.
+        if not self.valid_hash(expected_revision):
+            raise PowerError("Invalid console plan revision", code="invalid_plan", outcome="rejected_before_write")
+        try:
+            status = self.console_snapshot_locked()
+        except (Exception, KeyboardInterrupt) as exc:
+            raise PowerError("Console preflight failed: " + str(exc), code="preflight_failed",
+                             outcome="rejected_before_write", details=["primary_error: " + str(exc)]) from exc
+        if not status["qualified"] or action not in status["allowed_actions"]:
+            raise PowerError("This action is not available in the current qualified state", code="action_unavailable",
+                             outcome="rejected_before_write", details=status["blocking_errors"])
+        if expected_revision != status["revision"]:
+            raise PowerError("Console plan is stale; probe and preview again", code="stale_plan",
+                             outcome="rejected_before_write")
+        return status
 
     def status(self):
         result = {"managed": False, "desired_limit_uw": None, "observed": {},
@@ -1312,6 +1541,224 @@ class PowerController:
         except (PowerError, OSError, ValueError) as exc:
             result["diagnostic_errors"].append(str(exc))
         return result
+
+
+# @mark mechrevo.power_control role=protocol
+def console_empty_status():
+    return {"management": "unknown", "revision": None, "qualified": False,
+            "allowed_actions": [], "current_policy": None, "operational_ceiling_uw": None,
+            "minimum_limit_uw": MIN_LIMIT_UW, "thermal_spec_reference_uw": THERMAL_SPEC_POWER_UW,
+            "observed": [], "thermald_active": None, "holding_now": False,
+            "blocking_errors": [], "diagnostic_errors": []}
+
+
+def console_policy(state):
+    return {"cap_uw": state["cap_uw"], "target_celsius": state.get("target_celsius"),
+            "polling_seconds": state.get("polling_seconds"),
+            "rapl_debounce_seconds": state.get("rapl_debounce_seconds")}
+
+
+def console_object(value, keys, label):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ValueError("Invalid " + label + " fields")
+    return value
+
+
+def validate_console_request(value):
+    console_object(value, ("schema_version", "request_id", "operation"), "request")
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        raise ValueError("Unsupported console protocol version")
+    if not isinstance(value["request_id"], str) or re.fullmatch(r"[A-Za-z0-9-]{1,128}", value["request_id"]) is None:
+        raise ValueError("Invalid request ID")
+    operation = value["operation"]
+    if not isinstance(operation, dict):
+        raise ValueError("Invalid operation")
+    if operation.get("kind") == "probe":
+        console_object(operation, ("kind",), "probe")
+        return value
+    console_object(operation, ("kind", "plan"), "execute")
+    if operation["kind"] != "execute":
+        raise ValueError("Unsupported console operation")
+    plan = console_object(operation["plan"], ("revision", "action"), "plan")
+    if not isinstance(plan["revision"], str) or re.fullmatch(r"[0-9a-f]{64}", plan["revision"]) is None:
+        raise ValueError("Invalid plan revision")
+    action = plan["action"]
+    if not isinstance(action, dict):
+        raise ValueError("Invalid plan action")
+    if action.get("kind") in ("clear", "recover", "reapply"):
+        console_object(action, ("kind",), "action")
+        return value
+    console_object(action, ("kind", "policy"), "set action")
+    if action["kind"] != "set":
+        raise ValueError("Unsupported plan action")
+    policy = console_object(action["policy"], ("cap_uw", "target_celsius", "polling_seconds", "rapl_debounce_seconds"), "policy")
+    cap = policy["cap_uw"]
+    if type(cap) is not int or cap <= 0 or cap > 2_147_483_647 or cap % 1_000_000:
+        raise ValueError("PL1 must be positive whole watts in integer microwatts")
+    temperature_target(policy["target_celsius"])
+    polling_target(policy["polling_seconds"], policy["target_celsius"])
+    rapl_debounce_target(policy["rapl_debounce_seconds"], policy["target_celsius"], policy["polling_seconds"])
+    return value
+
+
+def parse_console_request(raw):
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 32_768:
+        raise ValueError("Console request exceeds 32 KiB")
+
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate JSON field: " + key)
+            value[key] = item
+        return value
+
+    def invalid_constant(_value):
+        raise ValueError("Non-finite JSON value is not allowed")
+
+    try:
+        value = json.loads(raw, object_pairs_hook=unique, parse_constant=invalid_constant)
+    except RecursionError as exc:
+        raise ValueError("Console JSON nesting is excessive") from exc
+    return validate_console_request(value)
+
+
+def console_error(exc, additional=()):
+    details = list(exc.details) if isinstance(exc, PowerError) else ["primary_error: " + str(exc)]
+    details.extend(additional)
+    return {"code": exc.code if isinstance(exc, PowerError) else "controller_failed",
+            "message": console_text(exc, 4096), "details": [console_text(item, 1024) for item in details[:12]]}
+
+
+def console_text(value, maximum):
+    encoded = str(value).encode("utf-8", errors="replace")
+    return (encoded.decode("utf-8") if len(encoded) <= maximum
+            else encoded[:maximum].decode("utf-8", errors="ignore") + " [truncated]")
+
+
+def console_bounded_receipt(value):
+    if value is None:
+        return None
+    encoded = json.dumps(value, allow_nan=False, sort_keys=True).encode("utf-8")
+    if len(encoded) > 8192:
+        raise PowerError("Operation receipt exceeds the console protocol bound", code="receipt_too_large")
+    return value
+
+
+def console_handle(controller, request):
+    validate_console_request(request)
+    result = {"schema_version": 1, "request_id": request["request_id"], "outcome": "observed",
+              "status": None, "receipt": None, "error": None}
+    if request["operation"]["kind"] == "probe":
+        try:
+            result["status"] = controller.console_probe()
+            if not result["status"]["qualified"]:
+                result["error"] = {"code": "probe_unavailable", "message": "CPU PL1 control is not qualified or readable",
+                                   "details": list(result["status"]["blocking_errors"])}
+        except (Exception, KeyboardInterrupt) as exc:
+            result["status"] = console_empty_status()
+            result["status"]["blocking_errors"].append(console_text(exc, 1024))
+            result["error"] = console_error(exc)
+        return result
+    plan = request["operation"]["plan"]
+    action = plan["action"]
+    kind = action["kind"]
+    transaction_context = {}
+    try:
+        # The comparison baseline is captured by the operation's successful
+        # initial CAS while it owns the lock. An earlier probe is not evidence
+        # of which policy this transaction actually replaced.
+        if kind == "set":
+            policy = action["policy"]
+            value = controller.set_limit(policy["cap_uw"] // 1_000_000,
+                                         target_celsius=policy["target_celsius"], polling_seconds=policy["polling_seconds"],
+                                         rapl_debounce_seconds=policy["rapl_debounce_seconds"], expected_revision=plan["revision"],
+                                         console_context=transaction_context)
+            receipt = value.get("last_operation")
+        elif kind == "reapply":
+            receipt = controller.apply(expected_revision=plan["revision"], console_context=transaction_context)
+        else:
+            receipt = getattr(controller, kind)(expected_revision=plan["revision"], console_context=transaction_context)
+        result["receipt"] = console_bounded_receipt(receipt)
+        status = controller.console_probe()
+        result["status"] = status
+        before = transaction_context.get("before")
+        valid_receipt = (isinstance(receipt, dict) and receipt.get("version") == 1
+                         and receipt.get("success") is True
+                         and receipt.get("operation") == ("apply" if kind == "reapply" else kind))
+        if kind == "reapply":
+            proof = (valid_receipt and before is not None and status["management"] == before["management"]
+                     and status["current_policy"] == before["current_policy"] and status["holding_now"])
+        elif kind == "set":
+            proof = (valid_receipt and receipt.get("phase") == "completed" and isinstance(receipt.get("transaction"), str)
+                     and bool(receipt["transaction"]) and status["current_policy"] == action["policy"] and status["holding_now"])
+        else:
+            proof = (valid_receipt and receipt.get("phase") == "completed" and isinstance(receipt.get("transaction"), str)
+                     and bool(receipt["transaction"]) and status["management"] == "native" and status["current_policy"] is None)
+        if not status["qualified"] or not proof:
+            raise PowerError("Qualified post-state and transaction evidence do not confirm this action",
+                             code="confirmation_failed", outcome="failed_state_unknown",
+                             details=["post_read_error: " + error for error in status["blocking_errors"]])
+        result["outcome"] = "applied_verified"
+        return result
+    except (Exception, KeyboardInterrupt) as exc:
+        outcome = exc.outcome if isinstance(exc, PowerError) and exc.outcome is not None else "failed_state_unknown"
+        result["outcome"] = outcome
+        additions = []
+        if result["receipt"] is None and isinstance(exc, PowerError):
+            try:
+                result["receipt"] = console_bounded_receipt(exc.receipt)
+            except (Exception, KeyboardInterrupt) as receipt_error:
+                additions.append("receipt_error: " + str(receipt_error))
+        try:
+            result["status"] = controller.console_probe()
+            additions.extend("post_read_error: " + error for error in result["status"]["blocking_errors"])
+            if outcome == "failed_restored_verified":
+                status = result["status"]
+                before = transaction_context.get("before")
+                restored = (before is not None and status["qualified"] and status["management"] == before["management"]
+                            and status["current_policy"] == before["current_policy"]
+                            and (status["management"] == "native" if before["current_policy"] is None else status["holding_now"]))
+                if not restored:
+                    result["outcome"] = "failed_state_unknown"
+                    additions.append("post_read_error: qualified previous policy restoration was not confirmed")
+                else:
+                    additions.append("cpu_power_restore_confirmed")
+        except (Exception, KeyboardInterrupt) as post_error:
+            additions.append("post_read_error: " + str(post_error))
+            if outcome != "rejected_before_write":
+                result["outcome"] = "failed_state_unknown"
+        result["error"] = console_error(exc, additions)
+        return result
+
+
+def console_main(argv=None):
+    args = sys.argv[1:] if argv is None else argv
+    request_id = ""
+    executing = False
+    try:
+        if len(args) != 2 or args[0] != "--request":
+            raise ValueError("Expected exactly --request JSON")
+        # Recover a valid nonce only for correlation of a rejected request.
+        if isinstance(args[1], str) and len(args[1].encode("utf-8")) <= 32_768:
+            try:
+                candidate = json.loads(args[1])
+                nonce = candidate.get("request_id") if isinstance(candidate, dict) else None
+                if isinstance(nonce, str) and re.fullmatch(r"[A-Za-z0-9-]{1,128}", nonce):
+                    request_id = nonce
+            except (ValueError, TypeError):
+                pass
+        request = parse_console_request(args[1])
+        executing = request["operation"]["kind"] == "execute"
+        result = console_handle(PowerController(), request)
+    except (Exception, KeyboardInterrupt) as exc:
+        result = {"schema_version": 1, "request_id": request_id,
+                  "outcome": "failed_state_unknown" if executing else "rejected_before_write",
+                  "status": None, "receipt": None,
+                  "error": {"code": "helper_failed" if executing else "invalid_request", "message": console_text(exc, 4096),
+                            "details": ["primary_error: " + console_text(exc, 1024)]}}
+    print(json.dumps(result, sort_keys=True, allow_nan=False, ensure_ascii=False))
+    return 0 if result["outcome"] in ("observed", "applied_verified") and result["error"] is None else 1
 
 
 def main(argv=None):

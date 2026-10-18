@@ -14,7 +14,7 @@ RAPL 和服务配置条件。其他型号、BIOS、PPCC 或自适应温控平台
 包括继续降限、解除降温限制后回到用户上限，以及升级到下一降温设备。
 各目标值的实机结果另见硬件记录；命令接受不等于厂商额定安全值或性能最佳值。
 
-## 使用
+## 独立命令
 
 安装独立工具包后：
 
@@ -58,6 +58,67 @@ sudo mechrevo-power clear
 若命令被强制终止或断电，`status` 显示未完成事务，可运行 `sudo mechrevo-power recover`。
 恢复命令确认原事务进程已退出、受管文件仍属于本工具后，撤销配置并恢复原温控策略；
 原命令仍在运行时会拒绝恢复。不要通过手工删除 state 文件绕过这项检查。
+
+## 控制台 CPU PL1 接口
+
+新增 Rust 核心、CLI 和图形界面的“控制 → CPU 功耗上限”复用上述控制器，
+不会新增功耗抢写循环。它与 `profile` 的系统电源方案、OEM EC 和风扇会话分开。
+只有 Linux 实现此后端，Windows 明确报告不支持，不回退为系统电源档位。
+以下描述源码中的接口；实际安装和实机结果仍以各自部署记录为准。
+
+控制台由普通用户启动，通过功耗工具包提供的固定
+`/usr/lib/mechrevo-power-control/console-helper` 请求授权，无需把整个 GUI 作为 root 运行。
+启动、`status`、完整刷新和温度自动采样不会触发 CPU 授权。
+GUI 必须先点“检查 CPU 功耗策略（需授权）”；检查只读策略、资格和 MSR／MMIO PL1，
+除协调锁外不改配置或执行器。界面分别显示托管状态、收到观察的时间、允许上限和热设计参考，
+不会把温度更新当作策略重新检查。缺少 helper、资格不符或状态未知时不能应用常规策略。
+
+```sh
+mechrevo-console cpu-power probe
+mechrevo-console cpu-power set 55 --dry-run
+mechrevo-console cpu-power set 55
+mechrevo-console cpu-power clear --dry-run
+mechrevo-console cpu-power clear
+mechrevo-console cpu-power recover --dry-run
+mechrevo-console cpu-power recover
+mechrevo-console cpu-power reapply --dry-run
+mechrevo-console cpu-power reapply
+```
+
+CPU CLI 默认输出 JSON。每条命令都先显式授权检查；`--dry-run` 也需要这次只读授权，
+随后在本地生成预览，不执行策略。去掉 `--dry-run` 才另行请求执行授权，并在原有事务锁内
+重新核对预览绑定的完整状态，拒绝过期计划。取消授权、写前拒绝、失败后恢复与状态未知分别报告，
+不能只凭进程退出码认定应用成功。GUI 对应“编辑完整策略 → 预览完整策略 → 授权应用并回读”。
+
+`set WATTS` 只接受整数瓦数，实际范围为 35 W 到控制器记录的初始运行上限；
+不符合资格时没有可猜测的范围。此区间不是推荐功耗或厂商安全承诺，55 W 示例及热设计参考
+也不是默认初始上限。接口只管理 PL1，不改 PL2、平均窗口 Tau、硬件 TCC 或风扇曲线。
+
+与上面的独立 `sudo mechrevo-power set` 不同，控制台 `set` 保留所有省略的选项：
+已有 90°C／1 秒／0 秒会完整保留；未托管或原生选项仍保持原生。显式选项为：
+
+| 选项 | 可选值与依赖 |
+| --- | --- |
+| `--target-celsius` | `native` 或 `90`；90°C 是软件温控目标，不是硬件温度上限。 |
+| `--polling-seconds` | `native` 或 `1`；1 秒要求 90°C 目标。 |
+| `--rapl-debounce-seconds` | `native` 或 `0`；0 秒要求 90°C 和 1 秒轮询。 |
+
+例如仅修改瓦数时，`mechrevo-console cpu-power set 55` 保留原有完整温控选项。
+明确改回三项原生选项、仍保留 55 W PL1 上限时，先预览：
+
+```sh
+mechrevo-console cpu-power set 55 --target-celsius native --polling-seconds native --rapl-debounce-seconds native --dry-run
+```
+
+若只将温度目标改为 `native` 却留下已有的 1 秒／0 秒，组合会被拒绝，不会悄悄丢弃选项。
+`clear` 撤销托管；`recover` 只在检查确认可恢复的未完成事务中开放；两者恢复原生 thermald
+策略，由其动态决定瓦数。`reapply` 保留当前完整策略，只对高于上限的 PL1 重新降限，
+不把更低值提高到上限。新接口的协议和生命周期约束见 [CPU PL1 契约](../console/CPU-POWER-PROTOCOL.md)。
+
+CPU 策略持久保存，CLI 退出或 GUI 关闭不会撤销；这与风扇会话关窗恢复不同。
+有真实授权辅助进程在途时等待其退出，不强杀来冒充取消；进程是否退出未知时阻止关窗和后续操作。
+状态未知但进程已退出时，须先重新授权检查。关闭窗口不代表策略已撤销，
+应显式预览并应用 `clear`，再核对原生温控状态。
 
 ## 提前软件降温
 
@@ -153,7 +214,7 @@ sudo mechrevo-power set 55
 [`mechrevo-thermal`](THERMAL-OBSERVATION.md)。该命令只读，GPU 已失联时拒绝开始采样，
 新增 Xid／不可纠正 PCIe 错误时会停止并标记结果无效。
 
-配方在 `packaging/arch/mechrevo-power-control/`，只安装命令和说明，安装本身不会
+配方在 `packaging/arch/mechrevo-power-control/`，安装独立命令、控制台专用 helper、授权策略和说明，安装本身不会
 启用功耗上限。它没有加入现有 DKMS 包，也没有作为新包发布到 AUR。
 使用配方指定的源码提交构建；本地验证可以将来源切换为同一提交的本地 Git 仓库：
 

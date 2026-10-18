@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Mechrevo Drivers</vendor>
+  <vendor_url>https://github.com/LIghtJUNction/mechrevo-drivers</vendor_url>
+  <action id="org.mechrevo.console.cpu-power">
+    <description>Inspect or apply a qualified CPU power policy</description>
+    <description xml:lang="zh_CN">检查或应用已核验的 CPU 功耗策略</description>
+    <message>Authentication is required to inspect or apply the CPU power policy.</message>
+    <message xml:lang="zh_CN">检查或应用 CPU 功耗策略需要管理员授权。</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/mechrevo-power-control/console-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">--request</annotate>
+  </action>
+</policyconfig>

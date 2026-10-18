@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 pub mod brightness;
 pub mod command;
+pub mod cpu_power;
 pub mod fan_curve;
 pub mod oem;
 pub mod privilege;
