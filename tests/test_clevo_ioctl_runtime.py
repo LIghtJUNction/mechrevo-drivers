@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from uniwill_curve_compat import curve_ioctl_compat
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -29,8 +31,8 @@ def function(source, name):
 class ClevoIoctlRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
@@ -46,6 +48,7 @@ class ClevoIoctlRuntime(unittest.TestCase):
                 raise AssertionError("Missing driver constant: " + name)
             constants.append(match.group())
         fixture = (ROOT / "tests/fixtures/clevo_ioctl_runtime.c").read_text()
+        fixture = fixture.replace("/* @CURVE_IOCTL_COMPAT@ */", curve_ioctl_compat(io))
         fixture = fixture.replace("/* @DRIVER_CONSTANTS@ */", "\n".join(constants))
         fixture = fixture.replace("/* @DRIVER_CLEVO_IOCTL@ */", function(io, "clevo_ioctl_interface"))
         fixture = fixture.replace("/* @DRIVER_IOCTL_ENTRY@ */", function(io, "fop_ioctl"))
@@ -60,6 +63,7 @@ class ClevoIoctlRuntime(unittest.TestCase):
                  # the pre-fix sensitivity run also discards status/copy_result.
                  "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
                  "-I", str(source_root / "src/tuxedo_io"),
+                 "-I", str(source_root / "src"),
                  *(["-DDEBUG"] if debug else []), str(source), "-o", str(binary)],
                 text=True, capture_output=True,
             )

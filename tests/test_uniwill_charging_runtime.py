@@ -14,6 +14,7 @@ import unittest
 
 from test_uniwill_fan_runtime import function
 from test_uniwill_probe_runtime import versioned_function
+from uniwill_curve_compat import no_curve_owner_hooks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +35,9 @@ class UniwillChargingRuntime(unittest.TestCase):
                  'uw_charging_profile_write_state', 'uw_charging_profile_init',
                  'uw_charging_uninit', 'uw_charging_profile_store',
                  'uw_charging_prio_store', 'uw_set_usb_powershare')
-        pieces = []
+        # Charging regressions retain their original no-curve-owner scenario.
+        # The dedicated curve harness exercises lease revocation and restore.
+        pieces = [no_curve_owner_hooks(keyboard)]
         for name in names:
             if re.search(r'(?m)^static (?:int|void|ssize_t) ' + name + r'\([^;{]*\)\s*\{', keyboard):
                 # The generic existing parser supports the other return types.

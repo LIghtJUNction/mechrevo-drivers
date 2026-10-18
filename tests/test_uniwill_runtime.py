@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function as provider_function
+from uniwill_curve_compat import curve_ioctl_compat, no_curve_owner_hooks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,8 +32,8 @@ def function(source, name):
 class UniwillRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        parent = ROOT / ".local-tests"
-        parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get("UNIWILL_TEST_TMPDIR", ROOT / ".local-tests"))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
@@ -60,11 +61,14 @@ class UniwillRuntime(unittest.TestCase):
                 raise AssertionError("Missing driver type: " + name)
             types.append(declaration.group())
         fixture = (ROOT / "tests/fixtures/uniwill_runtime.c").read_text()
+        fixture = fixture.replace("/* @CURVE_IOCTL_COMPAT@ */", curve_ioctl_compat(io))
         provider = ""
         if re.search(r"(?m)^int uw_write_tdp\(", keyboard):
-            provider = "#define ACTUAL_TDP_PROVIDER 1\n" + "\n\n".join(
-                provider_function(keyboard, name) for name in
-                ("uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active", "uw_write_tdp"))
+            provider_names = ("uw_fan_lock", "uw_fan_unlock", "uw_fan_lock_active", "uw_write_tdp")
+            if re.search(r"(?m)^int uw_fan_curve_debug_write\(", keyboard):
+                provider_names += ("uw_fan_curve_debug_write",)
+            provider = "#define ACTUAL_TDP_PROVIDER 1\n" + no_curve_owner_hooks(keyboard) + "\n" + "\n\n".join(
+                provider_function(keyboard, name) for name in provider_names)
         else:
             provider = "#define ACTUAL_TDP_PROVIDER 0\n"
         fixture = fixture.replace("/* @DRIVER_TDP_PROVIDER@ */", provider)
@@ -86,7 +90,8 @@ class UniwillRuntime(unittest.TestCase):
             binary = path / ("runtime-debug" if debug else "runtime")
             result = subprocess.run(
                 ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                 "-I", str(ROOT / "src/tuxedo_io"), *(["-DDEBUG"] if debug else []),
+                 "-I", str(source_root / "src/tuxedo_io"), "-I", str(source_root / "src"),
+                 *(["-DDEBUG"] if debug else []),
                  str(source), "-o", str(binary)], text=True, capture_output=True,
             )
             if result.returncode:

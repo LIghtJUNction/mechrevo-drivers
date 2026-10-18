@@ -12,6 +12,7 @@
 typedef uint8_t u8;
 typedef uint32_t u32;
 struct file { int unused; };
+/* @CURVE_IOCTL_COMPAT@ */
 #define __user
 #define DMI_PRODUCT_SKU 1
 /* @DRIVER_CONSTANTS@ */

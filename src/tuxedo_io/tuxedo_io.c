@@ -30,6 +30,11 @@
 #include <linux/delay.h>
 #include <linux/version.h>
 #include <linux/dmi.h>
+#include <linux/slab.h>
+#include <linux/atomic.h>
+#include <linux/capability.h>
+#include <linux/compat.h>
+#include <linux/mutex.h>
 #include "../clevo_interfaces.h"
 #include "../uniwill_interfaces.h"
 #include "tuxedo_io_ioctl.h"
@@ -284,15 +289,154 @@ static u32 uniwill_identify(void)
 	return result;
 }
 
-/*static int fop_open(struct inode *inode, struct file *file)
+struct uw_curve_file_context {
+	struct mutex lock;
+	u64 owner;
+	u64 epoch;
+	u64 lease_id;
+};
+
+static atomic64_t uw_curve_owner_sequence = ATOMIC64_INIT(0);
+
+static_assert(sizeof(struct uw_fan_curve_control_v1) == 64);
+static_assert(sizeof(struct uw_fan_curve_apply_v1) == 160);
+static_assert(sizeof(struct uw_fan_curve_state_v1) == 320);
+static_assert(offsetof(struct uw_fan_curve_control_v1, epoch) == 16);
+static_assert(offsetof(struct uw_fan_curve_control_v1, generation) == 24);
+static_assert(offsetof(struct uw_fan_curve_control_v1, lease_id) == 32);
+static_assert(offsetof(struct uw_fan_curve_control_v1, request_id) == 40);
+static_assert(offsetof(struct uw_fan_curve_apply_v1, rise) == 64);
+static_assert(offsetof(struct uw_fan_curve_apply_v1, fall) == 94);
+static_assert(offsetof(struct uw_fan_curve_apply_v1, duty_raw) == 124);
+static_assert(offsetof(struct uw_fan_curve_apply_v1, respective) == 156);
+static_assert(offsetof(struct uw_fan_curve_state_v1, phase) == 64);
+static_assert(offsetof(struct uw_fan_curve_state_v1, live_error) == 76);
+static_assert(offsetof(struct uw_fan_curve_state_v1, last_error) == 80);
+static_assert(offsetof(struct uw_fan_curve_state_v1, restore_error) == 84);
+static_assert(offsetof(struct uw_fan_curve_state_v1, table) == 88);
+static_assert(offsetof(struct uw_fan_curve_state_v1, original_table) == 184);
+static_assert(offsetof(struct uw_fan_curve_state_v1, controls) == 280);
+static_assert(offsetof(struct uw_fan_curve_state_v1, original_controls) == 286);
+static_assert(offsetof(struct uw_fan_curve_state_v1, original_targets) == 292);
+
+static int fop_open(struct inode *inode, struct file *file)
 {
+	struct uw_curve_file_context *context;
+
+	(void)inode;
+	context = kzalloc(sizeof(*context), GFP_KERNEL);
+	if (!context)
+		return -ENOMEM;
+	mutex_init(&context->lock);
+	context->owner = atomic64_inc_return(&uw_curve_owner_sequence);
+	if (!context->owner)
+		context->owner = atomic64_inc_return(&uw_curve_owner_sequence);
+	file->private_data = context;
 	return 0;
 }
 
 static int fop_release(struct inode *inode, struct file *file)
 {
+	struct uw_curve_file_context *context = file->private_data;
+
+	(void)inode;
+	if (context) {
+		mutex_lock(&context->lock);
+		/* Only this open's own successful acquisition can trigger restore.
+		 * dup/fork share the file and cleanup runs at its last reference. */
+		if (context->epoch && context->lease_id)
+			uw_fan_curve_close(context->owner, context->epoch, context->lease_id);
+		mutex_unlock(&context->lock);
+		kfree(context);
+		file->private_data = NULL;
+	}
 	return 0;
-}*/
+}
+
+static long uw_fan_curve_ioctl_locked(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct uw_curve_file_context *context;
+	union {
+		struct uw_fan_curve_control_v1 control;
+		struct uw_fan_curve_apply_v1 apply;
+		struct uw_fan_curve_state_v1 state;
+	} data;
+	void __user *user = (void __user *)arg;
+	int status;
+
+	/* Full command values, not just magic, determine copy size and behavior. */
+	if (cmd != UW_FAN_CURVE_GET_STATE && cmd != UW_FAN_CURVE_ACQUIRE &&
+	    cmd != UW_FAN_CURVE_APPLY && cmd != UW_FAN_CURVE_RESTORE_RELEASE)
+		return -ENOTTY;
+	if (!file || !file->private_data)
+		return -EBADF;
+	context = file->private_data;
+	if (cmd != UW_FAN_CURVE_GET_STATE && !(file->f_mode & FMODE_WRITE))
+		return -EBADF;
+	if (cmd != UW_FAN_CURVE_GET_STATE && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (cmd == UW_FAN_CURVE_GET_STATE) {
+		if (copy_from_user(&data.state, user, sizeof(data.state)))
+			return -EFAULT;
+		status = uw_fan_curve_get_state(context->owner, &data.state);
+		if (status)
+			return status;
+		if (context->lease_id &&
+		    (data.state.control.epoch != context->epoch ||
+		     data.state.control.lease_id != context->lease_id ||
+		     !(data.state.state_flags & UW_FAN_CURVE_STATE_OWNER)))
+			data.state.state_flags |= UW_FAN_CURVE_STATE_REVOKED;
+		return copy_to_user(user, &data.state, sizeof(data.state)) ? -EFAULT : 0;
+	}
+	if (cmd == UW_FAN_CURVE_APPLY) {
+		if (copy_from_user(&data.apply, user, sizeof(data.apply)))
+			return -EFAULT;
+		return uw_fan_curve_apply(context->owner, &data.apply);
+	}
+	if (copy_from_user(&data.control, user, sizeof(data.control)))
+		return -EFAULT;
+	if (cmd == UW_FAN_CURVE_ACQUIRE) {
+		status = uw_fan_curve_acquire(context->owner, &data.control);
+		if (status)
+			return status;
+		/* Save ownership before copying the acknowledgement. If that copy
+		 * fails, close/recovery must not lose the provider's granted lease. */
+		context->epoch = data.control.epoch;
+		context->lease_id = data.control.lease_id;
+		if (copy_to_user(user, &data.control, sizeof(data.control))) {
+			uw_fan_curve_close(context->owner, context->epoch, context->lease_id);
+			context->epoch = 0;
+			context->lease_id = 0;
+			return -EFAULT;
+		}
+		return 0;
+	}
+	status = uw_fan_curve_release(context->owner, &data.control);
+	if (!status) {
+		context->epoch = 0;
+		context->lease_id = 0;
+	}
+	return status;
+}
+
+static long uw_fan_curve_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct uw_curve_file_context *context;
+	long status;
+
+	if (cmd != UW_FAN_CURVE_GET_STATE && cmd != UW_FAN_CURVE_ACQUIRE &&
+	    cmd != UW_FAN_CURVE_APPLY && cmd != UW_FAN_CURVE_RESTORE_RELEASE)
+		return -ENOTTY;
+	if (!file || !file->private_data)
+		return -EBADF;
+	context = file->private_data;
+	/* Provider locking alone cannot protect delayed per-open ACK updates
+	 * against a dup/fork thread releasing and reacquiring the same file. */
+	mutex_lock(&context->lock);
+	status = uw_fan_curve_ioctl_locked(file, cmd, arg);
+	mutex_unlock(&context->lock);
+	return status;
+}
 
 static long clevo_ioctl_interface(struct file *file, unsigned int cmd, unsigned long arg)
 {
@@ -789,7 +933,7 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_from_user(&uw_arg, (void *) arg, sizeof(uw_arg));
 			if (copy_result)
 				return -EFAULT;
-			status = uniwill_write_ec_ram((uw_arg[1] << 8) | uw_arg[0], uw_arg[2]);
+			status = uw_fan_curve_debug_write((uw_arg[1] << 8) | uw_arg[0], uw_arg[2]);
 			if (status < 0)
 				return status;
 			copy_result = copy_to_user((void *) arg, &reg_write_return.dword, sizeof(reg_write_return.dword));
@@ -839,6 +983,8 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return uniwill_ioctl_interface(file, cmd, arg);
 #endif
 		default:
+			if (_IOC_TYPE(cmd) == UW_FAN_CURVE_MAGIC)
+				return uw_fan_curve_ioctl(file, cmd, arg);
 			switch (_IOC_TYPE(cmd)) {
 				case MAGIC_READ_CL:
 				case MAGIC_WRITE_CL:
@@ -854,11 +1000,25 @@ static long fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return copy_result ? -EFAULT : 0;
 }
 
+/* The new structs have the same aligned layout and ioctl size on 32/64-bit.
+ * Do not claim compat support for the older pointer-sized ioctl definitions. */
+#ifdef CONFIG_COMPAT
+static long fop_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	if (_IOC_TYPE(cmd) != UW_FAN_CURVE_MAGIC)
+		return -ENOTTY;
+	return uw_fan_curve_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
+}
+#endif
+
 static struct file_operations fops_dev = {
 	.owner              = THIS_MODULE,
-	.unlocked_ioctl     = fop_ioctl
-//	.open               = fop_open,
-//	.release            = fop_release
+	.unlocked_ioctl     = fop_ioctl,
+	.open               = fop_open,
+	.release            = fop_release,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl       = fop_compat_ioctl,
+#endif
 };
 
 struct class *tuxedo_io_device_class;

@@ -14,6 +14,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function
+from uniwill_curve_compat import no_curve_owner_hooks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,7 +48,7 @@ class UniwillBindingRuntime(unittest.TestCase):
                      r'(static int uniwill_wmi_probe\([^\n]+\))\n#endif', r'\1', wmi)
         probe = function(fixed, 'uniwill_keyboard_probe')
         probe = probe[:probe.index('\n\tif (uw_feats->uniwill_profile_v1)')] + '\n\treturn 0;\n}'
-        pieces = [function(fixed, name) for name in
+        pieces = [no_curve_owner_hooks(fixed)] + [function(fixed, name) for name in
                   ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start')]
         if 'static void uniwill_restore_adapter_state(' in keyboard:
             pieces += [function(keyboard, name) for name in

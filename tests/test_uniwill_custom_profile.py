@@ -14,6 +14,8 @@ import subprocess
 import tempfile
 import unittest
 
+from uniwill_curve_compat import no_curve_owner_hooks
+
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = Path(os.environ.get('UNIWILL_KEYBOARD_HEADER', ROOT / 'src/uniwill_keyboard.h'))
 
@@ -35,7 +37,9 @@ def function(source, name):
 class CustomProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix='uniwill-custom-profile-')
+        parent = Path(os.environ.get('UNIWILL_TEST_TMPDIR', ROOT / '.local-tests'))
+        parent.mkdir(parents=True, exist_ok=True)
+        cls.temporary = tempfile.TemporaryDirectory(prefix='uniwill-custom-profile-', dir=parent)
         cls.addClassCleanup(cls.temporary.cleanup)
         path = Path(cls.temporary.name)
         source = HEADER.read_text()
@@ -43,7 +47,7 @@ class CustomProfileTests(unittest.TestCase):
         invocation = ('return uniwill_set_custom_profile_mode(zero);'
                       if helper.startswith('static int ') else
                       'uniwill_set_custom_profile_mode(zero); return 0;')
-        pieces = [helper, function(source, 'uniwill_event_callb')]
+        pieces = [no_curve_owner_hooks(source), helper, function(source, 'uniwill_event_callb')]
         pieces += [function(source, name) for name in
                    ('uw_fan_quiesce_locked', 'uw_fan_unlock', 'uw_fan_control_start')]
         if 'static int uniwill_keyboard_abort_probe(' in source:

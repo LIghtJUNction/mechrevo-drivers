@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function
+from uniwill_curve_compat import no_curve_owner_hooks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,7 +31,7 @@ class UniwillKeyWorkRuntime(unittest.TestCase):
                           r'static bool uniwill_i8042_filter\([^#]+#else\n'
                           r'(static bool uniwill_i8042_filter\([^#]+)\n#endif', r'\1', keyboard)
         array = re.search(r'static u8 uniwill_touchp_toggle_seq\[\] = \{[^}]+\};', keyboard).group()
-        pieces = [array]
+        pieces = [no_curve_owner_hooks(keyboard), array]
         sequence_state = re.search(r'(?m)^static u8 uniwill_touchp_toggle_seq_pos;', keyboard)
         if sequence_state:
             pieces.append(sequence_state.group())

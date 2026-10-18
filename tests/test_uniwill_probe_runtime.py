@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function
+from uniwill_curve_compat import no_curve_owner_hooks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,7 +53,7 @@ class UniwillProbeRuntime(unittest.TestCase):
         invocation = ('return uniwill_write_kbd_bl_enable(enable);'
                       if backlight.startswith('static int ') else
                       'uniwill_write_kbd_bl_enable(enable); return 0;')
-        pieces = [declarations, backlight,
+        pieces = [no_curve_owner_hooks(keyboard), declarations, backlight,
                   function(keyboard, 'uw_fan_quiesce_locked'),
                   function(keyboard, 'uw_fan_lock'),
                   function(keyboard, 'uw_fan_unlock'),

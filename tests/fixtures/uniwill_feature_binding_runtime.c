@@ -93,6 +93,13 @@ static int uniwill_write_ec_ram(u16 address, u8 value)
 	++ec_writes;
 	return provider_status;
 }
+/* This feature-binding suite has no curve owner. The actual gated debug
+ * provider is exercised by the provider/curve suites, while this spy retains
+ * the pre-curve transport and errno behavior for the existing DEBUG cases. */
+static __attribute__((unused)) int uw_fan_curve_debug_write(u16 address, u8 value)
+{
+	return uniwill_write_ec_ram(address, value);
+}
 #endif
 
 static int uw_write_tdp(u8 index, u8 value)
@@ -133,6 +140,7 @@ static u32 uw_set_fan_auto(void)
 }
 
 struct file { int unused; };
+/* @CURVE_IOCTL_COMPAT@ */
 static struct { const char *version; } mock_module = { "binding-test" };
 #define THIS_MODULE (&mock_module)
 static u32 id_check_clevo, id_check_uniwill;

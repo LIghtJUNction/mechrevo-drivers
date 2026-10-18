@@ -22,6 +22,7 @@
 #define UNIWILL_INTERFACES_H
 
 #include <linux/types.h>
+#include "uniwill_fan_curve_ioctl.h"
 
 #define UNIWILL_WMI_MGMT_GUID_BA	"ABBC0F6D-8EA1-11D1-00A0-C90629100000"
 #define UNIWILL_WMI_MGMT_GUID_BB	"ABBC0F6E-8EA1-11D1-00A0-C90629100000"
@@ -208,5 +209,12 @@ int uw_write_tdp(u8 tdp_index, u8 tdp_data);
 int uw_init_fan(void);
 u32 uw_set_fan(u32 fan_index, u8 fan_speed);
 u32 uw_set_fan_auto(void);
+
+int uw_fan_curve_get_state(u64 owner, struct uw_fan_curve_state_v1 *state);
+int uw_fan_curve_acquire(u64 owner, struct uw_fan_curve_control_v1 *control);
+int uw_fan_curve_apply(u64 owner, const struct uw_fan_curve_apply_v1 *request);
+int uw_fan_curve_release(u64 owner, const struct uw_fan_curve_control_v1 *control);
+void uw_fan_curve_close(u64 owner, u64 epoch, u64 lease_id);
+int uw_fan_curve_debug_write(u16 address, u8 value);
 
 #endif

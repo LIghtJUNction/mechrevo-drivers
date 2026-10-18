@@ -1,9 +1,9 @@
 use mechrevo_console_core::{
+    fan_curve::{ValidatedFanCurve, OWNED_TABLE_BYTES},
     registry, ControlError, OemControl, OemControlKind, OemDomain, OemValue, PowerProfile, Service,
     Snapshot,
 };
 use serde_json::{json, Value};
-#[cfg(any(target_os = "linux", test))]
 use std::io::Read;
 use std::{
     ffi::OsString,
@@ -13,7 +13,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
     Help,
@@ -25,6 +25,8 @@ enum Action {
     Brightness(Option<u8>, Option<String>, bool),
     OemList,
     OemSet(String, String, bool),
+    FanValidate(PathBuf),
+    FanHold(PathBuf),
     Export(PathBuf),
 }
 fn text(arg: &OsString) -> Result<&str, ControlError> {
@@ -113,6 +115,25 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             Ok(Action::OemSet(id.into(), value.into(), dry))
         }
         "oem" => Err(usage("Use oem list or oem set ID VALUE [--dry-run]")),
+        "fan"
+            if rest.len() == 3
+                && rest[0] == "validate"
+                && rest[1] == "--input"
+                && !rest[2].is_empty() =>
+        {
+            Ok(Action::FanValidate(PathBuf::from(&rest[2])))
+        }
+        "fan"
+            if rest.len() == 3
+                && rest[0] == "hold"
+                && rest[1] == "--input"
+                && !rest[2].is_empty() =>
+        {
+            Ok(Action::FanHold(PathBuf::from(&rest[2])))
+        }
+        "fan" => Err(usage(
+            "Use fan validate --input PATH or fan hold --input PATH; hold needs a terminal and a qualified Linux driver",
+        )),
         "export" if rest.len() == 2 && rest[0] == "--output" && !rest[1].is_empty() => {
             Ok(Action::Export(PathBuf::from(&rest[1])))
         }
@@ -230,6 +251,192 @@ fn set_oem(service: &Service, id: &str, raw: &str, dry_run: bool) -> Result<Valu
 }
 fn duration_json(duration: Duration) -> Value {
     json!({"seconds":duration.as_secs(),"nanoseconds":duration.subsec_nanos()})
+}
+
+// @mark mechrevo.fan_curve role=caller contract=ramfan1p5_typed_input
+fn curve_validation_json(curve: &ValidatedFanCurve) -> Value {
+    json!({
+        "outcome": "protocol_validated",
+        "applied": false,
+        "hardware_qualified": false,
+        "validation_scope": "Curve file shape and RamFan1p5 protocol only; device support and thermal behavior require separate qualification",
+        "table_write_bytes": OWNED_TABLE_BYTES,
+        "duty_raw_unit": "half_percent",
+        "curve": curve.curve()
+    })
+}
+
+fn load_curve_file(path: &std::path::Path) -> Result<ValidatedFanCurve, ControlError> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| ControlError::new("curve_read_failed", error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(ControlError::new(
+            "curve_read_failed",
+            "Curve input must be a regular file",
+        ));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| ControlError::new("curve_read_failed", error.to_string()))?;
+    ValidatedFanCurve::from_reader(file)
+}
+
+#[cfg(target_os = "linux")]
+mod fan_hold {
+    use super::*;
+    use mechrevo_console_core::fan_curve::linux::{
+        FanCurvePhase, FanCurveSession, FanCurveSessionError, FanCurveState,
+    };
+    use std::io::IsTerminal;
+
+    pub(super) fn state_json(state: &FanCurveState) -> Value {
+        let phase = match state.phase {
+            FanCurvePhase::Idle => "idle",
+            FanCurvePhase::Acquired => "acquired",
+            FanCurvePhase::Active => "active",
+            FanCurvePhase::RecoveryRequired => "recovery_required",
+        };
+        json!({
+            "epoch":state.token.epoch, "generation":state.token.generation,
+            "lease_id":state.token.lease_id, "last_request_id":state.last_request_id,
+            "phase":phase, "owner":state.owner,
+            "modified_or_uncertain":state.applied, "revoked":state.revoked,
+            "last_error":state.last_error, "restore_error":state.restore_error,
+            "restored_verified":state.restored_verified, "live_error":state.live_error,
+            "live_table_available":state.live_table.is_some()
+        })
+    }
+
+    fn session_error(error: FanCurveSessionError) -> ControlError {
+        let mut result = ControlError::new("fan_curve_operation_failed", error.to_string());
+        result.details.push(
+            json!({
+                "operation":error.operation, "errno":error.raw_os_error(),
+                "state_is_current":error.state_is_current,
+                "state":error.state.as_ref().map(|state|state_json(state)),
+                "state_query_error":error.state_query_error,
+                "state_query_errno":error.state_query_errno,
+                "invalid_response":error.invalid_response.as_deref(),
+                "state_query_invalid_response":error.state_query_invalid_response.as_deref(),
+                "mutation_may_have_occurred":error.mutation_may_have_occurred,
+                "close_fallback_outcome":"unconfirmed"
+            })
+            .to_string(),
+        );
+        result
+    }
+
+    pub(super) trait Holder {
+        fn acquire(&mut self) -> Result<Value, ControlError>;
+        fn apply(&mut self, curve: &ValidatedFanCurve) -> Result<Value, ControlError>;
+        fn restore(&mut self) -> Result<Value, ControlError>;
+    }
+    impl Holder for FanCurveSession {
+        fn acquire(&mut self) -> Result<Value, ControlError> {
+            FanCurveSession::acquire(self)
+                .map(|state| state_json(&state))
+                .map_err(session_error)
+        }
+        fn apply(&mut self, curve: &ValidatedFanCurve) -> Result<Value, ControlError> {
+            FanCurveSession::apply(self, curve)
+                .map(|state| state_json(&state))
+                .map_err(session_error)
+        }
+        fn restore(&mut self) -> Result<Value, ControlError> {
+            FanCurveSession::restore(self)
+                .map(|state| state_json(&state))
+                .map_err(session_error)
+        }
+    }
+
+    fn recover(holder: &mut impl Holder, mut primary: ControlError) -> ControlError {
+        let recovery = match holder.restore() {
+            Ok(state) => release_receipt(&state),
+            Err(error) => json!({"restoration":"unconfirmed", "error":error}),
+        };
+        primary.details.push(recovery.to_string());
+        primary
+    }
+
+    fn release_receipt(state: &Value) -> Value {
+        let outcome = match state["restored_verified"].as_bool() {
+            Some(true) => "driver_verified",
+            Some(false) => "released_without_restoration_required",
+            None => "unconfirmed",
+        };
+        json!({"restoration":outcome,"state":state})
+    }
+
+    // @mark mechrevo.fan_curve role=caller contract=fd_owned_curve_lifetime
+    pub(super) fn hold(
+        holder: &mut impl Holder,
+        curve: &ValidatedFanCurve,
+        wait: impl FnOnce() -> io::Result<()>,
+        mut emit: impl FnMut(Value) -> Result<(), ControlError>,
+    ) -> Result<(), ControlError> {
+        let transaction = (|| {
+            holder.acquire()?;
+            let state = holder.apply(curve)?;
+            emit(json!({"outcome":"holding", "state":state,
+                "lifetime":"This foreground process retains the exclusive lease until Enter or exit; it is not a saved startup setting"}))?;
+            wait().map_err(|error| ControlError::new("fan_hold_input_failed", error.to_string()))
+        })();
+        if let Err(error) = transaction {
+            return Err(recover(holder, error));
+        }
+        let state = holder.restore()?;
+        let receipt = release_receipt(&state);
+        emit(json!({"outcome":"restored_and_released", "state":state})).map_err(|mut error| {
+            // Output failure happens after recovery completed. Retain that
+            // receipt and do not issue a second restoration transaction.
+            error.details.push(receipt.to_string());
+            error
+        })
+    }
+
+    pub(super) fn run(path: &std::path::Path, output: &mut impl Write) -> Result<(), ControlError> {
+        if !io::stdin().is_terminal() {
+            return Err(ControlError::new(
+                "fan_hold_requires_terminal",
+                "fan hold requires an interactive terminal; no device was opened",
+            ));
+        }
+        let curve = load_curve_file(path)?;
+        let mut session = FanCurveSession::open().map_err(session_error)?;
+        hold(
+            &mut session,
+            &curve,
+            || {
+                let mut prompt = io::stderr().lock();
+                writeln!(prompt, "曲线正在由本进程持有；按 Enter 恢复旧表并退出。强制结束后的内核恢复结果无法由本进程确认。")?;
+                prompt.flush()?;
+                wait_for_enter(io::stdin().lock())
+            },
+            |value| {
+                write_json(output, &value)?;
+                output
+                    .flush()
+                    .map_err(|error| ControlError::new("output_failed", error.to_string()))
+            },
+        )
+    }
+
+    pub(super) fn wait_for_enter(mut input: impl Read) -> io::Result<()> {
+        let mut byte = [0];
+        loop {
+            match input.read(&mut byte) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Terminal input ended before Enter",
+                    ))
+                }
+                Ok(_) if byte[0] == b'\n' => return Ok(()),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
 }
 fn epoch_json(time: SystemTime) -> Value {
     match time.duration_since(UNIX_EPOCH) {
@@ -387,6 +594,19 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         Action::Models(query) => json!(service.catalog(&query)),
         Action::OemList => json!(service.oem_controls()),
         Action::OemSet(id, value, dry_run) => set_oem(service, &id, &value, dry_run)?,
+        Action::FanValidate(path) => curve_validation_json(&load_curve_file(&path)?),
+        Action::FanHold(path) => {
+            #[cfg(target_os = "linux")]
+            return fan_hold::run(&path, &mut stdout);
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = path;
+                return Err(ControlError::new(
+                    "fan_hold_unsupported",
+                    "The exclusive fan-curve driver session is available on Linux only",
+                ));
+            }
+        }
         Action::Profile(profile, dry) => {
             let plan = service.plan_profile(profile)?;
             if dry {
@@ -445,6 +665,212 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
+    }
+    #[test]
+    fn fan_validate_requires_one_explicit_input_and_never_accepts_apply_flags() {
+        assert_eq!(
+            parse(args(&["fan", "validate", "--input", "曲线 file.json"])).unwrap(),
+            Action::FanValidate("曲线 file.json".into())
+        );
+        assert_eq!(
+            parse(args(&["fan", "hold", "--input", "curve.json"])).unwrap(),
+            Action::FanHold("curve.json".into())
+        );
+        for args_values in [
+            vec!["fan"],
+            vec!["fan", "validate"],
+            vec!["fan", "validate", "file.json"],
+            vec!["fan", "validate", "--input", ""],
+            vec!["fan", "validate", "--input", "file.json", "--apply"],
+            vec!["fan", "apply", "--input", "file.json"],
+        ] {
+            assert!(parse(args(&args_values)).is_err());
+        }
+    }
+
+    #[test]
+    fn fan_validate_uses_complete_typed_input_and_does_not_claim_hardware_application() {
+        let document = json!({
+            "schema_version": 1, "layout":"uniwill_ram_fan1p5", "respective":true,
+            "cpu":{"rise_celsius":vec![40;15],"fall_celsius":vec![50;15],"duty_raw":vec![51;16]},
+            "gpu":{"rise_celsius":vec![255;15],"fall_celsius":vec![255;15],"duty_raw":vec![200;16]}
+        });
+        let curve =
+            ValidatedFanCurve::from_reader(serde_json::to_vec(&document).unwrap().as_slice())
+                .unwrap();
+        let output = curve_validation_json(&curve);
+        assert_eq!(output["outcome"], "protocol_validated");
+        assert_eq!(output["applied"], false);
+        assert_eq!(output["hardware_qualified"], false);
+        assert_eq!(output["curve"], document);
+        assert_eq!(output["table_write_bytes"], 94);
+        assert!(ValidatedFanCurve::from_reader(b"{}".as_slice()).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn foreground_fan_lifetime_restores_on_every_exit_path_and_preserves_primary_errors() {
+        use std::{cell::RefCell, rc::Rc};
+        struct MockHolder {
+            events: Rc<RefCell<Vec<String>>>,
+            failure: &'static str,
+            restore_fails: bool,
+        }
+        impl fan_hold::Holder for MockHolder {
+            fn acquire(&mut self) -> Result<Value, ControlError> {
+                self.events.borrow_mut().push("acquire".into());
+                if self.failure == "acquire" {
+                    Err(ControlError::new("acquire_failed", "test"))
+                } else {
+                    Ok(json!({"owner":true}))
+                }
+            }
+            fn apply(&mut self, _: &ValidatedFanCurve) -> Result<Value, ControlError> {
+                self.events.borrow_mut().push("apply".into());
+                if self.failure == "apply" {
+                    Err(ControlError::new("apply_failed", "test"))
+                } else {
+                    Ok(json!({"owner":true,"applied":true}))
+                }
+            }
+            fn restore(&mut self) -> Result<Value, ControlError> {
+                self.events.borrow_mut().push("restore".into());
+                if self.restore_fails {
+                    Err(ControlError::new("restore_failed", "test"))
+                } else {
+                    Ok(
+                        json!({"owner":false,"restored_verified":!["acquire","apply"].contains(&self.failure)}),
+                    )
+                }
+            }
+        }
+        let document = json!({
+            "schema_version":1,"layout":"uniwill_ram_fan1p5","respective":true,
+            "cpu":{"rise_celsius":vec![40;15],"fall_celsius":vec![50;15],"duty_raw":vec![51;16]},
+            "gpu":{"rise_celsius":vec![255;15],"fall_celsius":vec![255;15],"duty_raw":vec![200;16]}
+        });
+        let curve = ValidatedFanCurve::from_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+        for failure in [
+            "",
+            "acquire",
+            "apply",
+            "emit_holding",
+            "wait",
+            "emit_released",
+        ] {
+            for restore_fails in [false, true] {
+                let events = Rc::new(RefCell::new(Vec::new()));
+                let mut holder = MockHolder {
+                    events: events.clone(),
+                    failure,
+                    restore_fails,
+                };
+                let result = fan_hold::hold(
+                    &mut holder,
+                    &curve,
+                    || {
+                        events.borrow_mut().push("wait".into());
+                        if failure == "wait" {
+                            Err(io::Error::other("input failed"))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    |output| {
+                        let event = match output["outcome"].as_str().unwrap() {
+                            "holding" => "emit_holding",
+                            "restored_and_released" => "emit_released",
+                            other => panic!("Unexpected output {other}"),
+                        };
+                        events.borrow_mut().push(event.into());
+                        if failure == event {
+                            Err(ControlError::new(event, "test"))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+                let events = events.borrow();
+                assert_eq!(events.iter().filter(|value| *value == "restore").count(), 1);
+                if failure.is_empty() && !restore_fails {
+                    assert!(result.is_ok());
+                    assert_eq!(
+                        *events,
+                        [
+                            "acquire",
+                            "apply",
+                            "emit_holding",
+                            "wait",
+                            "restore",
+                            "emit_released"
+                        ]
+                    );
+                } else {
+                    let error = result.unwrap_err();
+                    let expected = match failure {
+                        "acquire" => "acquire_failed",
+                        "apply" => "apply_failed",
+                        "emit_holding" => "emit_holding",
+                        "wait" => "fan_hold_input_failed",
+                        _ if restore_fails => "restore_failed",
+                        "emit_released" => "emit_released",
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(error.code, expected);
+                    if ["acquire", "apply", "emit_holding", "wait"].contains(&failure) {
+                        let recovery: Value =
+                            serde_json::from_str(error.details.last().unwrap()).unwrap();
+                        assert_eq!(
+                            recovery["restoration"],
+                            if restore_fails {
+                                "unconfirmed"
+                            } else if ["acquire", "apply"].contains(&failure) {
+                                "released_without_restoration_required"
+                            } else {
+                                "driver_verified"
+                            }
+                        );
+                    }
+                    if failure == "emit_released" && !restore_fails {
+                        let receipt: Value =
+                            serde_json::from_str(error.details.last().unwrap()).unwrap();
+                        assert_eq!(receipt["restoration"], "driver_verified");
+                        assert_eq!(receipt["state"]["owner"], false);
+                    }
+                    if restore_fails || failure != "emit_released" {
+                        assert!(!events.iter().any(|event| event == "emit_released"));
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn foreground_fan_input_waits_for_enter_without_accumulating_other_keys() {
+        let mut input = b"abc\nremaining".as_slice();
+        fan_hold::wait_for_enter(&mut input).unwrap();
+        assert_eq!(input, b"remaining");
+        assert_eq!(
+            fan_hold::wait_for_enter(b"abc".as_slice())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        struct Interrupted {
+            first: bool,
+        }
+        impl Read for Interrupted {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.first {
+                    self.first = false;
+                    Err(io::ErrorKind::Interrupted.into())
+                } else {
+                    buffer[0] = b'\n';
+                    Ok(1)
+                }
+            }
+        }
+        fan_hold::wait_for_enter(Interrupted { first: true }).unwrap();
     }
     #[test]
     fn oem_commands_require_explicit_control_value_and_known_options() {

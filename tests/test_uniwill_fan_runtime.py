@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from uniwill_curve_compat import no_curve_owner_hooks
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -60,7 +62,8 @@ class UniwillFanRuntime(unittest.TestCase):
             names = names[:position] + ("uw_init_fan_preserving_targets_locked",) + names[position:]
         fixture = (ROOT / "tests/fixtures/uniwill_fan_runtime.c").read_text()
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(
-            constants + [function(keyboard, name) for name in names]))
+            [no_curve_owner_hooks(keyboard)] + constants
+            + [function(keyboard, name) for name in names]))
         source = path / "runtime.c"
         source.write_text(fixture)
         cls.binary = path / "runtime"

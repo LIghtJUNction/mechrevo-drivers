@@ -40,6 +40,7 @@
 #include <acpi/battery.h>
 #include "uniwill_interfaces.h"
 #include "uniwill_leds.h"
+#include "uniwill_fan_curve_transaction.h"
 
 #define FAN_ON_MIN_SPEED_PERCENT 25
 
@@ -2066,6 +2067,11 @@ static void restart_direct_fan_control_work_handler(struct work_struct *work);
 static int uw_restore_fan_state_locked(void);
 static DECLARE_DELAYED_WORK(direct_fan_control_restart_delayed_work, restart_direct_fan_control_work_handler);
 
+static bool uw_curve_blocks_legacy_locked(void);
+static int uw_curve_revoke_locked(void);
+static void uw_curve_new_lifecycle_locked(void);
+static void uw_curve_note_legacy_write_locked(void);
+
 static void uw_fan_quiesce_locked(void)
 {
 	lockdep_assert_held(&uniwill_fan_command_lock);
@@ -2147,6 +2153,11 @@ int uw_set_mode(u8 value)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	uw_legacy_fan_override_begin_locked();
 	status = uniwill_write_ec_ram(0x0751, value);
 	uw_legacy_fan_override_finish_locked(status);
@@ -2161,6 +2172,11 @@ int uw_update_mode(u8 clear_mask, u8 set_mask)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	/* Profile/TDP updates preserve bit 6 and retain manual ownership. */
 	if ((clear_mask | set_mask) & 0x40)
 		uw_legacy_fan_override_begin_locked();
@@ -2187,6 +2203,11 @@ int uw_write_tdp(u8 tdp_index, u8 tdp_data)
 	status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	if (uniwill_device_features.uniwill_custom_profile_mode_needed) {
 		status = uniwill_read_ec_ram(0x0751, &mode);
 		if (!status)
@@ -2224,6 +2245,11 @@ int set_full_fan_mode(bool enable)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	uw_legacy_fan_override_begin_locked();
 	status = set_full_fan_mode_locked(enable);
 	uw_legacy_fan_override_finish_locked(status);
@@ -2378,6 +2404,11 @@ int uw_init_fan(void)
 	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	universal = uniwill_device_features.uniwill_has_universal_ec_fan_control;
 	/* A valid table was historically a no-op here, including under FULL.
 	 * Pending PM intent must not turn that no-op into table cancellation. */
@@ -2440,9 +2471,10 @@ static void restart_direct_fan_control_work_handler(struct work_struct *work)
 	int status;
 
 	mutex_lock(&uniwill_fan_state_lock);
-	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started || legacy_fan_mode_override_blocked)
+	if (uniwill_fan_work_paused || uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended || !direct_fan_control_started || legacy_fan_mode_override_blocked || uw_curve_blocks_legacy_locked())
 		goto unlock;
 	pr_debug("restart fan control\n");
+	uw_curve_note_legacy_write_locked();
 
 	status = uw_restart_direct_fan_control_locked(direct_fan_control_current_value_fan0,
 						    direct_fan_control_current_value_fan1);
@@ -2603,6 +2635,11 @@ u32 uw_set_fan(u32 fan_index, u8 fan_speed)
 		uw_fan_unlock();
 		return -EINVAL;
 	}
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
 	if (direct_fan_control_restart_needed)
 		uw_fan_quiesce_locked();
 	/* Failed PM restoration retains both saved targets. Retry that complete
@@ -2679,9 +2716,15 @@ static u32 uw_set_fan_auto_locked(void)
 
 u32 uw_set_fan_auto(void)
 {
-	int status = uw_fan_lock_active(true);
+	int status = uw_fan_lock_active(false);
 	if (status)
 		return status;
+	if (uw_curve_blocks_legacy_locked()) {
+		uw_fan_unlock();
+		return -EBUSY;
+	}
+	uw_curve_note_legacy_write_locked();
+	uw_fan_quiesce_locked();
 	/* An explicit AUTO may reach firmware even when transport fails. Do not
 	 * let PM replay old legacy targets until a new explicit manual request.
 	 * PM's temporary AUTO uses the locked helper and retains its rollback. */
@@ -2700,6 +2743,12 @@ static int uw_fan_control_start(void)
 	mutex_lock(&uniwill_fan_command_lock);
 	mutex_lock(&uniwill_fan_state_lock);
 	uw_fan_quiesce_locked();
+	status = uw_curve_revoke_locked();
+	if (status) {
+		uw_fan_unlock();
+		return status;
+	}
+	uw_curve_new_lifecycle_locked();
 	uniwill_fan_removed = true;
 	uniwill_pm_ready = false;
 	direct_fan_control_suspend = false;
@@ -2732,6 +2781,546 @@ static int uw_fan_control_start(void)
 	uw_fan_unlock();
 	return status;
 }
+
+/* UW_CURVE_PROVIDER_BEGIN
+ * A file lease owns the complete RAM table, independently of the legacy
+ * one-zone target cache. All accesses below hold command then state. */
+struct uw_curve_saved_driver {
+	u8 current_targets[2];
+	u8 suspended[2];
+	bool initialized;
+	bool manual;
+};
+
+static struct {
+	u64 epoch;
+	u64 generation;
+	u64 next_lease;
+	u64 owner;
+	u64 lease;
+	u64 request;
+	u32 phase;
+	int last_error;
+	int restore_error;
+	bool applied;
+	bool module_held;
+	bool restored_verified;
+	struct uw_curve_raw original;
+	struct uw_curve_raw expected;
+	struct uw_curve_saved_driver driver;
+	u8 original_extra[3]; /* 741,1804,1809; diagnostic raw readback */
+} uw_curve_lease = { .epoch = 1, .generation = 1 };
+
+static int uw_curve_provider_read(void *context, u16 address, u8 *value)
+{
+	(void)context;
+	return uniwill_read_ec_ram(address, value);
+}
+
+static int uw_curve_provider_write(void *context, u16 address, u8 value)
+{
+	(void)context;
+	return uniwill_write_ec_ram(address, value);
+}
+
+static int uw_curve_provider_update(void *context, u16 address, u8 clear, u8 set)
+{
+	(void)context;
+	return uniwill_update_ec_ram(address, clear, set);
+}
+
+static const struct uw_curve_io uw_curve_provider_io = {
+	.read = uw_curve_provider_read,
+	.write = uw_curve_provider_write,
+	.update_bits = uw_curve_provider_update,
+};
+
+static void uw_curve_advance_locked(void)
+{
+	if (!++uw_curve_lease.generation)
+		++uw_curve_lease.generation;
+}
+
+static void uw_curve_note_legacy_write_locked(void)
+{
+	/* Even an ambiguous failed write invalidates an earlier read-only plan.
+	 * The last verified restore receipt remains a historical transaction. */
+	uw_curve_advance_locked();
+}
+
+static bool uw_curve_qualified_locked(void)
+{
+	/* Initial writable-table qualification is deliberately the observed
+	 * machine/BIOS and RAM-fan branch, not the marketing model catalogue. */
+	return uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+		uniwill_device_features.model == 0x10 &&
+		dmi_match(DMI_SYS_VENDOR, "MECHREVO") &&
+		dmi_match(DMI_PRODUCT_NAME, "Kuangshi16Pro Series GM6PX0X") &&
+		dmi_match(DMI_BIOS_VERSION, "N.1.09MRO07");
+}
+
+static bool uw_curve_blocks_legacy_locked(void)
+{
+	return uw_curve_lease.owner ||
+		uw_curve_lease.phase == UW_FAN_CURVE_RECOVERY_REQUIRED;
+}
+
+static int uw_curve_control_valid(const struct uw_fan_curve_control_v1 *control,
+				 u32 size)
+{
+	unsigned int i;
+
+	if (!control || control->version != UW_FAN_CURVE_ABI_VERSION ||
+	    control->size != size || control->flags || control->reserved0)
+		return -EINVAL;
+	for (i = 0; i < ARRAY_SIZE(control->reserved); ++i)
+		if (control->reserved[i])
+			return -EINVAL;
+	return 0;
+}
+
+static void uw_curve_fill_control_locked(struct uw_fan_curve_control_v1 *control,
+					u32 size)
+{
+	memset(control, 0, sizeof(*control));
+	control->version = UW_FAN_CURVE_ABI_VERSION;
+	control->size = size;
+	control->epoch = uw_curve_lease.epoch;
+	control->generation = uw_curve_lease.generation;
+	control->lease_id = uw_curve_lease.lease;
+	control->request_id = uw_curve_lease.request;
+}
+
+static int uw_curve_owner_valid_locked(u64 owner,
+				       const struct uw_fan_curve_control_v1 *control)
+{
+	if (!owner || uw_curve_lease.owner != owner)
+		return -EPERM;
+	if (control->epoch != uw_curve_lease.epoch ||
+	    control->generation != uw_curve_lease.generation ||
+	    !control->lease_id || control->lease_id != uw_curve_lease.lease)
+		return -ESTALE;
+	return 0;
+}
+
+static void uw_curve_clear_locked(void)
+{
+	bool put_module = uw_curve_lease.module_held;
+
+	uw_curve_lease.owner = 0;
+	uw_curve_lease.lease = 0;
+	uw_curve_lease.phase = UW_FAN_CURVE_IDLE;
+	uw_curve_lease.applied = false;
+	uw_curve_lease.original.valid = false;
+	uw_curve_lease.expected.valid = false;
+	uw_curve_lease.module_held = false;
+	if (put_module)
+		module_put(THIS_MODULE);
+}
+
+static void uw_curve_restore_driver_locked(void)
+{
+	direct_fan_control_current_value_fan0 = uw_curve_lease.driver.current_targets[0];
+	direct_fan_control_current_value_fan1 = uw_curve_lease.driver.current_targets[1];
+	direct_fan_control_current_value_fan0_suspend_save = uw_curve_lease.driver.suspended[0];
+	direct_fan_control_current_value_fan1_suspend_save = uw_curve_lease.driver.suspended[1];
+	fans_initialized = uw_curve_lease.driver.initialized;
+	universal_fan_manual_active = uw_curve_lease.driver.manual;
+	/* Acquisition refuses legacy workers, pending PM and uncertain states. */
+	direct_fan_control_started = false;
+	direct_fan_control_restart_needed = false;
+	direct_fan_control_suspend = false;
+	legacy_fan_mode_override_blocked = false;
+}
+
+static int uw_curve_restore_locked(void)
+{
+	struct uw_curve_result result;
+	struct uw_curve_result disable_result = { 0 };
+	int status, disable_status;
+
+	if (!uw_curve_blocks_legacy_locked())
+		return 0;
+	/* ACQUIRE alone changed no hardware or driver target state. Do not write
+	 * a stale snapshot merely because its owner closes without applying. */
+	if (!uw_curve_lease.applied &&
+	    uw_curve_lease.phase != UW_FAN_CURVE_RECOVERY_REQUIRED) {
+		uw_curve_lease.last_error = 0;
+		uw_curve_lease.restore_error = 0;
+		uw_curve_clear_locked();
+		return 0;
+	}
+	if (!uw_curve_qualified_locked())
+		status = -ENODEV;
+	else if (!uw_curve_lease.original.valid)
+		status = -EIO;
+	else
+		status = uw_curve_restore(&uw_curve_provider_io,
+					  &uw_curve_lease.original, &result);
+	if (!status && uw_curve_lease.driver.manual) {
+		/* Only a successful pre-lease manual pair is a restorable command.
+		 * AUTO's instantaneous sensor bytes are never replayed as targets. */
+		status = uniwill_write_ec_ram_with_retry(0x1804,
+				uw_curve_lease.driver.current_targets[0], 3);
+		if (!status)
+			status = uniwill_write_ec_ram_with_retry(0x1809,
+					uw_curve_lease.driver.current_targets[1], 3);
+		if (status) {
+			disable_status = uw_curve_update_verified(&uw_curve_provider_io,
+					UW_CURVE_ENABLE_ADDR, UW_CURVE_ENABLE_MASK, 0,
+					&disable_result);
+			if (disable_status)
+				pr_err("Fan curve recovery disable failed: %d\n", disable_status);
+		}
+	}
+	uw_curve_lease.restore_error = status;
+	if (status) {
+		uw_curve_lease.phase = UW_FAN_CURVE_RECOVERY_REQUIRED;
+		return status;
+	}
+	uw_curve_restore_driver_locked();
+	uw_curve_lease.restored_verified = true;
+	uw_curve_lease.last_error = 0;
+	uw_curve_clear_locked();
+	return 0;
+}
+
+static int uw_curve_revoke_locked(void)
+{
+	int status;
+
+	if (!uw_curve_blocks_legacy_locked())
+		return 0;
+	uw_curve_lease.request = 0; /* Lifecycle revocation is not a user request. */
+	status = uw_curve_restore_locked();
+	uw_curve_advance_locked();
+	return status;
+}
+
+static void uw_curve_new_lifecycle_locked(void)
+{
+	if (!++uw_curve_lease.epoch)
+		++uw_curve_lease.epoch;
+	uw_curve_advance_locked();
+	/* A failed removal keeps its recovery anchor, but an old fd can never
+	 * authorize writes in the next lifecycle. Recovery is retried in start. */
+	uw_curve_lease.owner = 0;
+	uw_curve_lease.lease = 0;
+}
+
+int uw_fan_curve_get_state(u64 owner, struct uw_fan_curve_state_v1 *state)
+{
+	struct uw_curve_raw raw;
+	u8 extra[3];
+	int status, i;
+
+	if (!state)
+		return -EINVAL;
+	status = uw_curve_control_valid(&state->control, sizeof(*state));
+	if (status)
+		return status;
+	mutex_lock(&uniwill_fan_command_lock);
+	mutex_lock(&uniwill_fan_state_lock);
+	memset(state, 0, sizeof(*state));
+	uw_curve_fill_control_locked(&state->control, sizeof(*state));
+	state->phase = uw_curve_lease.phase;
+	state->capabilities = UW_FAN_CURVE_CAP_FD_LEASE | UW_FAN_CURVE_CAP_RAW_RESTORE;
+	state->last_error = uw_curve_lease.last_error;
+	state->restore_error = uw_curve_lease.restore_error;
+	if (owner && owner == uw_curve_lease.owner)
+		state->state_flags |= UW_FAN_CURVE_STATE_OWNER;
+	if (uw_curve_lease.applied)
+		state->state_flags |= UW_FAN_CURVE_STATE_APPLIED;
+	if (uw_curve_lease.restored_verified)
+		state->state_flags |= UW_FAN_CURVE_STATE_RESTORED_VERIFIED;
+	if (uw_curve_lease.original.valid) {
+		state->state_flags |= UW_FAN_CURVE_STATE_ORIGINAL_VALID;
+		memcpy(state->original_table, uw_curve_lease.original.table,
+		       sizeof(state->original_table));
+		state->original_controls[0] = uw_curve_lease.original.ctrl7c5;
+		state->original_controls[1] = uw_curve_lease.original.ctrl7c6;
+		state->original_controls[2] = uw_curve_lease.original.mode751;
+		memcpy(&state->original_controls[3], uw_curve_lease.original_extra, 3);
+		memcpy(state->original_targets, uw_curve_lease.driver.current_targets, 2);
+		memcpy(&state->original_targets[2], uw_curve_lease.driver.suspended, 2);
+	}
+	if (!uw_curve_qualified_locked()) {
+		state->live_error = -ENODEV;
+		goto unlock;
+	}
+	state->capabilities |= UW_FAN_CURVE_CAP_QUALIFIED;
+	if (uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended) {
+		state->live_error = uniwill_pm_suspended ? -EBUSY : -ENODEV;
+		goto unlock;
+	}
+	status = uw_curve_snapshot(&uw_curve_provider_io, &raw);
+	for (i = 0; !status && i < 3; ++i) {
+		const u16 addresses[] = { 0x0741, 0x1804, 0x1809 };
+		status = uniwill_read_ec_ram(addresses[i], &extra[i]);
+	}
+	if (status) {
+		state->live_error = status;
+		goto unlock;
+	}
+	memcpy(state->table, raw.table, sizeof(state->table));
+	state->controls[0] = raw.ctrl7c5;
+	state->controls[1] = raw.ctrl7c6;
+	state->controls[2] = raw.mode751;
+	memcpy(&state->controls[3], extra, 3);
+	state->state_flags |= UW_FAN_CURVE_STATE_LIVE_VALID;
+unlock:
+	uw_fan_unlock();
+	return 0;
+}
+EXPORT_SYMBOL(uw_fan_curve_get_state);
+
+int uw_fan_curve_acquire(u64 owner, struct uw_fan_curve_control_v1 *control)
+{
+	struct uw_curve_raw original;
+	u8 extra[3];
+	int status, i;
+	u64 request;
+
+	status = uw_curve_control_valid(control, sizeof(*control));
+	if (status)
+		return status;
+	if (!owner || control->lease_id)
+		return -EINVAL;
+	status = uw_fan_lock_active(false);
+	if (status)
+		return status;
+	if (!uw_curve_qualified_locked()) {
+		status = -ENODEV;
+		goto unlock;
+	}
+	if (control->epoch != uw_curve_lease.epoch ||
+	    control->generation != uw_curve_lease.generation) {
+		status = -ESTALE;
+		goto unlock;
+	}
+	if (uw_curve_lease.owner) {
+		status = -EBUSY;
+		goto unlock;
+	}
+	/* An orphaned failed close may be adopted solely for explicit restore.
+	 * The original anchor and errors survive; APPLY remains prohibited. */
+	if (uw_curve_lease.phase != UW_FAN_CURVE_RECOVERY_REQUIRED) {
+		if (direct_fan_control_started || direct_fan_control_restart_needed ||
+		    direct_fan_control_suspend || legacy_fan_mode_override_blocked ||
+		    delayed_work_pending(&direct_fan_control_restart_delayed_work)) {
+			status = -EBUSY;
+			goto unlock;
+		}
+		status = uw_curve_snapshot(&uw_curve_provider_io, &original);
+		if (status)
+			goto unlock;
+		if ((original.mode751 & UW_CURVE_FULL_MASK) ||
+		    (!!(original.ctrl7c6 & UW_CURVE_ENABLE_MASK) != universal_fan_manual_active) ||
+		    (universal_fan_manual_active && !fans_initialized)) {
+			status = -EBUSY;
+			goto unlock;
+		}
+		if (universal_fan_manual_active &&
+		    (!direct_fan_control_current_value_fan0 ||
+		     !direct_fan_control_current_value_fan1 ||
+		     original.table[0x20] != direct_fan_control_current_value_fan0 ||
+		     original.table[0x50] != direct_fan_control_current_value_fan1)) {
+			/* Zero means no successful universal target has been cached;
+			 * its deliberate fan-off command is encoded as one instead. */
+			status = -EBUSY;
+			goto unlock;
+		}
+		for (i = 0; i < 3; ++i) {
+			const u16 addresses[] = { 0x0741, 0x1804, 0x1809 };
+			status = uniwill_read_ec_ram(addresses[i], &extra[i]);
+			if (status)
+				goto unlock;
+		}
+		if (!(extra[0] & 1)) {
+			status = -EBUSY;
+			goto unlock;
+		}
+		if (!try_module_get(THIS_MODULE)) {
+			status = -ENODEV;
+			goto unlock;
+		}
+		uw_curve_lease.module_held = true;
+		uw_curve_lease.original = original;
+		uw_curve_lease.expected = original;
+		memcpy(uw_curve_lease.original_extra, extra, sizeof(extra));
+		uw_curve_lease.driver.current_targets[0] = direct_fan_control_current_value_fan0;
+		uw_curve_lease.driver.current_targets[1] = direct_fan_control_current_value_fan1;
+		uw_curve_lease.driver.suspended[0] = direct_fan_control_current_value_fan0_suspend_save;
+		uw_curve_lease.driver.suspended[1] = direct_fan_control_current_value_fan1_suspend_save;
+		uw_curve_lease.driver.initialized = fans_initialized;
+		uw_curve_lease.driver.manual = universal_fan_manual_active;
+		uw_curve_lease.phase = UW_FAN_CURVE_ACQUIRED;
+		uw_curve_lease.applied = false;
+		uw_curve_lease.last_error = 0;
+		uw_curve_lease.restore_error = 0;
+		uw_curve_lease.restored_verified = false;
+	}
+	uw_fan_quiesce_locked();
+	request = control->request_id;
+	uw_curve_lease.owner = owner;
+	if (!++uw_curve_lease.next_lease)
+		++uw_curve_lease.next_lease;
+	uw_curve_lease.lease = uw_curve_lease.next_lease;
+	uw_curve_lease.request = request;
+	uw_curve_advance_locked();
+	uw_curve_fill_control_locked(control, sizeof(*control));
+	status = 0;
+unlock:
+	uw_fan_unlock();
+	return status;
+}
+EXPORT_SYMBOL(uw_fan_curve_acquire);
+
+int uw_fan_curve_apply(u64 owner, const struct uw_fan_curve_apply_v1 *request)
+{
+	struct uw_curve_raw attempt_before, next;
+	struct uw_curve_input input;
+	struct uw_curve_result result;
+	u32 previous_phase;
+	int status;
+	unsigned int i;
+
+	if (!request)
+		return -EINVAL;
+	status = uw_curve_control_valid(&request->control, sizeof(*request));
+	if (status)
+		return status;
+	for (i = 0; i < ARRAY_SIZE(request->reserved); ++i)
+		if (request->reserved[i])
+			return -EINVAL;
+	memcpy(input.rise, request->rise, sizeof(input.rise));
+	memcpy(input.fall, request->fall, sizeof(input.fall));
+	memcpy(input.duty_raw, request->duty_raw, sizeof(input.duty_raw));
+	input.respective = request->respective;
+	status = uw_curve_validate(&input);
+	if (status)
+		return status;
+	status = uw_fan_lock_active(false);
+	if (status)
+		return status;
+	status = uw_curve_owner_valid_locked(owner, &request->control);
+	if (status)
+		goto unlock;
+	if (!uw_curve_qualified_locked()) {
+		status = -ENODEV;
+		goto unlock;
+	}
+	if (uw_curve_lease.phase == UW_FAN_CURVE_RECOVERY_REQUIRED) {
+		status = -EBUSY;
+		goto unlock;
+	}
+	uw_curve_lease.request = request->control.request_id;
+	status = uw_curve_compare(&uw_curve_provider_io, &uw_curve_lease.expected);
+	if (status) {
+		uw_curve_lease.last_error = status;
+		uw_curve_advance_locked();
+		goto unlock;
+	}
+	previous_phase = uw_curve_lease.phase;
+	/* Never give the lease's original anchor to commit's output parameter:
+	 * each attempt needs its own rollback to the previously active table. */
+	status = uw_curve_commit(&uw_curve_provider_io, &input, &attempt_before, &result);
+	uw_curve_lease.last_error = result.original_errno;
+	uw_curve_lease.restore_error = result.restore_errno;
+	uw_curve_advance_locked();
+	if (!status) {
+		status = uw_curve_build_raw(&attempt_before, &input, &next);
+		if (status) {
+			uw_curve_lease.last_error = status;
+			uw_curve_lease.phase = UW_FAN_CURVE_RECOVERY_REQUIRED;
+			uw_curve_lease.applied = true;
+			goto unlock;
+		}
+		uw_curve_lease.expected = next;
+		uw_curve_lease.phase = UW_FAN_CURVE_ACTIVE;
+		uw_curve_lease.applied = true;
+		fans_initialized = false; /* An arbitrary curve is not the dummy table. */
+		universal_fan_manual_active = true;
+	} else if (result.write_attempted && !result.restored_verified) {
+		uw_curve_lease.phase = UW_FAN_CURVE_RECOVERY_REQUIRED;
+		uw_curve_lease.applied = true;
+	} else {
+		uw_curve_lease.phase = previous_phase;
+	}
+unlock:
+	uw_fan_unlock();
+	return status;
+}
+EXPORT_SYMBOL(uw_fan_curve_apply);
+
+int uw_fan_curve_release(u64 owner, const struct uw_fan_curve_control_v1 *control)
+{
+	int status = uw_curve_control_valid(control, sizeof(*control));
+
+	if (status)
+		return status;
+	status = uw_fan_lock_active(false);
+	if (status)
+		return status;
+	status = uw_curve_owner_valid_locked(owner, control);
+	if (!status) {
+		uw_curve_lease.request = control->request_id;
+		status = uw_curve_restore_locked();
+		uw_curve_advance_locked();
+	}
+	uw_fan_unlock();
+	return status;
+}
+EXPORT_SYMBOL(uw_fan_curve_release);
+
+void uw_fan_curve_close(u64 owner, u64 epoch, u64 lease_id)
+{
+	int status;
+
+	mutex_lock(&uniwill_fan_command_lock);
+	mutex_lock(&uniwill_fan_state_lock);
+	if (!owner || uw_curve_lease.owner != owner ||
+	    uw_curve_lease.epoch != epoch || uw_curve_lease.lease != lease_id)
+		goto unlock;
+	if (!uw_curve_lease.applied && uw_curve_lease.phase == UW_FAN_CURVE_ACQUIRED) {
+		status = uw_curve_restore_locked();
+	} else if (uniwill_fan_removed || !uniwill_pm_ready || uniwill_pm_suspended) {
+		status = -EBUSY;
+		uw_curve_lease.phase = UW_FAN_CURVE_RECOVERY_REQUIRED;
+		uw_curve_lease.restore_error = status;
+	} else {
+		status = uw_curve_restore_locked();
+	}
+	if (status) {
+		/* Keep a module reference and the complete anchor after its fd dies.
+		 * A new privileged owner may adopt this orphan only to restore it. */
+		uw_curve_lease.owner = 0;
+		uw_curve_lease.lease = 0;
+		pr_err("Fan curve close requires recovery: %d\n", status);
+	}
+	uw_curve_advance_locked();
+unlock:
+	uw_fan_unlock();
+}
+EXPORT_SYMBOL(uw_fan_curve_close);
+
+int uw_fan_curve_debug_write(u16 address, u8 value)
+{
+	int status = uw_fan_lock_active(false);
+
+	if (status)
+		return status;
+	if (uw_curve_blocks_legacy_locked())
+		status = -EBUSY;
+	else {
+		uw_curve_note_legacy_write_locked();
+		status = uniwill_write_ec_ram(address, value);
+	}
+	uw_fan_unlock();
+	return status;
+}
+EXPORT_SYMBOL(uw_fan_curve_debug_write);
+/* UW_CURVE_PROVIDER_END */
 
 static u8 uniwill_touchp_toggle_seq[] = {
 	0xe0, 0x5b, // Super down
@@ -2948,10 +3537,15 @@ static void uniwill_keyboard_remove(struct platform_device *dev)
 	mutex_lock(&uniwill_fan_state_lock);
 	uniwill_fan_removed = true;
 	uw_fan_quiesce_locked();
+	status = uw_curve_revoke_locked();
+	if (status)
+		TUXEDO_ERROR("Could not restore leased fan curve during removal: %d\n", status);
+	uw_curve_new_lifecycle_locked();
 	/* AP-exists (0x0741) is not proof that firmware disables RAM tables.
 	 * Release only a table this lifecycle owns, while transport/resources
 	 * are still available. Universal AUTO preserves the FULL-mode byte. */
-	if (uniwill_device_features.uniwill_has_universal_ec_fan_control &&
+	if (!uw_curve_blocks_legacy_locked() &&
+	    uniwill_device_features.uniwill_has_universal_ec_fan_control &&
 	    universal_fan_manual_active) {
 		status = (int)uw_set_fan_auto_locked();
 		if (status)
@@ -3055,6 +3649,12 @@ static int uniwill_keyboard_suspend(struct platform_device *dev, pm_message_t st
 		uw_fan_unlock();
 		return 0;
 	}
+	status = uw_curve_revoke_locked();
+	if (status) {
+		uw_fan_unlock();
+		return status;
+	}
+	uw_curve_note_legacy_write_locked();
 	if (uw_feats->uniwill_has_universal_ec_fan_control &&
 	    (universal_fan_manual_active || direct_fan_control_suspend)) {
 		status = uniwill_read_ec_ram(0x0751, &data);
@@ -3132,6 +3732,12 @@ static int uniwill_keyboard_resume(struct platform_device *dev)
 		uw_fan_unlock();
 		return -ENODEV;
 	}
+	result = uw_curve_revoke_locked();
+	if (result) {
+		uw_fan_unlock();
+		return result;
+	}
+	uw_curve_note_legacy_write_locked();
 	/* Keep queued fan work out until this complete callback releases state. */
 	uniwill_pm_suspended = true;
 	/* Firmware may lose RAM tables while asleep, even when live registers

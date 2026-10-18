@@ -158,6 +158,7 @@ static __attribute__((unused)) void uw_fan_quiesce_locked(void) { assert(0 && "T
 
 /* Keep the driver's outer ioctl entry intact so signed errno propagation is tested. */
 struct file { int unused; };
+/* @CURVE_IOCTL_COMPAT@ */
 static struct { const char *version; } mock_module = { "test" };
 #define THIS_MODULE (&mock_module)
 static u32 id_check_clevo, id_check_uniwill;

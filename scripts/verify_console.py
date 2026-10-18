@@ -64,10 +64,10 @@ def artifact_base(root: Path, env: dict[str, str]) -> Path:
 
 
 def source_snapshot(root: Path) -> dict[str, object]:
-    """Hash source, GUI assets, packaged resources, and manifests; not atomic."""
+    """Hash source, shared ABI, assets, packaged resources and manifests; not atomic."""
     console = checked_directory(root / "console")
     required = (console / "Cargo.toml", console / "Cargo.lock", root / "data/mechrevo-catalog.json",
-                root / "data/mechrevo-platform-evidence.json",
+                root / "data/mechrevo-platform-evidence.json", root / "src/uniwill_fan_curve_ioctl.h",
                 *(console / name for name in GUI_EMBEDDED_FONTS),
                 *(console / name for name in CONSOLE_REQUIRED_RESOURCES))
     paths = set(console.rglob("*.rs")) | set(console.rglob("Cargo.toml")) | set(required)

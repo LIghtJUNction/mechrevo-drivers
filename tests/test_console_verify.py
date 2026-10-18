@@ -42,6 +42,9 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.resources.mkdir()
         self.oem_policy = self.resources / "org.mechrevo.console.oem.policy"
         self.oem_policy.write_text('<policyconfig><action id="org.mechrevo.console.oem"/></policyconfig>\n')
+        self.uapi = self.root / "src/uniwill_fan_curve_ioctl.h"
+        self.uapi.parent.mkdir()
+        self.uapi.write_text("/* fixture shared fan ABI */\n")
         self.calls = []
         self.windows_installed = True
         self.failure = None
@@ -90,8 +93,8 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 10)
-        for asset in (*self.fonts, self.font_license, self.oem_policy):
+        self.assertEqual(len(result["source_before"]["files"]), 11)
+        for asset in (*self.fonts, self.font_license, self.oem_policy, self.uapi):
             self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
         self.assertEqual({row["name"] for row in result["commands"]}, {"fmt", "test", "clippy", "windows"})
         for row in result["commands"] + result["prerequisites"]:
@@ -271,6 +274,30 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
         self.assertIn(relative, result["source_before"]["missing"])
         self.assertIn(relative, result["incomplete_reasons"][0])
+
+    def test_shared_fan_abi_edit_during_verification_makes_run_incomplete(self):
+        self.mutate = lambda: self.uapi.write_text("/* changed shared ABI */\n")
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 2)
+        self.assertFalse(result["source_unchanged"])
+        self.assertNotEqual(result["source_before"]["files"]["src/uniwill_fan_curve_ioctl.h"],
+                            result["source_after"]["files"]["src/uniwill_fan_curve_ioctl.h"])
+
+    def test_missing_shared_fan_abi_is_named_and_blocks_checks(self):
+        self.uapi.unlink()
+        result = self.run_verifier()
+        self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
+        self.assertIn("src/uniwill_fan_curve_ioctl.h", result["source_before"]["missing"])
+
+    def test_symlink_shared_fan_abi_is_rejected_before_checks(self):
+        actual = self.directory / "actual-uapi.h"
+        actual.write_bytes(self.uapi.read_bytes())
+        self.uapi.unlink()
+        self.uapi.symlink_to(actual)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source input", result["fatal_error"])
+        self.assertEqual(self.calls, [])
 
     def test_symlink_policy_is_rejected_without_running_checks(self):
         original = self.directory / "actual.policy"

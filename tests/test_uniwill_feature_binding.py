@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from uniwill_curve_compat import curve_ioctl_compat
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -60,6 +62,7 @@ class UniwillFeatureBinding(unittest.TestCase):
             "uw_copy_tdp_value", "uniwill_ioctl_interface", "fop_ioctl",
         )
         fixture = (ROOT / "tests/fixtures/uniwill_feature_binding_runtime.c").read_text()
+        fixture = fixture.replace("/* @CURVE_IOCTL_COMPAT@ */", curve_ioctl_compat(source))
         fixture = fixture.replace("/* @REAL_INTERFACE_TYPES@ */", "\n\n".join(types))
         fixture = fixture.replace("/* @REAL_DRIVER_FUNCTIONS@ */", "\n\n".join(
             [constant.group()] + [function(source, name) for name in names]
@@ -73,6 +76,7 @@ class UniwillFeatureBinding(unittest.TestCase):
                 ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                  "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
                  "-I", str(ROOT / "src/tuxedo_io"),
+                 "-I", str(ROOT / "src"),
                  *(["-DDEBUG"] if debug else []), str(unit), "-o", str(binary)],
                 text=True, capture_output=True, timeout=30,
             )

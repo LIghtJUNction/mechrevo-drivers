@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function
+from uniwill_curve_compat import no_curve_owner_hooks, without_curve_provider
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,6 +26,7 @@ class UniwillFanConcurrency(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
         keyboard = Path(os.environ.get("UNIWILL_FAN_HEADER", ROOT / "src/uniwill_keyboard.h")).read_text()
+        keyboard = without_curve_provider(keyboard)
         keyboard = re.sub(
             r"#if LINUX_VERSION_CODE < KERNEL_VERSION\(6, 11, 0\)\n"
             r"static int uniwill_keyboard_remove\([^\n]*\)\n#else\n"
@@ -72,7 +74,8 @@ static int uw_fan_control_start(void) { return -ENOSYS; }
         custom_helper = ([function(keyboard, "uniwill_set_custom_profile_mode")]
                          if any("uniwill_set_custom_profile_mode(" in body for body in tail) else [])
         fixture = fixture.replace("/* @DRIVER_FUNCTIONS@ */", "\n\n".join(
-            constants + custom_helper + [tail.pop(0), fan] + tail))
+            [no_curve_owner_hooks(keyboard)] + constants + custom_helper
+            + [tail.pop(0), fan] + tail))
         source = path / "runtime.c"
         source.write_text(fixture)
         cls.binary = path / "runtime"

@@ -10,7 +10,7 @@
     "installation_status": "r160_console_helper_policy_installed_payload_verified_subset",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
-    "evidence_sha256": "aa3a19ca656b7cc979b545f3b5e1b5f859e31a73dd842ab0086ff7d656ffce75",
+    "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
     "candidate_verification": {
       "rust_tests_passed": 146,
       "python_console_tests_passed": 95,
@@ -60,6 +60,24 @@
         "new_kernel_code_loaded": false
       },
       "physical_acceptance": "not_changed_by_requested_state_or_rendering_results"
+    },
+    "fan_curve_development": {
+      "status": "partial_linux_source_offline_verified_not_installed",
+      "branch": "wip/fan-control",
+      "base_commit": "bad4b45016e073e8b2dab0faa7f28255d630c5b8",
+      "scope": "Fixed UAPI, fd-owned lease, raw snapshot/apply/restore, Rust session and foreground CLI; no real fan writes, installation or loading in this development work.",
+      "evidence_ref": "docs/verification/fan-curve-control.json",
+      "qualified_protocol_combination": "GM6PX0X / N.1.09MRO07 / model byte 0x10 / universal RAM-fan branch; not physical thermal qualification",
+      "windows_fan_backend": "not_implemented",
+      "physical_acceptance": "not_verified",
+      "remaining": [
+        "persistent service and authorization",
+        "GUI curve editor and integration",
+        "real fan response and acoustic acceptance",
+        "suspend/resume policy replay",
+        "other models and Windows fan transport"
+      ],
+      "evidence_sha256": "91b18adade9df6add2516f726f37e8e436edaaf5ceb5604ab91900f7b1c64520"
     }
   },
   "upstream": {
@@ -334,20 +352,20 @@
         "G05"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "open_not_claimed_complete",
+      "current_work_status": "partial_linux_source_offline_verified_not_installed",
       "baseline_notes": [
         "16项表和失败回归已有依据，不等于任意用户曲线接口已实现。",
         "真实曲线、恢复、卸载及睡眠效果待验。"
       ],
       "platforms": {
         "linux": {
-          "read": "not_integrated_at_baseline",
-          "write": "not_integrated_at_baseline",
-          "readback": "not_integrated_at_baseline",
-          "recovery": "not_integrated_at_baseline",
-          "automated_tests": "feature_complete_suite_pending",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
-          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "read": "source_fd_state_backend_offline_verified_not_runtime",
+          "write": "source_typed_ramfan1p5_curve_cli_hold_offline_verified_not_runtime",
+          "readback": "source_whole_raw_table_and_owned_bits_offline_verified_not_runtime",
+          "recovery": "source_fd_lease_original_raw_restore_and_lifecycle_offline_verified_not_runtime",
+          "automated_tests": "partial_engine_provider_ioctl_rust_and_legacy_regressions_verified_complete_family_pending",
+          "installation": "new_fan_interface_not_installed",
+          "loading": "new_fan_interface_not_loaded",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -373,9 +391,17 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/FAN-CURVE-CONTROL.md",
+        "docs/verification/fan-curve-control.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "source_development_notes": [
+        "Separate wip/fan-control checkout; original main webcam/other WIP preserved.",
+        "538 driver and 177 Rust tests are whole verification suite counts, not counts to add repeatedly per feature.",
+        "28 modules compiled for each of kernels 7.2.7 and 7.2.9; build is not runtime or thermal acceptance.",
+        "Per-fd foreground hold is not a persistent service or startup setting."
+      ]
     },
     {
       "id": "F05",

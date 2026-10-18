@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from test_uniwill_fan_runtime import function
+from uniwill_curve_compat import no_curve_owner_hooks, without_curve_provider
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,6 +22,7 @@ class UniwillTdpTransaction(unittest.TestCase):
     def setUpClass(cls):
         source_root = Path(os.environ.get("UNIWILL_TDP_SOURCE_ROOT", ROOT))
         keyboard = (source_root / "src/uniwill_keyboard.h").read_text()
+        keyboard = without_curve_provider(keyboard)
         io = (source_root / "src/tuxedo_io/tuxedo_io.c").read_text()
         interfaces = (source_root / "src/uniwill_interfaces.h").read_text()
         keyboard = re.sub(
@@ -52,7 +54,8 @@ class UniwillTdpTransaction(unittest.TestCase):
             if re.search(r"(?m)^static[^;{]*\b" + name + r"\([^;{]*\)\s*\{", io):
                 io_names.append(name)
         io_names += ["uw_set_tdp", "uw_set_performance_profile_v1"]
-        bodies = constants + [enum.group()] + [function(keyboard, name) for name in keyboard_names]
+        bodies = [no_curve_owner_hooks(keyboard)] + constants + [enum.group()]
+        bodies += [function(keyboard, name) for name in keyboard_names]
         bodies += [provider] + [function(keyboard, name) for name in tail_names]
         bodies += [function(io, name) for name in io_names]
         cls.baseline = not re.search(r"(?m)^int uw_write_tdp\(", keyboard)

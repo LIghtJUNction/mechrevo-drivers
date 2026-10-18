@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "checked_at_utc": "2026-10-18T05:35:15Z",
+  "outcome": "source_offline_verified_not_installed_or_loaded",
+  "scope": "Linux RamFan1p5 full-table transaction, fd ownership, Rust session and foreground CLI development; all hardware and Windows fan acceptance remain open",
+  "source": {
+    "branch": "wip/fan-control",
+    "base_commit": "bad4b45016e073e8b2dab0faa7f28255d630c5b8",
+    "input_manifest_sha256": "fc7e74cb5d39db5b73fa32845b1009a4a040a9307f95fc51496da01dc2ccc7d8",
+    "input_files": 295,
+    "rust_and_shared_uapi_snapshot_sha256": "d1fb523f3bd2c671a815e2aebe6534dbbf85f5f855e600ba98e405eda7af2f6d",
+    "rust_input_files": 34,
+    "source_unchanged_during_final_console_verification": true,
+    "final_input_hashes_rechecked_before_receipt": true,
+    "key_files": {
+      "src/uniwill_fan_curve_transaction.h": "f76abbcfd6bc2479a2fd4580f442ead99117160e6243acc1b56b921b4ff8165c",
+      "src/uniwill_fan_curve_ioctl.h": "68048c2859714d833a588d52206248bcd08a380f4169ad9deab0ac7ea3485751",
+      "src/uniwill_keyboard.h": "6d5a18bdb17c5091f22f0c64aefe8dc165335eeeb5385dd57b953e142d58cbe7",
+      "src/uniwill_interfaces.h": "3629e6422d73e6bdcb9e918921a85e5817642441a596b21b816a68182cf7d89b",
+      "src/tuxedo_io/tuxedo_io.c": "3449457fc81b2d878dd1364774697ed6df93e4f17c2a4782b2c77d078aa70b22",
+      "console/crates/core/src/fan_curve.rs": "f70d63cb317c45066d36ecc9816a90345bccdac2fb2f7f4371b84b000a2622bd",
+      "console/crates/core/src/fan_curve/linux.rs": "5d0b200a0a10177ceb09acaa7ee9e5cad34f7aa1acce3e9263501d4ff1db21ee",
+      "console/crates/cli/src/main.rs": "7d6bcb00e8fea5ca822d37a45fb4740d8364f7a6410aa63997e6ba61d6a7914a",
+      "scripts/verify_console.py": "71fa09fb7ef447a1b75f0adc68b792bcf6b2386f3bbd3160d5dc8f0a2ff8fe4b"
+    }
+  },
+  "implemented": [
+    "Strict complete typed input: 16 raw duty stages and 15 rise/fall boundaries per fan; no fabricated thermal defaults",
+    "Lossless 96-byte original table snapshot, 94-byte normal write protocol, both reserved bytes preserved and all GPU duties included",
+    "Disable/write/readback/enable/final full-state verification; raw restoration preserves old odd duties and unrelated control bits",
+    "Separate primary/restore errors, retained recovery anchor, emergency disable attempts without pretending transport failures prove disabled hardware",
+    "Four fixed-width 64/160/320-byte UAPI operations, per-open owner and serialized per-file command/acknowledgement lifecycle",
+    "Exclusive gating of legacy setters, worker and DEBUG writes; PM/remove/rebind revocation; late close and orphan recovery handling",
+    "Persistent-fd Rust session with explicit acquisition/application/restoration, state reconciliation and retained malformed response evidence",
+    "Foreground fan hold command keeps lease until Enter and explicitly restores; validation-only command never acquires control"
+  ],
+  "qualification": {
+    "manufacturer": "MECHREVO",
+    "product": "Kuangshi16Pro Series GM6PX0X",
+    "bios": "N.1.09MRO07",
+    "model_byte": "0x10",
+    "universal_ram_fan_branch_required": true,
+    "scope": "Exact source protocol qualification only; no arbitrary curve thermal or mechanical acceptance"
+  },
+  "verification": {
+    "driver_domain": {
+      "outcome": "passed",
+      "discovered": 538,
+      "ran": 538,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "rust_workspace": {
+      "outcome": "passed",
+      "tests": {
+        "passed": 177,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "checks": {
+        "fmt": "passed",
+        "test": "passed",
+        "clippy": "passed",
+        "windows": "passed"
+      },
+      "windows_scope": "Target compile only; Windows fan transport is not implemented"
+    },
+    "python_console_domain": {
+      "outcome": "passed",
+      "ran": 98,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "count_semantics": "Whole-suite totals, not per-feature counts. Engine/provider/ioctl case counts below are included in the driver suite and are not added again.",
+    "production_engine": {
+      "cases": 12,
+      "reset_scenarios": 2343,
+      "simulated_ec": true,
+      "linux_current_macro_guard": true
+    },
+    "production_provider": {
+      "cases": 17,
+      "reset_scenarios": 149,
+      "actual_provider_worker_pm_remove_and_rebind": true,
+      "mocked_transport": true
+    },
+    "actual_ioctl_entry": {
+      "cases": 6,
+      "real_fop_and_file_context": true,
+      "provider_boundary_spies": true,
+      "same_fd_concurrency_and_copyout_failure": true
+    },
+    "mutation_sensitivity": {
+      "engine_semantic_mutations_on_final_header": 4,
+      "ioctl_semantic_mutations_on_unchanged_final_source": 3,
+      "provider_semantic_mutations_before_identifier_only_current_rename": 5,
+      "all_semantic_mutants_compiled_before_runtime_assertion_failure": true,
+      "not_an_old_revision_hardware_reproduction": true,
+      "kernel_macro_compile_guard_is_separate": true
+    },
+    "kernel_builds": [
+      {
+        "kernel": "7.2.7-arch1-1",
+        "exit_code": 0,
+        "module_count": 28,
+        "all_module_vermagic_match": true,
+        "manifest_sha256": "b282b7187fc441eec0f7e26e14db0dfd83491c0480f6c25cf2111d98b902686d",
+        "build_log_sha256": "90060c3fab8299ca0a75ab42963ff0fbc41e6037e3a926087678ce82e28579e7"
+      },
+      {
+        "kernel": "7.2.9-arch1-1",
+        "exit_code": 0,
+        "module_count": 28,
+        "all_module_vermagic_match": true,
+        "manifest_sha256": "b67741fdd497ffd1f67f516c8a0723aaf819ba2b32b6916de151535b25b036a4",
+        "build_log_sha256": "3eefda20d2662bea1918cb097ef6423a8d160f1ba9af58bd023eeb6c4e87bcf2"
+      }
+    ],
+    "compat_layout": {
+      "actual_header_compiled_with_32_and_64_bit_assertions": true,
+      "receipt_sha256": "aadf4859608145176c85bd905f7e96a6bdce3fa56dcfc76599e87f376262db53",
+      "rust_to_actual_c_header_and_full_apply_frame_comparison": "passed_in_rust_suite"
+    },
+    "cli_process": {
+      "cases": 4,
+      "synthetic_fixture_only": true,
+      "no_sysfs_or_tuxedo_device_open_in_traces": true,
+      "no_curve_ioctl_in_traces": true,
+      "scope": "File validation, malformed-input rejection, nonterminal hold rejection and unknown command; no successful real hold/write tested",
+      "receipt_sha256": "f9825f94edec085bffe0f61b9b35de2d283fa9c9572c9caf6dbe3214b7ed139d"
+    },
+    "markref": {
+      "errors": 0,
+      "warnings": 0,
+      "marks": 26
+    }
+  },
+  "earlier_failures_retained": [
+    "First real kernel build found Linux current macro collisions; production identifiers renamed and both kernel builds rerun successfully",
+    "First driver-domain run found missing no-owner hooks in legacy charging fixture; all 35 original charging cases retained, full 538-case suite rerun successfully",
+    "First console verification rejected 128-byte Result error under Clippy and observed source changes while fixing it; secondary error text boxed without deleting evidence, final four checks rerun with stable inputs"
+  ],
+  "deployment": {
+    "new_fan_source_installed": false,
+    "new_fan_kernel_loaded": false,
+    "real_fan_curve_write_executed": false,
+    "service_or_existing_fan_power_settings_changed": false,
+    "reboot_or_module_reload": false,
+    "installed_packages": [
+      "mechrevo-console 0.1.0.r160.g5542b9d-1",
+      "mechrevo-drivers-dkms-git 4.24.0.r158.ga190455-1"
+    ],
+    "loaded_tuxedo_io_build_id": "a0aeba3f4ea1cd34f3e88b6f255224ec2b0381ac",
+    "loaded_driver_revision": "r106",
+    "installed_driver_revision": "r158",
+    "installed_console_revision": "r160",
+    "aur_published": false,
+    "remote_push": "pending_locked_system_keyring"
+  },
+  "tracking": {
+    "source_watch": {
+      "session_status": "finished",
+      "tracking_status": "partial",
+      "gap_count": 42,
+      "unresolved_event_count": 18665
+    },
+    "coverage_limits": "42 source/build watch gaps include path-disappeared and link boundaries; retained metadata/removal events are incomplete. Final content hashes and successful commands do not reconstruct event history. Git internal metadata is excluded by the tool.",
+    "empty_worktree_directory_bootstrap": "An empty sibling directory was created before the file-content worktree population wrapper; all worktree source population was then tracked.",
+    "worktree_population": {
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    }
+  },
+  "evidence_sha256": {
+    ".local-tests/fan-driver-verification-2.json": "dec6b5005993497ee9049c09e88ddbfd013654b3c16c3cbd8889dcbca3167f01",
+    ".local-tests/fan-console-verification-2.json": "8042c4e52958a010e5cc7873e930b2b11506a6a93dbf003556a923a673458cd4",
+    ".local-tests/fan-console-python.json": "7e786268bfe2e8270b72fa3368fd931fe858c9558660899cbff15cb23241b7b6",
+    ".local-tests/fan-engine-kernel-guard.json": "52077a8a1dc68c3a64ded220a971786f3daea91644f411f13d07e041b207721e",
+    ".local-tests/provider-harness/final-kernel-current.json": "299200d0530a191567c7d80390e57c807b60aaa57d92dc886a97f943c9ce9796",
+    ".local-tests/fan-ioctl-kernel-guard.json": "a61d0164a4c6081e4f6fa4e39b31c72b18507e4521891ee294461261f5e85da2",
+    ".local-tests/fan-source-final.json": "91631203cf28bbf022998560a5e016d2658bf511a880dc85b0fdf3641bf694e3"
+  },
+  "remaining": [
+    "Install and activate this exact fan implementation, then verify read/write/restore and unrelated state preservation on the qualified machine",
+    "Real independent/synchronized fan response, acoustic diagnosis, resonance avoidance and sustained thermal behavior",
+    "Persistent broker/service, authentication flow and GUI curve editor/integration",
+    "Suspend/resume policy reacquisition/replay and long-term lifecycle acceptance",
+    "Windows fan driver ABI/transport and Windows physical acceptance",
+    "Other models/firmware and all other original feature families and upstream issue acceptance; no issue is marked resolved"
+  ]
+}

@@ -13,6 +13,7 @@ import unittest
 
 from test_uniwill_fan_runtime import function
 from test_uniwill_probe_runtime import versioned_function
+from uniwill_curve_compat import no_curve_owner_hooks, without_curve_provider
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,6 +27,7 @@ class UniwillPMAdapter(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         header = Path(os.environ.get('UNIWILL_PM_BASELINE', ROOT / 'src/uniwill_keyboard.h'))
         keyboard = header.read_text()
+        keyboard = without_curve_provider(keyboard)
         keyboard = re.sub(
             r'#if LINUX_VERSION_CODE < KERNEL_VERSION\(6, 11, 0\)\n'
             r'static int uniwill_keyboard_remove\([^\n]*\)\n#else\n'
@@ -40,7 +42,7 @@ class UniwillPMAdapter(unittest.TestCase):
         declarations = re.search(r'static u8 uniwill_touchp_toggle_seq\[\] = \{[^}]+\};', keyboard).group()
         declarations += '\n' + re.search(r'(?m)^static bool uniwill_i8042_filter_installed;', keyboard).group()
         declarations += '\n' + re.search(r'(?m)^static u8 uniwill_touchp_toggle_seq_pos;', keyboard).group()
-        pieces = constants + [function(keyboard, 'uniwill_write_ec_ram_with_retry'),
+        pieces = [no_curve_owner_hooks(keyboard)] + constants + [function(keyboard, 'uniwill_write_ec_ram_with_retry'),
                               keyboard[start:end],
                               function(keyboard, 'uniwill_write_kbd_bl_enable'),
                               function(keyboard, 'uniwill_set_custom_profile_mode')]
