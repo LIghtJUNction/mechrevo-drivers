@@ -1,6 +1,6 @@
 # 系统电源策略
 
-本轮源码新增 Linux 系统电源服务后端及 GUI 接线，**尚未安装、未完成统一回归或本轮实机写入验收**。当前安装仍为 `mechrevo-console 0.1.0.r174.g256fb05-1`，原有功耗工具、驱动和已加载模块不变。[候选收据](verification/os-profile-fan-control.json)、[当前安装记录](verification/deployment-console-r174.json)
+本轮源码新增 Linux 系统电源服务后端及 GUI 接线。签名提交 `d48692a` 已推送，95 份冻结输入通过最终 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 目标编译；**尚未安装、未完成本轮实机写入验收**。当前安装仍为 `mechrevo-console 0.1.0.r174.g256fb05-1`，原有功耗工具、驱动和已加载模块不变。[候选收据](verification/os-profile-fan-control.json)、[当前安装记录](verification/deployment-console-r174.json)
 
 ## 服务与回退
 
@@ -32,4 +32,4 @@ CLI 即使在输出阶段失败，也保留已经完成的结果与原始错误�
 
 GUI 显示服务来源、性能受限原因、holds 和预览中的释放提示，只在显式应用时提交。刷新保留先前失败和不确定回执；新的显式预览／应用可表达新意图，不会自动重试旧请求。本地应用工作或 worker 未退出时延迟关闭；本地工作结束后，远端请求可能继续本身不会永久禁止关窗，也不证明远端请求已结束。
 
-统一 Rust／Python 回归、真实系统总线读写、权限拒绝、服务变更和原生 GUI 操作仍待本轮验收。已有 r174 安装结果与历史 PL1、亮度写入不转算为本轮功能通过；Windows 继续使用既有系统电源方案后端，PPD 是 Linux 后端。
+统一离线回归已通过；实际 Linux 发布特性测试仍在进行，真实系统总线读写、权限拒绝、服务变更和原生 GUI 操作仍待本轮验收。已有 r174 安装结果与历史 PL1、亮度写入不转算为本轮功能通过；Windows 继续使用既有系统电源方案后端，PPD 是 Linux 后端。

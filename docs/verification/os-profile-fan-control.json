@@ -1,14 +1,18 @@
 {
   "schema_version": 1,
   "recorded_at_utc": "2026-10-18T11:39:10.181404+00:00",
-  "outcome": "source_candidate_pending_full_verification_not_installed_no_hardware_acceptance",
+  "outcome": "source_candidate_offline_qualified_not_installed_no_hardware_acceptance",
   "scope": "Linux system power-profile service and complete-user-fan-curve minimum-duty source candidate. PPD live-service behavior, actual package deployment and native/hardware fan acceptance are separate.",
   "source": {
     "base_commit_at_documentation": "b45e2dce69915486aa6926d6c2fd9c1b8f5b1ee1",
-    "feature_source_commit": null,
-    "feature_source_committed": false,
-    "final_input_snapshot_sha256": null,
-    "final_full_verification_pending": true
+    "feature_source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+    "feature_source_committed": true,
+    "final_input_snapshot_sha256": "db4fd335730b372e46b44c8544d1a36537828c4a2fafd7925f69c9c6304e584d",
+    "final_full_verification_pending": false,
+    "feature_source_signature": "G",
+    "feature_source_pushed": true,
+    "final_input_files": 95,
+    "scope": "Signed and pushed feature source binds the final 95-input snapshot. Actual Linux production-feature verification and package installation remain separate."
   },
   "implemented": {
     "ppd_discovery": "Real native /sys only: prefer modern org.freedesktop.UPower.PowerProfiles, then legacy net.hadess.PowerProfiles only if modern is unowned. ACPI fallback requires both names explicitly absent and stable bus identity; query errors, untrusted owners, malformed responses and authority changes do not fall through. Fixtures do not query a live system bus.",
@@ -22,15 +26,26 @@
   },
   "verification": {
     "final_rust": {
-      "status": "pending",
-      "tests_passed": null,
-      "fmt": null,
-      "clippy": null,
-      "windows_compile": null
+      "status": "passed",
+      "tests_passed": 580,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 0,
+      "fmt": "passed",
+      "clippy": "passed",
+      "windows_compile": "passed",
+      "source_unchanged": true,
+      "receipt_sha256": "31808065f73b46e8048ecbf10257a3bce32efd792654174137ccf2bd705ac5c6",
+      "scope": "Final complete all-features workspace suite and Windows target compile on the unchanged frozen source, not installed runtime or hardware acceptance."
     },
     "final_python_console": {
-      "status": "pending",
-      "tests_passed": null
+      "status": "passed",
+      "tests_passed": 143,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "receipt_sha256": "521113f1eda994868a33f2d174df3f0e22a8751950bf52bb3239dad542c4ccb9",
+      "scope": "Final whole console-domain suite; not per-feature or physical hardware acceptance."
     },
     "fan_floor_portable_production_check": {
       "receipt_sha256": "a2da29690110717f5bd0cba6db174210d400ea1c7839cfba9e812b402afcc19b",
@@ -93,6 +108,15 @@
       "clippy": "failed_gui_type_complexity",
       "accepted_as_final_green": false,
       "scope": "Second whole verification attempt failed GUI type-complexity lint. A minimal named-payload fix and stable rerun are pending; no final green or deployment is established by the passing test/compile subsets."
+    },
+    "actual_linux_production_features": {
+      "status": "pending",
+      "scope": "The separate test run with the actual Linux release feature selection has not been accepted here yet."
+    },
+    "markref": {
+      "marks": 45,
+      "files": 289,
+      "errors": 0
     }
   },
   "deployment": {
@@ -121,6 +145,20 @@
     },
     "conditional_profile_restore_production_regression": {
       "session": "a4094eb5-b1be-45d9-a600-291c7e0c722e",
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "command_exit_code": 0
+    },
+    "final_rust": {
+      "session": "6e0effe2-2807-4eaa-8b0a-0d1f6ef2b601",
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "command_exit_code": 0
+    },
+    "final_python_console": {
+      "session": "aa988688-c01f-415f-abe2-694d81922239",
       "tracking_status": "complete",
       "gap_count": 0,
       "unresolved_event_count": 0,

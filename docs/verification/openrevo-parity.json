@@ -372,15 +372,16 @@
       "scope": "Source/offline subset only. No Windows MSI build, UAC, installation/maintenance, native GUI or hardware acceptance; full feature family remains incomplete."
     },
     "os_profile_fan_development": {
-      "status": "source_candidate_full_suite_pending_not_installed",
+      "status": "source_candidate_offline_qualified_not_installed",
       "evidence_ref": "docs/verification/os-profile-fan-control.json",
-      "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+      "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
       "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
       "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-      "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+      "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
       "installed": false,
       "physical_acceptance": false,
-      "complete_family_resolved": false
+      "complete_family_resolved": false,
+      "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
     }
   },
   "upstream": {
@@ -645,15 +646,16 @@
       ],
       "resolved_in_this_project": false,
       "os_profile_fan_candidate": {
-        "status": "source_candidate_full_suite_pending_not_installed",
+        "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
         "installed": false,
         "physical_acceptance": false,
-        "complete_family_resolved": false
+        "complete_family_resolved": false,
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
       }
     },
     {
@@ -739,15 +741,16 @@
         "python_console_tests_passed": 131
       },
       "os_profile_fan_candidate": {
-        "status": "source_candidate_full_suite_pending_not_installed",
+        "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
         "installed": false,
         "physical_acceptance": false,
-        "complete_family_resolved": false
+        "complete_family_resolved": false,
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
       }
     },
     {
@@ -2224,15 +2227,16 @@
         "scope": "Original r171 current fields retained when the later r174 package/read-only smoke became current; r171 brightness write/preview proof remains in brightness_deployment."
       },
       "os_profile_fan_candidate": {
-        "status": "source_candidate_full_suite_pending_not_installed",
+        "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
         "installed": false,
         "physical_acceptance": false,
-        "complete_family_resolved": false
+        "complete_family_resolved": false,
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
       }
     },
     {
