@@ -2,6 +2,27 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
+## 本机安装（2026-10-18）
+
+`mechrevo-console 0.1.0.r158.ga190455-1` 已通过 pacman 安装，固定源码为
+`a1904557bbea55f39aadab03dbc31813e64c3f9b`。
+包内文件的字节、权限、root 归属和包完整性检查通过。
+安装版 CLI 的状态查询与导出读到 38 个唯一读数、33 个 hwmon 输入，时间元数据及拒绝覆盖检查通过。
+安装版 GUI 在独立 compositor 中持续运行 16 秒，1280×720 截图人工复核通过；仅验证概览与只读遥测，没有执行硬件控制。
+应用菜单入口为“机械革命控制台”，也可直接运行：
+
+```sh
+mechrevo-console-gui
+mechrevo-console status --json
+```
+
+本机安装配方见 [Arch 打包说明](../packaging/arch/mechrevo-console/README.md)，
+来源、安装及验证范围见[部署收据](verification/deployment-r158.json)。
+这次安装未新增常驻服务或替换 stock TCC，没有改变现有风扇／功耗配置。
+同期安装的 r158 内核驱动仍待重启激活；控制台已安装不等于新版驱动已经运行。
+未发布 AUR，Windows 仍只有编译检查和开发产物，没有 Windows 实机验收。
+后文各次候选验收保留当时的范围，不能将其中“未安装”理解为当前安装状态。
+
 ## 型号与证据
 
 官网目录快照收录 298 条公开记录，含 178 条笔记本、70 条台式机、28 条软件、16 条外设和 6 条待分类记录。它是营销目录，不能算成 298 台已适配电脑。同一个名称可能对应多块主板和多代固件。
@@ -76,7 +97,7 @@ python -B scripts/verify_console.py --output .local-tests/console-result.json
 
 ## 0.1.0 初版开发候选验收（2026-10-18）
 
-这是独立子项目的开发候选，未安装、未发布 AUR，也未完成全系列或双端实机验收。GUI 依赖 Rust 1.95 以上；本轮使用 Rust 1.97。
+以下为初版开发候选当时的记录：该阶段未安装、未发布 AUR，也未完成全系列或双端实机验收。GUI 依赖 Rust 1.95 以上；该轮使用 Rust 1.97。
 
 | 检查 | 结果与范围 |
 | --- | --- |

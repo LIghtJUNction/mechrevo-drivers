@@ -1,10 +1,42 @@
 # 旷世 16 Pro GM6PX0X 本机验证
 
-日期：2026-10-14；2026-10-15／16／17 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
+日期：2026-10-14；2026-10-15／16／17／18 续验（Asia/Taipei）。这是单台机器的部分功能验证，不是完整兼容认证。
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
-## 2026-10-18 IO 模块身份只读复核
+## 2026-10-18 r158 驱动与 Rust 控制台部署（待重启）
+
+固定干净源码 `a1904557bbea55f39aadab03dbc31813e64c3f9b` 构建的两个包已实际安装：
+`mechrevo-drivers-dkms-git 4.24.0.r158.ga190455-1`、
+`mechrevo-console 0.1.0.r158.ga190455-1`。
+安装文件的字节、模式、root 归属及 `pacman -Qkk` 检查通过。
+内核 `7.2.9-arch1-1` 与 `7.2.7-arch1-1` 各安装 28 个模块，56 份模块均通过系统公开证书的 CMS 验签；
+实际损坏内容的负对照被拒绝。构建和验签不能代替启动及硬件验收。
+
+签名启动镜像已发布至 `/efi/EFI/Linux/omarchy_linux.efi`，主菜单已同步其摘要。
+新镜像仅替换 r106 启动 initrd 中的四个 Mechrevo 模块；
+其余 255 个模块及主 zstd 载荷保留原字节。
+原有 NVIDIA 核心模块的磁盘构建与当前运行／旧镜像构建不同，本次保留旧镜像的 NVIDIA 字节，
+没有将这项既有差异算作 NVIDIA 修复。`sbverify` 验签通过，Secure Boot 当前关闭，尚未实际启动新镜像。
+
+没有热重载或重启。当前 `7.2.9-arch1-1` 下六个运行核心模块的身份仍为 r106，
+不能写成 r158 已运行。TCC 的 profiles／settings、风扇与功耗配置、
+`tccd`／`thermald`／`nvidia-powerd` 及旧 `mechrevo-control daemon` 的进程身份均保持。
+既有键盘映射移至 `/etc/udev/hwdb.d/90-mechrevo-local.hwdb`，更新数据库后实际查询结果不变。
+Rust 图形界面入口为应用菜单“机械革命控制台”，CLI 入口为 `mechrevo-console`；
+没有新增常驻服务，也未替换 stock TCC。
+
+Recovery 菜单仍指向原 `/efi/EFI/Linux/omarchy_linux_r106.efi`。
+它只恢复启动镜像与 initrd，不会自动回退根文件系统中的软件包。
+新的恢复材料统一存于 `~/Backups/mechrevo-drivers/light/2026-10-18/deploy-a190455/`；
+旧 r106 恢复包及 56 个签名恢复模块仍保留原位置。
+本轮构建及安装的文件跟踪保留 partial 缺口，不能用后验载荷核对补称完整写入历史。
+公开版本、摘要和验收范围见[部署收据](../verification/deployment-r158.json)。
+
+本次未发布 AUR、未执行 Windows 实机验收，也未解决风扇异响、温度尖峰或 NVIDIA 长期稳定性。
+硬件验收仍为 **9/20**；下一阶段是重启后核对实际加载身份，再逐项验收硬件功能。
+
+## 2026-10-18 IO 模块身份只读复核（部署前）
 
 内核 `7.2.9-arch1-1`，已安装 `mechrevo-drivers-dkms-git 4.24.0.r106.gaaf6b36-1`。
 从磁盘模块 ELF 与 `/sys/module/tuxedo_io/notes/.note.gnu.build-id` 分别读取身份：
