@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T06:38:54.637459+00:00",
+  "status": "linux_packages_and_signed_boot_image_installed_new_driver_not_loaded",
+  "source": {
+    "worktree": "mechrevo-drivers-fan-control",
+    "branch": "wip/fan-control",
+    "driver_commit": "e4bfb3f5d728619e108dc7dbd42b90449d224ac7",
+    "console_commit": "58e8d9c0c1b63dcb7a4af5f0d5c877a6214413e5",
+    "console_source_snapshot_sha256": "ffdae71d2aede7577f7ab3e2f665f0fdc256699da7bcc69f81e7c74f2b179d6e",
+    "source_input_files": 41,
+    "package_recipe_sha256": "f00877c563a2015da0ba2f03eb2ae42bb1ab6d22cb298636eb194bb6cb210403",
+    "recipe_note": "Release package pins the tested console commit. Packaging fakeroot regression fix is a later source-only commit; binary sources are unchanged. Original dirty main checkout was preserved."
+  },
+  "driver": {
+    "package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+    "archive_sha256": "48381ca51fa8ac440a4ec6d1e92a9db98042e4d9b64a7c340c7a783917b09817",
+    "archive_bytes": 282871,
+    "verified_regular_payload_files": 97,
+    "pacman_integrity": "mechrevo-drivers-dkms-git: 126 total files, 0 altered files",
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "kernels": [
+      "7.2.7-arch1-1",
+      "7.2.9-arch1-1"
+    ],
+    "module_count_per_kernel": 28,
+    "module_signatures": {
+      "verified_CMS_count": 56,
+      "real_byte_negative_cases_rejected": 2,
+      "certificate_sha256": "db183544fe72cae0723a119b8167d8da40ba07f73392ba18a9e2ec00417cf82c"
+    },
+    "audit": {
+      "private_path": ".local-tests/fan-deployment/driver-installed-audit.json",
+      "sha256": "a6cc0a0ece7de29587c9904dcf54647e5e8ec840c340ea4bddee23af76e94ade"
+    }
+  },
+  "console": {
+    "package": "mechrevo-console 0.1.0.r163.g58e8d9c-1",
+    "archive_sha256": "dabaac63c0e766470565132ab5103742cc0a30ee7940a6d6f29bf51f8fc862bd",
+    "archive_bytes": 6861717,
+    "verified_regular_payload_files": 11,
+    "pacman_integrity": "mechrevo-console: 23 total files, 0 altered files",
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "helpers": [
+      "/usr/lib/mechrevo-console/oem-helper",
+      "/usr/lib/mechrevo-console/fan-helper"
+    ],
+    "helper_mode": "root:root 0755, no setuid",
+    "policy_mode": "root:root 0644",
+    "fan_policy_registered": true,
+    "fan_policy_fixed_path_and_argv1": "/usr/lib/mechrevo-console/fan-helper --serve",
+    "fan_policy_authorization": {
+      "any": "no",
+      "inactive": "auth_admin",
+      "active": "auth_admin_keep"
+    },
+    "build_provenance": {
+      "private_path": ".local-tests/fan-deployment/console-package/provenance.json",
+      "sha256": "0652f1b2eb964816d5d24c5342888711172cf5e02e419c72951f737379184343"
+    },
+    "provenance_scope": "Build-time provenance has installed=false; later installation-terminal.json independently records actual successful pacman install.",
+    "ordinary_user_smoke": {
+      "private_path": ".local-tests/fan-deployment/installed-smoke/readonly-result.json",
+      "sha256": "194c1afa4da3b0d9b1f0d224f8c459cd129023ded9809e332dc39fefd74dcc97"
+    },
+    "ordinary_user_readonly_commands_exit_zero": [
+      "version",
+      "status --json",
+      "oem list",
+      "capabilities",
+      "pkaction fan policy"
+    ],
+    "helper_unprivileged_and_invalid_argv_rejected": true
+  },
+  "boot": {
+    "canonical": {
+      "path": "/efi/EFI/Linux/omarchy_linux.efi",
+      "sha256": "d26288abf44dcf0fd8ef22f6693dc3f38a321a4c1358d54d533e65c03491f1c6",
+      "blake2b": "a99588d64528ce1bbce367ff669d095385c429529cd802255178688ebdde459801fd58b83e6dd998dad0695c67e36bb8b0a3ce213b2a42f018b98d82aaa726c1",
+      "size": 256740528,
+      "byte_identical_to_qualified_candidate": true,
+      "qualification_sha256": "1c8c53825cc1887ff0a985c702841fdd48a843013abe29467262f3bb4b3fca79"
+    },
+    "signature_verified": true,
+    "certificate_sha256": "36d439345e52803a32b33a2573a08270a7fff25c4f50e0621ea1b8630cc78c5f",
+    "signature_scope": "Cryptographic image signature only; firmware Secure Boot acceptance and boot success not exercised.",
+    "menu": {
+      "sha256": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+      "primary_path": "boot():/EFI/Linux/omarchy_linux.efi",
+      "primary_blake2b": "a99588d64528ce1bbce367ff669d095385c429529cd802255178688ebdde459801fd58b83e6dd998dad0695c67e36bb8b0a3ce213b2a42f018b98d82aaa726c1",
+      "only_primary_digest_line_changed": true,
+      "recovery_block_byte_identical": true,
+      "recovery_block_sha256": "31d66aba3467898a24179a6cae1a102cdc40d5166d2c18c11af19ae5fe58886a"
+    },
+    "recovery": {
+      "path": "/efi/EFI/Linux/omarchy_linux_r106.efi",
+      "sha256": "67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2",
+      "blake2b": "174fb40c311dee142067c02df2fabadebd5d640d74197b3b2f39e4b5f424e0edd6d25cd87cfb5bf687da0fe8a07c35c8e1377838ec8f2f350017ec82622bb64c",
+      "file_and_identity_unchanged": true,
+      "menu_digest_matches_actual_file": true
+    },
+    "history": {
+      "path": "/efi/limine.conf.old",
+      "sha256": "989f6e440454bfa6bfe92bf8f959d5283cba8a8b16e2e19ce2b75ad05bfd92a9",
+      "byte_identical_to_original_menu": true,
+      "file_identity_unchanged": true
+    },
+    "coherent_replaced_early_modules": [
+      "tuxedo_io",
+      "tuxedo_keyboard",
+      "tuxedo_nb02_nvidia_power_ctrl",
+      "tuxedo_compatibility_check"
+    ],
+    "unchanged_other_early_modules": 255,
+    "unchanged_main_zstd_bytes": 98309448,
+    "non_target_NVIDIA_entries_preserved": 351,
+    "PE_scope": "Payloads, entrypoint, RVAs and section flags verified; objcopy repacked physical file layout.",
+    "module_CMS_independently_rerun_by_boot_auditor": false,
+    "efi_space": {
+      "free_bytes": 557318144,
+      "required_candidate_plus_64MiB": 323849392,
+      "headroom_passed": true
+    },
+    "independent_audit": {
+      "private_path": ".local-tests/fan-deployment/boot-tools/independent/installed-boot-audit.json",
+      "sha256": "bfaa14aeb76f6d4fa1233fb13edd0d7e86ef9622ae6dd15804b69f7e78bbc2d5"
+    }
+  },
+  "running_state": {
+    "new_driver_loaded": false,
+    "reboot_performed": false,
+    "hot_reload_performed": false,
+    "six_loaded_module_IDs_unchanged": true,
+    "direct_r106_early_ELF_matches": [
+      "tuxedo_io",
+      "tuxedo_keyboard",
+      "tuxedo_nb02_nvidia_power_ctrl",
+      "tuxedo_compatibility_check"
+    ],
+    "other_two_modules": {
+      "names": [
+        "uniwill_wmi",
+        "mechrevo_ec_sensors"
+      ],
+      "r106_origin_reestablished_this_turn": false,
+      "basis": "Historical deployment attributes them to r106; all six current IDs match the fresh pre-install baseline."
+    },
+    "protected_configurations_checked": 13,
+    "protected_service_identities_checked": 3,
+    "legacy_daemon_PID_and_wallclock_start_unchanged": true,
+    "legacy_daemon_start_ticks_verified": false,
+    "nvidia_smi_exit_code": 0,
+    "last_5m_kernel_query_exit_code": 0,
+    "last_5m_kernel_matching_lines": {
+      "nvidia_xid_lines": 0,
+      "pcie_aer_lines": 0,
+      "kernel_oom_lines": 0,
+      "nvidia_allocation_failure_lines": 0
+    },
+    "health_scope": "Bounded current health snapshot, not sustained load or thermal acceptance.",
+    "audit": {
+      "private_path": ".local-tests/fan-deployment/runtime-final-verification.json",
+      "sha256": "5ba54c5c03fc6507142e6a31ed413735c30a2e85cfbc52f17a71c6eb3fd94089"
+    }
+  },
+  "installed_fan_helper_readonly": {
+    "audit": {
+      "private_path": ".local-tests/fan-deployment/installed-smoke/root-normal-result.json",
+      "sha256": "d2c63807de602a2ed075694e05be6a837b59c824abd4e934067d950826060a84"
+    },
+    "exit_code": 0,
+    "outcomes": [
+      "inspected",
+      "shutdown"
+    ],
+    "GET_STATE_ioctls": 2,
+    "readonly_device_opens": 2,
+    "mutating_fan_ioctls": 0,
+    "loaded_interface_capabilities": 0,
+    "live_table_available": false,
+    "no_acquisition_attempted": true,
+    "restoration_claimed": false,
+    "normal_user_authentication_dialog_verified": false,
+    "old_interface_scope": "Old driver echoes zero-capability state instead of ENOTTY. Zero capabilities and missing live table do not qualify the new API or permit Apply.",
+    "additional_failure_path": "Inspect followed by EOF exercised fail-closed termination with no acquisition; incorrect initial audit assumptions are retained with traces."
+  },
+  "installed_native_GUI": {
+    "version": "0.1.0.r163.g58e8d9c-1",
+    "visual_verification": {
+      "schema_version": 1,
+      "installed_native_gui": "0.1.0.r163.g58e8d9c-1",
+      "compositor": "dedicated headless Cage with software rendering, 1280x720",
+      "observed_views": [
+        "overview",
+        "OEM Fn panel",
+        "fan page, unprobed and no draft"
+      ],
+      "attempts": [
+        {
+          "directory": "installed-native-gui",
+          "actual_second_view": "overview",
+          "fan_view_verified": false
+        },
+        {
+          "directory": "installed-native-gui-2",
+          "actual_second_view": "OEM Fn panel",
+          "fan_view_verified": false
+        },
+        {
+          "directory": "installed-native-gui-3",
+          "actual_second_view": "fan page",
+          "fan_view_verified": true
+        }
+      ],
+      "verification_method": "Actual PNGs visually inspected; filename alone was not treated as navigation proof. Separate per-frame Tab events and one extra Tab were needed.",
+      "fan_editor_with_loaded_curve_native_verified": false,
+      "hardware_setter_executed": false,
+      "normal_user_authorization_dialog_verified": false,
+      "gui_apply_verified": false,
+      "all_app_processes_reaped": true
+    },
+    "final_capture": {
+      "schema_version": 1,
+      "installed_binary_sha256": "8e2e152d2c52cb92428f4432df4d16fb9d53c7a515675b94f3933e8ffa77f5a5",
+      "screenshots": {
+        "overview.png": {
+          "sha256": "614045f0c3808ba461c996e6e83f883fa33c194d55384dc462dfa0614b8778a4",
+          "width": 1280,
+          "height": 720
+        },
+        "fans.png": {
+          "sha256": "ddf2cc22089e22c89a281cefedddfab5685554e3cab5cb3d54ad24cd95c36bbc",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "app_reaped": true,
+      "app_exit_code": -15,
+      "lifetime_seconds": 15.375482269999338,
+      "hardware_setter_executed": false,
+      "scope": "Installed native startup and read-only navigation on a dedicated headless compositor; no user desktop or HOME configuration changed; application stopped without an acquired fan lease."
+    },
+    "scope": "Overview, OEM Fn panel and unprobed/no-draft fan page visually verified on isolated native headless compositor. No administrator dialog, populated native curve editor, GUI Apply or physical effect acceptance."
+  },
+  "offline_validation": {
+    "rust_tests_passed": 241,
+    "rust_failures": 0,
+    "python_console_tests_passed": 127,
+    "python_failures": 0,
+    "python_skipped": 0,
+    "checks": [
+      "fmt",
+      "workspace all-feature tests",
+      "Clippy all targets all features -D warnings",
+      "Windows GNU target compile"
+    ],
+    "fan_layout_render_scenarios": 62,
+    "packaging_tests": 28,
+    "packaging_regression": "Actual fakeroot can make diff-index report stat-cache changes. Content diff plus separate staged diff now accepts unchanged content and rejects staged-only changes; real red and green regressions retained.",
+    "prior_driver_evidence": "docs/verification/fan-curve-control.json",
+    "GUI_candidate_evidence": "docs/verification/fan-gui-broker.json",
+    "candidate_receipt_scope": "Historical 125 Python result is unchanged; 127 is the final run after the two packaging regressions.",
+    "windows_runtime_verified": false
+  },
+  "recovery": {
+    "backup_root": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/fan-deploy-e4bfb3f",
+    "old_boot_image": "boot/canonical-before-fan.efi",
+    "new_signed_boot_image": "boot/canonical-r162-signed.efi",
+    "old_menu": "boot/limine-original-r158.conf",
+    "pre_upgrade_modules": "driver-install/",
+    "new_driver_package": "driver-install/candidate.pkg.tar.zst",
+    "evidence_manifest": "deployment-evidence-manifest.json",
+    "scope": "Verified old/new images, menu, signed module snapshot and package/evidence retained. Recovery boot entry alone does not downgrade root filesystem packages."
+  },
+  "tracking": {
+    "host_session": "0adaeb07-0288-4160-a8db-da2932e73e6b",
+    "host_status": "finished",
+    "host_tracking_status": "partial",
+    "host_gaps": 2,
+    "host_unresolved_events": 0,
+    "host_gap_details": [
+      "Unreadable transient gvfs FUSE directory under installed-native-gui/xdg-runtime",
+      "Unreadable transient gvfs FUSE directory under installed-native-gui-3/xdg-runtime"
+    ],
+    "package_stage_session": "c3a8d0b7-600e-4438-9e77-b06d61d28b17",
+    "package_stage_status": "finished",
+    "package_stage_tracking_status": "complete",
+    "package_stage_gaps": 0,
+    "package_stage_unresolved_events": 0,
+    "limits": [
+      "Initial global makepkg source/build stage under /tmp/makepkg/mechrevo-console preceded the dedicated stage watcher; later repackage was tracked.",
+      "Driver package build had a permission gap on an intermediate package directory.",
+      "Some earlier verification attempts had separate gaps/unresolved events; passing final Rust/Python sessions do not erase those histories.",
+      "Selected host polling roots do not cover all operating-system files, including pacman log and top-level depmod metadata; independent installed hashes and loaded identities are separate evidence."
+    ],
+    "final_Rust_session": "3631c9ef-d3bd-47ec-b580-56bb4ca718f0",
+    "final_Rust_tracking": "complete, 0 gaps, 0 unresolved",
+    "final_Python_session": "98f0bfd6-ddfa-4565-9a61-93c0421e3cb8",
+    "final_Python_tracking": "complete, 0 gaps, 0 unresolved"
+  },
+  "acceptance": {
+    "real_fan_ACQUIRE_APPLY_RESTORE_executed": false,
+    "thermal_and_noise_verified": false,
+    "suspend_resume_verified": false,
+    "startup_saved_policy_implemented": false,
+    "other_models_verified": false,
+    "Windows_fan_transport_implemented": false,
+    "normal_user_administrator_dialog_verified": false,
+    "GUI_apply_verified": false,
+    "openrevo_issues_closed": 0,
+    "complete_feature_families_accepted": 0
+  },
+  "publication": {
+    "local_installation": true,
+    "AUR_published": false,
+    "git_push_completed": false,
+    "git_push_blocker": "Login keyring remains locked; authentication was not retried or prompted.",
+    "scope": "Local installation and branch commits are separate from remote publication."
+  }
+}

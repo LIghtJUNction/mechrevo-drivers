@@ -6,8 +6,8 @@
   "current_work": {
     "status": "partial_linux_installed_subset_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "Four typed Linux OEM controls are wired through core, CLI, GUI and restricted helper. Four-control requested-state candidate transactions remain separate evidence. The r160 console/helper/policy payload is installed; ordinary-user read-only CLI and root pkexec installed-helper Fn toggle/restore are verified. No complete family, normal-user authorization dialog, GUI apply or physical-effect acceptance is claimed.",
-    "installation_status": "r160_console_helper_policy_installed_payload_verified_subset",
+    "scope": "r162 driver disk package and coherent signed UKI, plus r163 console, OEM/fan helpers and policies are locally installed. Six loaded module IDs remain unchanged; four early modules directly match r106, while r106 origin of the other two remains historical. Installed r163 CLI, read-only fan-helper inspect/shutdown and isolated native overview/Fn/unprobed fan-page rendering are verified. No real fan transaction, normal-user administrator dialog, GUI Apply or physical effect is accepted. Four-control candidate and r160 deployment records below remain historical evidence.",
+    "installation_status": "r162_driver_signed_uki_and_r163_console_helpers_policies_installed_kernel_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -62,10 +62,10 @@
       "physical_acceptance": "not_changed_by_requested_state_or_rendering_results"
     },
     "fan_curve_development": {
-      "status": "partial_linux_gui_broker_verified_driver_installed_not_loaded",
+      "status": "partial_linux_fan_stack_installed_new_kernel_not_loaded",
       "branch": "wip/fan-control",
       "base_commit": "bad4b45016e073e8b2dab0faa7f28255d630c5b8",
-      "scope": "Fixed UAPI, fd-owned raw transactions, CLI hold, native editor and persistent restricted session helper are offline verified. r162 driver is installed on disk; r106 remains loaded. No real fan transaction has been exercised.",
+      "scope": "Fixed UAPI, fd-owned raw transactions, CLI hold, native editor and restricted session helper remain offline verified. r162 driver and coherent signed UKI plus r163 console/helpers/policies are installed; the new fan kernel interface is not loaded. Installed helper read-only inspection reports zero capabilities and no live table under the old core. No real fan ACQUIRE/APPLY/RESTORE has been exercised.",
       "evidence_ref": "docs/verification/fan-curve-control.json",
       "qualified_protocol_combination": "GM6PX0X / N.1.09MRO07 / model byte 0x10 / universal RAM-fan branch; not physical thermal qualification",
       "windows_fan_backend": "not_implemented",
@@ -78,7 +78,30 @@
       ],
       "evidence_sha256": "91b18adade9df6add2516f726f37e8e436edaaf5ceb5604ab91900f7b1c64520",
       "gui_broker_evidence_ref": "docs/verification/fan-gui-broker.json",
-      "gui_broker_evidence_sha256": "cad90ccfced43eb7609439ece5147469012a0b1d3863d2b1a4432f714d492d09"
+      "gui_broker_evidence_sha256": "cad90ccfced43eb7609439ece5147469012a0b1d3863d2b1a4432f714d492d09",
+      "deployment_evidence_ref": "docs/verification/deployment-fan-r162-r163.json",
+      "deployment_evidence_sha256": "969c091a7ab60f984e8cb82e99e7eb08d0fb26948eafc8845f92f6ead1f17bc0"
+    },
+    "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
+    "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
+    "latest_deployment": {
+      "evidence_ref": "docs/verification/deployment-fan-r162-r163.json",
+      "evidence_sha256": "969c091a7ab60f984e8cb82e99e7eb08d0fb26948eafc8845f92f6ead1f17bc0",
+      "driver_source_commit": "e4bfb3f5d728619e108dc7dbd42b90449d224ac7",
+      "console_source_commit": "58e8d9c0c1b63dcb7a4af5f0d5c877a6214413e5",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "console_package": "mechrevo-console 0.1.0.r163.g58e8d9c-1",
+      "signed_coherent_four_module_UKI_prepared": true,
+      "new_driver_loaded": false,
+      "loaded_identity_scope": "Six IDs unchanged; four early ELFs directly match r106. Origin of the other two is historical, not independently reestablished this turn.",
+      "installed_cli_scope": "Ordinary-user version/status/OEM-list/capabilities and fan-policy registration; read-only.",
+      "installed_fan_helper_scope": "Inspect/shutdown only: two GET_STATE ioctls, zero capabilities, no live table, no acquisition or mutating fan ioctl; does not qualify the new interface.",
+      "installed_native_gui_scope": "Overview, OEM Fn panel and unprobed/no-draft fan page visually verified on isolated native headless compositor. No administrator dialog, populated native curve editor, GUI Apply or physical effect acceptance.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false
     }
   },
   "upstream": {
@@ -353,7 +376,7 @@
         "G05"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_gui_broker_verified_driver_installed_not_loaded",
+      "current_work_status": "partial_linux_fan_stack_installed_new_kernel_not_loaded",
       "baseline_notes": [
         "16项表和失败回归已有依据，不等于任意用户曲线接口已实现。",
         "真实曲线、恢复、卸载及睡眠效果待验。"
@@ -365,7 +388,7 @@
           "readback": "source_whole_raw_table_and_owned_bits_offline_verified_not_runtime",
           "recovery": "source_fd_original_raw_restore_broker_process_and_gui_close_offline_verified_not_runtime",
           "automated_tests": "partial_engine_provider_ioctl_rust_broker_gui_and_packaging_verified_complete_family_pending",
-          "installation": "r162_driver_disk_installed_and_payload_signatures_verified_console_candidate_separate",
+          "installation": "r162_driver_and_signed_uki_r163_console_fan_helper_policy_payload_verified",
           "loading": "new_fan_interface_not_loaded",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -395,14 +418,16 @@
         "docs/verification/deployment-r158.json",
         "docs/FAN-CURVE-CONTROL.md",
         "docs/verification/fan-curve-control.json",
-        "docs/verification/fan-gui-broker.json"
+        "docs/verification/fan-gui-broker.json",
+        "docs/verification/deployment-fan-r162-r163.json"
       ],
       "resolved_in_this_project": false,
       "source_development_notes": [
         "Separate wip/fan-control checkout; original main webcam/other WIP preserved.",
         "538 driver and 177 Rust tests are whole verification suite counts, not counts to add repeatedly per feature.",
         "28 modules compiled for each of kernels 7.2.7 and 7.2.9; build is not runtime or thermal acceptance.",
-        "Per-fd foreground hold is not a persistent service or startup setting."
+        "Per-fd foreground hold is not a persistent service or startup setting.",
+        "Installed r163 helper inspect/shutdown is read-only and sees zero capabilities/no live table under the old loaded core; no acquisition, curve application or restoration acceptance is inferred."
       ]
     },
     {
@@ -1583,8 +1608,8 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r160_console_helper_policy_payload_verified_subset",
-          "loading": "r160_installed_cli_native_readonly_and_root_helper_fn_verified_gui_apply_pending",
+          "installation": "r163_console_oem_and_fan_helpers_policies_payload_verified_subset",
+          "loading": "r163_installed_cli_native_readonly_navigation_and_fan_helper_inspect_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -1613,7 +1638,8 @@
         "docs/verification/deployment-r158.json",
         "docs/verification/oem-controls.json",
         "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-        "docs/verification/deployment-console-r160.json"
+        "docs/verification/deployment-console-r160.json",
+        "docs/verification/deployment-fan-r162-r163.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -1653,7 +1679,8 @@
         "installed_write_scope": "fn_lock_toggle_restore_only",
         "installed_helper_runtime": "One-shot helper was executed for Fn and exited; not a daemon and no helper/pkexec process remained.",
         "normal_user_auth_dialog_verified": false,
-        "gui_apply_verified": false
+        "gui_apply_verified": false,
+        "record_scope": "Historical four-control OEM candidate and r160 installed Fn acceptance. Current r163 installation and smoke are recorded in current_work.latest_deployment; old write results are not transferred."
       }
     },
     {

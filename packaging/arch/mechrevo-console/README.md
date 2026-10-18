@@ -4,15 +4,12 @@
 `mechrevo-control`、TCC 或已有热键守护进程。安装不新增服务、不修改风扇曲线，
 GUI 从应用菜单中的“机械革命控制台”启动。
 
-当前配方固定源码提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60`，包版本为
-`0.1.0.r160.g5542b9d-1`。这是本地部署配方，不表示已经发布到 AUR。
+当前配方固定源码提交 `58e8d9c0c1b63dcb7a4af5f0d5c877a6214413e5`，包版本为
+`0.1.0.r163.g58e8d9c-1`。这是本地部署配方，不表示已经发布到 AUR。
 后续更新应一并修改提交、版本和部署验证记录，不能只替换安装目录里的二进制。
 
-**当前是开发中的打包契约，尚未更新源码固定提交。** `5542b9d` 包含 OEM helper，
-但不包含新风扇 helper 和策略；新配方的 `prepare()` 会明确拒绝这个旧提交。
-下方构建／安装命令须等新增源码审核、提交并固定到新提交和版本后再执行，
-不能把当前旧版本号理解成新 helper 已能构建。本轮包的实际构建、安装及硬件验证结果由部署
-收据单独记录，更新配方本身不代表已安装或已经验证实体效果。
+本配方包含风扇编辑器与会话 helper；源码回归见
+[界面与代理验证收据](../../../docs/verification/fan-gui-broker.json)。实际安装、驱动加载与硬件效果由部署收据分别记录。
 
 构建需要系统已有 Rust 1.95 以上、Git、pkgconf、desktop-file-utils、libxml2，以及锁文件
 对应的 Cargo 缓存。Cargo 使用 `--release --workspace --all-features --locked --offline`，
@@ -36,8 +33,8 @@ makepkg 的 `src/cargo-target` 中。不要并行复用正在被其他 Cargo 构
 检查包内容和部署材料后，通过 pacman 安装本地产物：
 
 ```sh
-pacman -Qlp mechrevo-console-0.1.0.r160.g5542b9d-1-x86_64.pkg.tar.zst
-sudo pacman -U ./mechrevo-console-0.1.0.r160.g5542b9d-1-x86_64.pkg.tar.zst
+pacman -Qlp mechrevo-console-0.1.0.r163.g58e8d9c-1-x86_64.pkg.tar.zst
+sudo pacman -U ./mechrevo-console-0.1.0.r163.g58e8d9c-1-x86_64.pkg.tar.zst
 mechrevo-console --version
 mechrevo-console status --json
 ```

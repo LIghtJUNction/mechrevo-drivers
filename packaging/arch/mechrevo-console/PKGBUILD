@@ -5,7 +5,7 @@
 # Local package: the Rust console is independent of DKMS and the legacy tools.
 
 pkgname=mechrevo-console
-pkgver=0.1.0.r160.g5542b9d
+pkgver=0.1.0.r163.g58e8d9c
 pkgrel=1
 pkgdesc='Native MECHREVO system and OEM device control console'
 arch=('x86_64')
@@ -19,9 +19,7 @@ optdepends=('noto-fonts-cjk: Chinese system font fallback')
 options=('!strip' '!debug' '!lto')
 
 # Always build the reviewed commit, including when using an existing local repo.
-# Development contract: the fan helper requires a new reviewed source pin.
-# This old pin intentionally fails prepare() until the source commit is updated.
-_source_commit=5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60
+_source_commit=58e8d9c0c1b63dcb7a4af5f0d5c877a6214413e5
 _source_url=${MECHREVO_CONSOLE_SOURCE:-"${url}.git"}
 source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
         'best.lmm.mechrevo-console.desktop')
@@ -30,8 +28,11 @@ sha256sums=('SKIP'
 
 _validate_source_tree() {
     cd "${srcdir}/mechrevo-drivers" || return 1
+    # fakeroot changes observed stat ownership without changing source bytes.
+    # Compare content to HEAD, while also rejecting staged-only modifications.
     if [[ $(git rev-parse HEAD) != "$_source_commit" ]] ||
-        ! git diff-index --quiet HEAD --; then
+        ! git --no-optional-locks diff --quiet HEAD -- ||
+        ! git --no-optional-locks diff --cached --quiet HEAD --; then
         printf '%s\n' 'Source must be an unchanged checkout of the pinned console commit.' >&2
         return 1
     fi

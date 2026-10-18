@@ -78,8 +78,9 @@ class ConsoleFanPackagingTests(unittest.TestCase):
         self.git("commit", "--quiet", "--allow-empty", "-m", "fixture")
         self.commit_id = self.git("rev-parse", "HEAD")
 
-    def invoke(self, function):
+    def invoke(self, function, *, fakeroot=False):
         return subprocess.run(
+            (["fakeroot", "--"] if fakeroot else []) +
             ["bash", "-c", 'source "$1"; srcdir=$2; pkgdir=$3; '
              '_source_commit=$4; "$5"', "package-contract",
              str(RECIPE / "PKGBUILD"), str(self.src), str(self.pkg),
@@ -170,6 +171,41 @@ class ConsoleFanPackagingTests(unittest.TestCase):
     def test_dirty_reviewed_source_is_rejected(self):
         (self.source / "console/crates/cli/src/fan_helper.rs").write_text("unreviewed\n")
         self.assert_rejected(message="unchanged checkout")
+
+    @unittest.skipUnless(shutil.which("fakeroot"), "fakeroot is required for the package-stage boundary")
+    def test_clean_source_survives_real_fakeroot_stat_identity_change(self):
+        # build/check run normally, whereas makepkg's package() enters fakeroot.
+        # Its synthetic uid/gid invalidates the ordinary user's cached stat data
+        # without changing any tracked content. The former checker misread that
+        # metadata-only difference as an unreviewed source modification.
+        for function in ("prepare", "check"):
+            before = self.invoke(function)
+            self.assertEqual(before.returncode, 0, before.stdout + before.stderr)
+        legacy = subprocess.run(
+            ["fakeroot", "--", "git", "diff-index", "--quiet", "HEAD", "--"],
+            cwd=self.source, env=self.env, capture_output=True, text=True)
+        self.assertEqual(legacy.returncode, 1, legacy.stdout + legacy.stderr)
+        # Run package before any content diff/status can refresh Git's cached
+        # stat observations and accidentally hide the original regression.
+        result = self.invoke("package", fakeroot=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        content = subprocess.run(
+            ["fakeroot", "--", "git", "--no-optional-locks", "diff", "--quiet", "HEAD", "--"],
+            cwd=self.source, env=self.env, capture_output=True, text=True)
+        self.assertEqual(content.returncode, 0, content.stdout + content.stderr)
+        self.assertEqual(
+            (self.pkg / "usr/lib/mechrevo-console/fan-helper").read_bytes(),
+            (self.target / "release/mechrevo-console-fan-helper").read_bytes())
+
+    def test_staged_source_change_is_rejected_even_when_worktree_matches_head(self):
+        source = self.source / "console/crates/cli/src/fan_helper.rs"
+        original = source.read_bytes()
+        source.write_bytes(b"unreviewed staged content\n")
+        self.git("add", "--", "console/crates/cli/src/fan_helper.rs")
+        source.write_bytes(original)
+        for function in ("prepare", "check", "package"):
+            with self.subTest(function=function):
+                self.assert_rejected(function, "unchanged checkout")
 
     def test_mismatched_source_pin_is_rejected(self):
         self.commit_id = "0" * 40
