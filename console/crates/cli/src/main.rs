@@ -1,5 +1,5 @@
 use mechrevo_console_core::{
-    fan_curve::{ValidatedFanCurve, OWNED_TABLE_BYTES},
+    fan_curve::{MinimumDutyPolicy, ValidatedFanCurve, OWNED_TABLE_BYTES},
     registry, ControlError, OemControl, OemControlKind, OemDomain, OemValue, PowerProfile, Service,
     Snapshot, ThermalSample,
 };
@@ -15,7 +15,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--expected-current RAW] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nBrightness --dry-run never writes or invokes a brightness setter. Applied output\nseparates source, selected write_backend, requested_control and actual_value.\n--expected-current RAW requires a target: RAW is the raw OS control value, not\na percent. This optional stale-request guard is not atomic kernel CAS.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. oem set --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run] [--expected-current RAW]\n  mechrevo-console brightness [percent] [--device ID] [--expected-current RAW] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH [--cpu-min-percent N] [--gpu-min-percent N]\n      [--raise-stopped-stages]\n  mechrevo-console fan hold --input PATH [--cpu-min-percent N] [--gpu-min-percent N]\n      [--raise-stopped-stages]\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use the active Linux system power-profile service, otherwise\nACPI platform_profile, or installed Windows OS power schemes. A Linux system\nservice can apply its configured device actions and release application holds;\nthe preview reports those holds. OS profiles are separate from OEM presets.\nProfile --dry-run never sets a profile; --expected-current guards the exact raw\nprofile name/GUID before applying. This is not an atomic OS compare-and-swap.\nBrightness requires an enumerated OS device; multiple devices require --device.\nBrightness --dry-run never writes or invokes a brightness setter. Applied output\nseparates source, selected write_backend, requested_control and actual_value.\n--expected-current RAW requires a target: RAW is the raw OS control value, not\na percent. This optional stale-request guard is not atomic kernel CAS.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. oem set --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nMinimum fan output sets optional whole-percent floors (1..100) on that curve.\nNo floor is assumed. Zero-duty stages keep zero unless --raise-stopped-stages\nis given; only channels with a floor change. Temperature boundaries stay as supplied.\nThese are output duty limits, not RPM targets or noise/cooling guarantees.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 const CPU_POWER_HELP: &str = "\nCPU PL1 policy (independent of OS power profiles):\n  mechrevo-console cpu-power probe\n  mechrevo-console cpu-power set WATTS [--dry-run]\n      [--target-celsius native|90] [--polling-seconds native|1]\n      [--rapl-debounce-seconds native|0]\n  mechrevo-console cpu-power <clear|recover|reapply> [--dry-run]\n\nCPU commands require explicit authorization for their read-only probe. A CPU\n--dry-run probes, then previews locally without executing a policy change.\nSet preserves every omitted option from the observed complete policy; on a\nnative unmanaged host, absent options remain explicit null. Native and 90/1/0\nare distinct settings. Allowed watts come from the qualified controller.\nClear/recover return to native thermald policy, not a fixed watt value.\nExecuted CPU policies persist after this command exits. JSON output is default.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
@@ -25,13 +25,13 @@ enum Action {
     Thermal { samples: u16, interval_ms: u32 },
     Capabilities,
     Models(String),
-    Profile(PowerProfile, bool),
+    Profile(PowerProfile, bool, Option<String>),
     Brightness(Option<u8>, Option<String>, bool, Option<u32>),
     OemList,
     OemSet(String, String, bool),
     WindowsFn(windows_fn_cli::Action),
-    FanValidate(PathBuf),
-    FanHold(PathBuf),
+    FanValidate(PathBuf, MinimumDutyPolicy),
+    FanHold(PathBuf, MinimumDutyPolicy),
     CpuPower(CliCpuPowerAction),
     Export(PathBuf),
 }
@@ -115,15 +115,29 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             rest.first().map(text).transpose()?.unwrap_or("").into(),
         )),
         "profile" => {
-            if rest.is_empty() || rest.len() > 2 {
-                return Err(usage("profile requires one profile and optional --dry-run"));
+            if rest.is_empty() {
+                return Err(usage("profile requires one profile and optional --dry-run / --expected-current RAW"));
             }
             let profile = PowerProfile::from_str(text(&rest[0])?)?;
-            let dry = rest.len() == 2;
-            if dry && rest[1] != "--dry-run" {
-                return Err(usage("Unknown profile option"));
+            let mut dry = false;
+            let mut expected = None;
+            let mut index = 1;
+            while index < rest.len() {
+                match text(&rest[index])? {
+                    "--dry-run" if !dry => dry = true,
+                    "--expected-current" if expected.is_none() => {
+                        index += 1;
+                        let value = text(rest.get(index).ok_or_else(|| usage("--expected-current needs a raw profile value"))?)?;
+                        if value.is_empty() || value.len() > 64 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+                            return Err(usage("Expected profile must be an exact bounded raw profile name or GUID"));
+                        }
+                        expected = Some(value.to_owned());
+                    }
+                    _ => return Err(usage("Unknown or repeated profile option")),
+                }
+                index += 1;
             }
-            Ok(Action::Profile(profile, dry))
+            Ok(Action::Profile(profile, dry, expected))
         }
         "brightness" => {
             let mut percent = None;
@@ -197,25 +211,7 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             Ok(Action::OemSet(id.into(), value.into(), dry))
         }
         "oem" => Err(usage("Use oem list, oem set ID VALUE [--dry-run], or oem windows-fn probe|set on|off [--dry-run]")),
-        "fan"
-            if rest.len() == 3
-                && rest[0] == "validate"
-                && rest[1] == "--input"
-                && !rest[2].is_empty() =>
-        {
-            Ok(Action::FanValidate(PathBuf::from(&rest[2])))
-        }
-        "fan"
-            if rest.len() == 3
-                && rest[0] == "hold"
-                && rest[1] == "--input"
-                && !rest[2].is_empty() =>
-        {
-            Ok(Action::FanHold(PathBuf::from(&rest[2])))
-        }
-        "fan" => Err(usage(
-            "Use fan validate --input PATH or fan hold --input PATH; hold needs a terminal and a qualified Linux driver",
-        )),
+        "fan" => parse_fan(rest),
         "export" if rest.len() == 2 && rest[0] == "--output" && !rest[1].is_empty() => {
             Ok(Action::Export(PathBuf::from(&rest[1])))
         }
@@ -224,6 +220,72 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
         )),
         _ => Err(usage("Unknown command or invalid options; use --help")),
     }
+}
+fn parse_fan(args: &[OsString]) -> Result<Action, ControlError> {
+    let command = args
+        .first()
+        .map(text)
+        .transpose()?
+        .ok_or_else(|| usage("Use fan validate --input PATH or fan hold --input PATH"))?;
+    if !["validate", "hold"].contains(&command) {
+        return Err(usage(
+            "Use fan validate --input PATH or fan hold --input PATH",
+        ));
+    }
+    let mut input = None;
+    let mut policy = MinimumDutyPolicy::default();
+    let mut index = 1;
+    while index < args.len() {
+        match text(&args[index])? {
+            "--input" if input.is_none() => {
+                index += 1;
+                let path = args
+                    .get(index)
+                    .filter(|path| !path.is_empty() && !path.to_string_lossy().starts_with("--"))
+                    .ok_or_else(|| usage("--input requires an explicit curve file path"))?;
+                input = Some(PathBuf::from(path));
+            }
+            option @ ("--cpu-min-percent" | "--gpu-min-percent") => {
+                let destination = if option == "--cpu-min-percent" {
+                    &mut policy.cpu_min_percent
+                } else {
+                    &mut policy.gpu_min_percent
+                };
+                if destination.is_some() {
+                    return Err(usage(format!("Repeated fan option {option}")));
+                }
+                index += 1;
+                let value = args.get(index).map(text).transpose()?.ok_or_else(|| {
+                    usage(format!(
+                        "{option} requires a whole percent from 1 through 100"
+                    ))
+                })?;
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(usage(format!(
+                        "{option} requires ASCII decimal digits from 1 through 100"
+                    )));
+                }
+                let percent = value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|value| (1..=100).contains(value))
+                    .ok_or_else(|| usage(format!("{option} must be 1 through 100")))?;
+                *destination = Some(percent);
+            }
+            "--raise-stopped-stages" if !policy.raise_stopped_stages => {
+                policy.raise_stopped_stages = true;
+            }
+            _ => return Err(usage("Unknown or repeated fan option")),
+        }
+        index += 1;
+    }
+    let input = input.ok_or_else(|| usage("Fan commands require --input PATH"))?;
+    policy.validate()?;
+    Ok(if command == "validate" {
+        Action::FanValidate(input, policy)
+    } else {
+        Action::FanHold(input, policy)
+    })
 }
 fn parse_cpu_power(args: &[OsString]) -> Result<CliCpuPowerAction, ControlError> {
     let command = args
@@ -1558,6 +1620,36 @@ fn parse_oem_value(
         )),
     }
 }
+fn profile_output(
+    dry_run: bool,
+    plan: &mechrevo_console_core::ProfilePlan,
+    expected_current: Option<&str>,
+    apply: impl FnOnce() -> Result<mechrevo_console_core::ApplyResult, ControlError>,
+) -> Result<Value, ControlError> {
+    if expected_current.is_some_and(|expected| expected != plan.previous) {
+        return Err(ControlError::new(
+            "profile_expected_current_changed",
+            "The current raw OS profile differs from --expected-current; no setter was invoked",
+        ));
+    }
+    if dry_run {
+        Ok(json!({"dry_run":true,"plan":plan}))
+    } else {
+        Ok(json!(apply()?))
+    }
+}
+
+fn write_profile_output(output: &Value, writer: &mut impl Write) -> Result<(), ControlError> {
+    write_json(writer, output).map_err(|mut error| {
+        // A broken stdout does not undo an acknowledged system policy change.
+        // Preserve the completed operation instead of executing it again.
+        error
+            .details
+            .push(format!("completed_profile_output={output}"));
+        error
+    })
+}
+
 fn oem_set_output(
     dry_run: bool,
     plan: Value,
@@ -1587,19 +1679,29 @@ fn duration_json(duration: Duration) -> Value {
 }
 
 // @mark mechrevo.fan_curve role=caller contract=ramfan1p5_typed_input
-fn curve_validation_json(curve: &ValidatedFanCurve) -> Value {
-    json!({
+fn curve_validation_json(
+    curve: &ValidatedFanCurve,
+    minimum_duty_policy: MinimumDutyPolicy,
+) -> Result<Value, ControlError> {
+    let curve = curve.with_minimum_duty(minimum_duty_policy)?;
+    Ok(json!({
         "outcome": "protocol_validated",
         "applied": false,
         "hardware_qualified": false,
         "validation_scope": "Curve file shape and RamFan1p5 protocol only; device support and thermal behavior require separate qualification",
         "table_write_bytes": OWNED_TABLE_BYTES,
         "duty_raw_unit": "half_percent",
-        "curve": curve.curve()
-    })
+        "curve": curve.curve(),
+        "minimum_duty_policy": minimum_duty_policy
+    }))
 }
 
-fn load_curve_file(path: &std::path::Path) -> Result<ValidatedFanCurve, ControlError> {
+fn load_curve_file(
+    path: &std::path::Path,
+    minimum_duty_policy: MinimumDutyPolicy,
+) -> Result<ValidatedFanCurve, ControlError> {
+    // Internal callers must reject invalid policies before opening any file too.
+    minimum_duty_policy.validate()?;
     let metadata = std::fs::metadata(path)
         .map_err(|error| ControlError::new("curve_read_failed", error.to_string()))?;
     if !metadata.is_file() {
@@ -1703,13 +1805,16 @@ mod fan_hold {
     pub(super) fn hold(
         holder: &mut impl Holder,
         curve: &ValidatedFanCurve,
+        minimum_duty_policy: MinimumDutyPolicy,
         wait: impl FnOnce() -> io::Result<()>,
         mut emit: impl FnMut(Value) -> Result<(), ControlError>,
     ) -> Result<(), ControlError> {
+        let curve = curve.with_minimum_duty(minimum_duty_policy)?;
         let transaction = (|| {
             holder.acquire()?;
-            let state = holder.apply(curve)?;
+            let state = holder.apply(&curve)?;
             emit(json!({"outcome":"holding", "state":state,
+                "curve":curve.curve(), "minimum_duty_policy":minimum_duty_policy,
                 "lifetime":"This foreground process retains the exclusive lease until Enter or exit; it is not a saved startup setting"}))?;
             wait().map_err(|error| ControlError::new("fan_hold_input_failed", error.to_string()))
         })();
@@ -1726,18 +1831,24 @@ mod fan_hold {
         })
     }
 
-    pub(super) fn run(path: &std::path::Path, output: &mut impl Write) -> Result<(), ControlError> {
+    pub(super) fn run(
+        path: &std::path::Path,
+        minimum_duty_policy: MinimumDutyPolicy,
+        output: &mut impl Write,
+    ) -> Result<(), ControlError> {
+        minimum_duty_policy.validate()?;
         if !io::stdin().is_terminal() {
             return Err(ControlError::new(
                 "fan_hold_requires_terminal",
                 "fan hold requires an interactive terminal; no device was opened",
             ));
         }
-        let curve = load_curve_file(path)?;
+        let curve = load_curve_file(path, minimum_duty_policy)?;
         let mut session = FanCurveSession::open().map_err(session_error)?;
         hold(
             &mut session,
             &curve,
+            minimum_duty_policy,
             || {
                 let mut prompt = io::stderr().lock();
                 writeln!(prompt, "曲线正在由本进程持有；按 Enter 恢复旧表并退出。强制结束后的内核恢复结果无法由本进程确认。")?;
@@ -2036,27 +2147,28 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         Action::OemList => json!(service.oem_controls()),
         Action::OemSet(id, value, dry_run) => set_oem(service, &id, &value, dry_run)?,
         Action::WindowsFn(command) => return windows_fn_cli::run(command, &mut stdout),
-        Action::FanValidate(path) => curve_validation_json(&load_curve_file(&path)?),
+        Action::FanValidate(path, policy) => {
+            curve_validation_json(&load_curve_file(&path, policy)?, policy)?
+        }
         Action::CpuPower(command) => return cpu_power_cli::run(command, &mut stdout),
-        Action::FanHold(path) => {
+        Action::FanHold(path, policy) => {
             #[cfg(target_os = "linux")]
-            return fan_hold::run(&path, &mut stdout);
+            return fan_hold::run(&path, policy, &mut stdout);
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = path;
+                let _ = (path, policy);
                 return Err(ControlError::new(
                     "fan_hold_unsupported",
                     "The exclusive fan-curve driver session is available on Linux only",
                 ));
             }
         }
-        Action::Profile(profile, dry) => {
+        Action::Profile(profile, dry, expected) => {
             let plan = service.plan_profile(profile)?;
-            if dry {
-                json!({"dry_run":true,"plan":plan})
-            } else {
-                json!(service.apply_profile(&plan)?)
-            }
+            let output = profile_output(dry, &plan, expected.as_deref(), || {
+                service.apply_profile(&plan)
+            })?;
+            return write_profile_output(&output, &mut stdout);
         }
         Action::Brightness(percent, device, dry, expected_current) => {
             return brightness_cli::run(
@@ -2100,11 +2212,11 @@ mod tests {
     fn fan_validate_requires_one_explicit_input_and_never_accepts_apply_flags() {
         assert_eq!(
             parse(args(&["fan", "validate", "--input", "曲线 file.json"])).unwrap(),
-            Action::FanValidate("曲线 file.json".into())
+            Action::FanValidate("曲线 file.json".into(), MinimumDutyPolicy::default())
         );
         assert_eq!(
             parse(args(&["fan", "hold", "--input", "curve.json"])).unwrap(),
-            Action::FanHold("curve.json".into())
+            Action::FanHold("curve.json".into(), MinimumDutyPolicy::default())
         );
         for args_values in [
             vec!["fan"],
@@ -2119,6 +2231,193 @@ mod tests {
     }
 
     #[test]
+    fn fan_minimum_options_accept_both_commands_and_whole_percent_boundaries() {
+        for command in ["validate", "hold"] {
+            let action = parse(args(&[
+                "fan",
+                command,
+                "--gpu-min-percent",
+                "100",
+                "--raise-stopped-stages",
+                "--input",
+                "curve.json",
+                "--cpu-min-percent",
+                "1",
+            ]))
+            .unwrap();
+            let policy = MinimumDutyPolicy {
+                cpu_min_percent: Some(1),
+                gpu_min_percent: Some(100),
+                raise_stopped_stages: true,
+            };
+            assert_eq!(
+                action,
+                if command == "validate" {
+                    Action::FanValidate("curve.json".into(), policy)
+                } else {
+                    Action::FanHold("curve.json".into(), policy)
+                }
+            );
+        }
+        assert_eq!(
+            parse(args(&[
+                "fan",
+                "validate",
+                "--input",
+                "curve.json",
+                "--cpu-min-percent",
+                "030",
+            ]))
+            .unwrap(),
+            Action::FanValidate(
+                "curve.json".into(),
+                MinimumDutyPolicy {
+                    cpu_min_percent: Some(30),
+                    ..MinimumDutyPolicy::default()
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn fan_minimum_options_reject_malformed_or_repeated_arguments_before_io() {
+        // The path intentionally cannot be opened: these must fail in parse,
+        // before loading a file, checking a terminal or opening the driver.
+        for command in ["validate", "hold"] {
+            for option in ["--cpu-min-percent", "--gpu-min-percent"] {
+                for value in [
+                    "",
+                    "0",
+                    "101",
+                    "256",
+                    "+30",
+                    "-1",
+                    "30.0",
+                    "30%",
+                    " 30",
+                    "30 ",
+                    "３０",
+                    "999999999999999999999999999999999999",
+                    "--raise-stopped-stages",
+                ] {
+                    assert!(
+                        parse(args(&[
+                            "fan",
+                            command,
+                            "--input",
+                            "/missing/curve.json",
+                            option,
+                            value,
+                        ]))
+                        .is_err(),
+                        "accepted {command} {option} {value:?}"
+                    );
+                }
+                assert!(parse(args(&[
+                    "fan",
+                    command,
+                    "--input",
+                    "/missing/curve.json",
+                    option
+                ]))
+                .is_err());
+                assert!(parse(args(&[
+                    "fan",
+                    command,
+                    "--input",
+                    "/missing/curve.json",
+                    option,
+                    "30",
+                    option,
+                    "40",
+                ]))
+                .is_err());
+            }
+            for suffix in [
+                vec!["--input", "/missing/curve.json", "--input", "other.json"],
+                vec!["--input", "--cpu-min-percent", "30"],
+                vec!["--input", "/missing/curve.json", "--raise-stopped-stages"],
+                vec![
+                    "--input",
+                    "/missing/curve.json",
+                    "--cpu-min-percent",
+                    "30",
+                    "--raise-stopped-stages",
+                    "--raise-stopped-stages",
+                ],
+                vec![
+                    "--input",
+                    "/missing/curve.json",
+                    "--cpu-min-percent",
+                    "30",
+                    "--apply",
+                ],
+                vec![
+                    "--input",
+                    "/missing/curve.json",
+                    "--gpu-min-percent",
+                    "30",
+                    "extra.json",
+                ],
+                vec!["--cpu-min-percent", "30"],
+                vec!["--raise-stopped-stages", "--gpu-min-percent", "30"],
+            ] {
+                let mut values = vec!["fan", command];
+                values.extend(suffix);
+                assert!(parse(args(&values)).is_err(), "accepted {values:?}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fan_minimum_options_reject_non_unicode_values_but_preserve_path_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let path = OsString::from_vec(b"curve-\xff.json".to_vec());
+        assert_eq!(
+            parse(vec![
+                "fan".into(),
+                "validate".into(),
+                "--input".into(),
+                path.clone()
+            ])
+            .unwrap(),
+            Action::FanValidate(PathBuf::from(path), MinimumDutyPolicy::default())
+        );
+        for option in ["--cpu-min-percent", "--gpu-min-percent"] {
+            let mut values = args(&["fan", "hold", "--input", "/missing/curve.json", option]);
+            values.push(OsString::from_vec(vec![0xff]));
+            assert_eq!(parse(values).unwrap_err().code, "invalid_argument");
+        }
+    }
+
+    #[test]
+    fn fan_curve_loader_rejects_invalid_policy_before_reading_a_path() {
+        for policy in [
+            MinimumDutyPolicy {
+                cpu_min_percent: Some(0),
+                ..MinimumDutyPolicy::default()
+            },
+            MinimumDutyPolicy {
+                gpu_min_percent: Some(101),
+                ..MinimumDutyPolicy::default()
+            },
+            MinimumDutyPolicy {
+                raise_stopped_stages: true,
+                ..MinimumDutyPolicy::default()
+            },
+        ] {
+            let expected = policy.validate().unwrap_err().code;
+            assert_eq!(
+                load_curve_file(std::path::Path::new(""), policy)
+                    .unwrap_err()
+                    .code,
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn fan_validate_uses_complete_typed_input_and_does_not_claim_hardware_application() {
         let document = json!({
             "schema_version": 1, "layout":"uniwill_ram_fan1p5", "respective":true,
@@ -2128,13 +2427,171 @@ mod tests {
         let curve =
             ValidatedFanCurve::from_reader(serde_json::to_vec(&document).unwrap().as_slice())
                 .unwrap();
-        let output = curve_validation_json(&curve);
+        let output = curve_validation_json(&curve, MinimumDutyPolicy::default()).unwrap();
         assert_eq!(output["outcome"], "protocol_validated");
         assert_eq!(output["applied"], false);
         assert_eq!(output["hardware_qualified"], false);
         assert_eq!(output["curve"], document);
+        assert_eq!(
+            output["minimum_duty_policy"],
+            json!(MinimumDutyPolicy::default())
+        );
         assert_eq!(output["table_write_bytes"], 94);
         assert!(ValidatedFanCurve::from_reader(b"{}".as_slice()).is_err());
+    }
+
+    #[test]
+    fn fan_validation_outputs_the_final_curve_and_explicit_minimum_policy() {
+        let mut document = json!({
+            "schema_version": 1, "layout":"uniwill_ram_fan1p5", "respective":false,
+            "cpu":{"rise_celsius":vec![40;15],"fall_celsius":vec![50;15],"duty_raw":vec![51;16]},
+            "gpu":{"rise_celsius":vec![255;15],"fall_celsius":vec![255;15],"duty_raw":vec![61;16]}
+        });
+        document["cpu"]["duty_raw"][0] = json!(0);
+        document["cpu"]["duty_raw"][1] = json!(61);
+        document["gpu"]["duty_raw"][0] = json!(0);
+        let curve = ValidatedFanCurve::from_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+        for raise_stopped_stages in [false, true] {
+            let policy = MinimumDutyPolicy {
+                cpu_min_percent: Some(30),
+                gpu_min_percent: None,
+                raise_stopped_stages,
+            };
+            let output = curve_validation_json(&curve, policy).unwrap();
+            let mut expected = document.clone();
+            expected["cpu"]["duty_raw"] = json!(vec![60; 16]);
+            expected["cpu"]["duty_raw"][0] = json!(if raise_stopped_stages { 60 } else { 0 });
+            expected["cpu"]["duty_raw"][1] = json!(61);
+            assert_eq!(output["curve"], expected);
+            assert_eq!(output["minimum_duty_policy"], json!(policy));
+            assert_eq!(output["applied"], false);
+            assert_eq!(output["hardware_qualified"], false);
+        }
+        assert_eq!(json!(curve.curve()), document);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn foreground_fan_applies_the_transformed_curve_and_rejects_policy_before_acquire() {
+        #[derive(Default)]
+        struct HolderSpy {
+            events: Vec<&'static str>,
+            applied: Option<ValidatedFanCurve>,
+        }
+        impl fan_hold::Holder for HolderSpy {
+            fn acquire(&mut self) -> Result<Value, ControlError> {
+                self.events.push("acquire");
+                Ok(json!({"owner":true}))
+            }
+            fn apply(&mut self, curve: &ValidatedFanCurve) -> Result<Value, ControlError> {
+                self.events.push("apply");
+                self.applied = Some(curve.clone());
+                Ok(json!({"owner":true,"applied":true}))
+            }
+            fn restore(&mut self) -> Result<Value, ControlError> {
+                self.events.push("restore");
+                Ok(json!({"owner":false,"restored_verified":true}))
+            }
+        }
+        let mut document = json!({
+            "schema_version":1,"layout":"uniwill_ram_fan1p5","respective":true,
+            "cpu":{"rise_celsius":vec![40;15],"fall_celsius":vec![50;15],"duty_raw":vec![51;16]},
+            "gpu":{"rise_celsius":vec![255;15],"fall_celsius":vec![255;15],"duty_raw":vec![61;16]}
+        });
+        document["cpu"]["duty_raw"][0] = json!(0);
+        document["gpu"]["duty_raw"][0] = json!(0);
+        let curve = ValidatedFanCurve::from_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+        for policy in [
+            MinimumDutyPolicy::default(),
+            MinimumDutyPolicy {
+                cpu_min_percent: Some(30),
+                gpu_min_percent: Some(50),
+                raise_stopped_stages: false,
+            },
+            MinimumDutyPolicy {
+                cpu_min_percent: Some(30),
+                gpu_min_percent: Some(50),
+                raise_stopped_stages: true,
+            },
+            MinimumDutyPolicy {
+                cpu_min_percent: None,
+                gpu_min_percent: Some(100),
+                raise_stopped_stages: true,
+            },
+        ] {
+            let mut holder = HolderSpy::default();
+            let mut outputs = Vec::new();
+            fan_hold::hold(
+                &mut holder,
+                &curve,
+                policy,
+                || Ok(()),
+                |output| {
+                    outputs.push(output);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            let mut expected = document.clone();
+            for (name, floor, original) in [
+                ("cpu", policy.cpu_min_percent, 51),
+                ("gpu", policy.gpu_min_percent, 61),
+            ] {
+                let raw = floor.map(|value| u16::from(value) * 2).unwrap_or(0);
+                expected[name]["duty_raw"] = json!(vec![raw.max(original); 16]);
+                expected[name]["duty_raw"][0] =
+                    json!(if floor.is_some() && policy.raise_stopped_stages {
+                        raw
+                    } else {
+                        0
+                    });
+            }
+            let applied = holder.applied.as_ref().unwrap();
+            assert_eq!(json!(applied.curve()), expected);
+            assert_eq!(holder.events, ["acquire", "apply", "restore"]);
+            assert_eq!(outputs[0]["curve"], expected);
+            assert_eq!(outputs[0]["minimum_duty_policy"], json!(policy));
+            assert_eq!(outputs[1]["outcome"], "restored_and_released");
+            assert_eq!(json!(curve.curve()), document);
+        }
+        for policy in [
+            MinimumDutyPolicy {
+                cpu_min_percent: Some(0),
+                ..MinimumDutyPolicy::default()
+            },
+            MinimumDutyPolicy {
+                raise_stopped_stages: true,
+                ..MinimumDutyPolicy::default()
+            },
+        ] {
+            let mut holder = HolderSpy::default();
+            let error = fan_hold::hold(
+                &mut holder,
+                &curve,
+                policy,
+                || panic!("invalid policy reached wait"),
+                |_| panic!("invalid policy emitted transaction output"),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, policy.validate().unwrap_err().code);
+            assert!(holder.events.is_empty());
+            assert!(holder.applied.is_none());
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn fan_hold_unsupported_platform_does_not_load_the_curve() {
+        let policy = MinimumDutyPolicy {
+            cpu_min_percent: Some(30),
+            ..MinimumDutyPolicy::default()
+        };
+        let error = run(
+            Action::FanHold("/missing/curve.json".into(), policy),
+            &Service::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "fan_hold_unsupported");
     }
 
     #[cfg(target_os = "linux")]
@@ -2198,6 +2655,7 @@ mod tests {
                 let result = fan_hold::hold(
                     &mut holder,
                     &curve,
+                    MinimumDutyPolicy::default(),
                     || {
                         events.borrow_mut().push("wait".into());
                         if failure == "wait" {
@@ -2765,10 +3223,114 @@ mod tests {
     fn explicit_profile_and_dry_run() {
         assert_eq!(
             parse(args(&["profile", "performance", "--dry-run"])).unwrap(),
-            Action::Profile(PowerProfile::Performance, true)
+            Action::Profile(PowerProfile::Performance, true, None)
         );
         assert!(parse(args(&["profile", "turbo"])).is_err());
         assert!(parse(args(&["profile", "balanced", "--force"])).is_err());
+    }
+    #[test]
+    fn profile_expected_current_is_explicit_and_rejects_malformed_options() {
+        assert_eq!(
+            parse(args(&[
+                "profile",
+                "power-saver",
+                "--expected-current",
+                "balanced",
+                "--dry-run"
+            ]))
+            .unwrap(),
+            Action::Profile(PowerProfile::PowerSaver, true, Some("balanced".into()))
+        );
+        for input in [
+            vec!["profile", "balanced", "--expected-current"],
+            vec!["profile", "balanced", "--expected-current", ""],
+            vec!["profile", "balanced", "--expected-current", " balanced"],
+            vec!["profile", "balanced", "--expected-current", "x\n"],
+            vec![
+                "profile",
+                "balanced",
+                "--expected-current",
+                "balanced",
+                "--expected-current",
+                "balanced",
+            ],
+            vec!["profile", "balanced", "--dry-run", "--dry-run"],
+        ] {
+            assert!(parse(args(&input)).is_err(), "{input:?}");
+        }
+    }
+    fn profile_fixture_plan() -> mechrevo_console_core::ProfilePlan {
+        mechrevo_console_core::ProfilePlan {
+            requested: PowerProfile::PowerSaver,
+            previous: "balanced".into(),
+            target: "power-saver".into(),
+            scope: "fixture system policy".into(),
+            source: mechrevo_console_core::EvidenceSource {
+                backend: "linux_power_profiles_daemon".into(),
+                path: "fixture".into(),
+                device_id: None,
+            },
+            details: None,
+        }
+    }
+    #[test]
+    fn profile_expected_current_mismatch_and_dry_run_never_call_setter() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        let plan = profile_fixture_plan();
+        for dry in [false, true] {
+            let error = profile_output(dry, &plan, Some("performance"), || {
+                calls.set(calls.get() + 1);
+                unreachable!()
+            })
+            .unwrap_err();
+            assert_eq!(error.code, "profile_expected_current_changed");
+        }
+        let output = profile_output(true, &plan, Some("balanced"), || {
+            calls.set(calls.get() + 1);
+            unreachable!()
+        })
+        .unwrap();
+        assert_eq!(output, json!({"dry_run":true,"plan":plan}));
+        assert_eq!(calls.get(), 0);
+    }
+    #[test]
+    fn profile_confirmed_result_survives_output_failure_without_retry() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        let plan = profile_fixture_plan();
+        let output = profile_output(false, &plan, Some("balanced"), || {
+            calls.set(calls.get() + 1);
+            Ok(mechrevo_console_core::ApplyResult {
+                requested: plan.requested,
+                previous: plan.previous.clone(),
+                confirmed: plan.target.clone(),
+                scope: plan.scope.clone(),
+                receipt: None,
+            })
+        })
+        .unwrap();
+        struct FailedOutput;
+        impl Write for FailedOutput {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "fixture closed pipe",
+                ))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let error = write_profile_output(&output, &mut FailedOutput).unwrap_err();
+        let completed = error
+            .details
+            .iter()
+            .find_map(|s| s.strip_prefix("completed_profile_output="))
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(completed).unwrap(), output);
+        assert_eq!(output["confirmed"], "power-saver");
+        assert_eq!(calls.get(), 1);
     }
     #[test]
     fn brightness_bounds_devices_and_unknown_flags() {

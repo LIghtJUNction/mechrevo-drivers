@@ -48,6 +48,41 @@ pub struct FanCurve {
     pub gpu: FanCurveChannel,
 }
 
+/// Explicit whole-percent lower bounds applied to a complete user curve.
+/// These are command duty values, not measured RPM, acoustic thresholds or a
+/// thermal qualification. Absent channel limits leave that channel unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MinimumDutyPolicy {
+    pub cpu_min_percent: Option<u8>,
+    pub gpu_min_percent: Option<u8>,
+    /// Explicit permission to raise zero-valued draft stages as well. Keeping
+    /// zero is a byte-level policy, not proof that physical fans stop there.
+    pub raise_stopped_stages: bool,
+}
+impl MinimumDutyPolicy {
+    pub fn validate(&self) -> Result<(), ControlError> {
+        for (channel, floor) in [("CPU", self.cpu_min_percent), ("GPU", self.gpu_min_percent)] {
+            if floor.is_some_and(|percent| !(1..=100).contains(&percent)) {
+                return Err(ControlError::new(
+                    "fan_minimum_percent_out_of_range",
+                    format!("{channel} minimum duty must be a whole percent from 1 through 100"),
+                ));
+            }
+        }
+        if self.raise_stopped_stages
+            && self.cpu_min_percent.is_none()
+            && self.gpu_min_percent.is_none()
+        {
+            return Err(ControlError::new(
+                "fan_minimum_requires_channel",
+                "Raising zero-valued stages requires an explicit CPU or GPU minimum",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Can only be constructed after complete protocol validation. It does not
 /// implement Deserialize: callers cannot bypass validation at a JSON boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +145,28 @@ impl ValidatedFanCurve {
 
     pub fn curve(&self) -> &FanCurve {
         &self.0
+    }
+
+    /// Raise selected duty stages in this validated user draft. Temperatures,
+    /// channel selection and the source curve remain untouched. Applying a
+    /// smaller floor later does not undo previous edits to the draft.
+    pub fn with_minimum_duty(&self, policy: MinimumDutyPolicy) -> Result<Self, ControlError> {
+        policy.validate()?;
+        let mut curve = self.0.clone();
+        for (channel, floor) in [
+            (&mut curve.cpu, policy.cpu_min_percent),
+            (&mut curve.gpu, policy.gpu_min_percent),
+        ] {
+            if let Some(percent) = floor {
+                let raw_floor = percent * 2; // validated 1..=100, exactly 0.5% units
+                for duty in &mut channel.duty_raw {
+                    if *duty != 0 || policy.raise_stopped_stages {
+                        *duty = (*duty).max(raw_floor);
+                    }
+                }
+            }
+        }
+        curve.validate()
     }
 
     /// Typed ioctl payload after its versioned 64-byte control prefix. The
@@ -181,6 +238,132 @@ mod tests {
 
     fn document() -> Value {
         serde_json::to_value(example()).unwrap()
+    }
+
+    #[test]
+    fn minimum_duty_default_is_exactly_inert_including_half_percent_values() {
+        let curve = example().validate().unwrap();
+        assert_eq!(
+            curve
+                .with_minimum_duty(MinimumDutyPolicy::default())
+                .unwrap(),
+            curve
+        );
+        let serialized = serde_json::to_value(MinimumDutyPolicy::default()).unwrap();
+        assert!(serialized["cpu_min_percent"].is_null());
+        assert!(serialized["gpu_min_percent"].is_null());
+        assert_eq!(serialized["raise_stopped_stages"], false);
+    }
+
+    #[test]
+    fn minimum_duty_rejects_invalid_limits_and_unguided_zero_stage_changes() {
+        let curve = example().validate().unwrap();
+        for percent in [0, 101, 255] {
+            for (cpu, gpu) in [(Some(percent), None), (None, Some(percent))] {
+                let policy = MinimumDutyPolicy {
+                    cpu_min_percent: cpu,
+                    gpu_min_percent: gpu,
+                    raise_stopped_stages: false,
+                };
+                assert_eq!(
+                    curve.with_minimum_duty(policy).unwrap_err().code,
+                    "fan_minimum_percent_out_of_range"
+                );
+            }
+        }
+        assert_eq!(
+            curve
+                .with_minimum_duty(MinimumDutyPolicy {
+                    raise_stopped_stages: true,
+                    ..Default::default()
+                })
+                .unwrap_err()
+                .code,
+            "fan_minimum_requires_channel"
+        );
+    }
+
+    #[test]
+    fn minimum_duty_changes_only_selected_nonzero_duties_and_real_payload() {
+        let mut input = example();
+        input.respective = false;
+        input.cpu.duty_raw = [
+            0, 1, 119, 120, 121, 199, 200, 99, 0, 1, 119, 120, 121, 199, 200, 99,
+        ];
+        input.cpu.rise_celsius[8..].fill(255);
+        input.cpu.fall_celsius[5..].fill(255);
+        let base = input.clone().validate().unwrap();
+        let adjusted = base
+            .with_minimum_duty(MinimumDutyPolicy {
+                cpu_min_percent: Some(60),
+                ..Default::default()
+            })
+            .unwrap();
+        let expected = [
+            0, 120, 120, 120, 121, 199, 200, 120, 0, 120, 120, 120, 121, 199, 200, 120,
+        ];
+        assert_eq!(adjusted.curve().cpu.duty_raw, expected);
+        assert_eq!(adjusted.curve().cpu.rise_celsius, input.cpu.rise_celsius);
+        assert_eq!(adjusted.curve().cpu.fall_celsius, input.cpu.fall_celsius);
+        assert_eq!(adjusted.curve().gpu, input.gpu);
+        assert!(!adjusted.curve().respective);
+        assert_eq!(base.curve(), &input);
+        assert_eq!(&adjusted.protocol_payload()[60..76], &expected);
+        assert_eq!(&adjusted.protocol_payload()[76..92], &input.gpu.duty_raw);
+    }
+
+    #[test]
+    fn minimum_duty_explicit_zero_stage_raise_is_channel_scoped_and_bounded() {
+        let mut input = example();
+        input.cpu.duty_raw = [0; 16];
+        input.gpu.duty_raw = [
+            0, 1, 2, 3, 99, 100, 101, 102, 119, 120, 121, 150, 151, 198, 199, 200,
+        ];
+        let base = input.clone().validate().unwrap();
+        let adjusted = base
+            .with_minimum_duty(MinimumDutyPolicy {
+                gpu_min_percent: Some(100),
+                raise_stopped_stages: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(adjusted.curve().gpu.duty_raw, [200; 16]);
+        assert_eq!(adjusted.curve().cpu, input.cpu);
+        assert_eq!(adjusted.curve().gpu.rise_celsius, input.gpu.rise_celsius);
+        assert_eq!(adjusted.curve().gpu.fall_celsius, input.gpu.fall_celsius);
+        assert_eq!(
+            adjusted
+                .with_minimum_duty(MinimumDutyPolicy {
+                    gpu_min_percent: Some(1),
+                    ..Default::default()
+                })
+                .unwrap(),
+            adjusted
+        );
+        let original = RawFanTable::from_bytes([253; TABLE_BYTES]);
+        let changed = original.with_curve(&adjusted);
+        assert_eq!(&changed.as_bytes()[80..96], &[200; 16]);
+        assert_eq!(changed.as_bytes()[16], 253);
+        assert_eq!(changed.as_bytes()[64], 253);
+        assert_eq!(original.as_bytes(), &[253; TABLE_BYTES]);
+    }
+
+    #[test]
+    fn minimum_duty_one_percent_keeps_higher_half_steps_and_both_channels_separate() {
+        let mut input = example();
+        input.cpu.duty_raw[..4].copy_from_slice(&[0, 1, 2, 3]);
+        input.gpu.duty_raw[..4].copy_from_slice(&[0, 99, 100, 101]);
+        let adjusted = input
+            .validate()
+            .unwrap()
+            .with_minimum_duty(MinimumDutyPolicy {
+                cpu_min_percent: Some(1),
+                gpu_min_percent: Some(50),
+                raise_stopped_stages: false,
+            })
+            .unwrap();
+        assert_eq!(&adjusted.curve().cpu.duty_raw[..4], &[0, 2, 2, 3]);
+        assert_eq!(&adjusted.curve().gpu.duty_raw[..4], &[0, 100, 100, 101]);
     }
 
     #[test]

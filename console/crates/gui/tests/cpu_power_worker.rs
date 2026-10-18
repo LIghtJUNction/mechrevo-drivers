@@ -194,6 +194,7 @@ impl Backend for CpuBackend {
             confirmed: plan.target.clone(),
             previous: plan.previous.clone(),
             scope: plan.scope.clone(),
+            receipt: None,
         })
     }
     fn plan_brightness(&mut self, _: u8, _: &str) -> Result<BrightnessPlan, ControlError> {
@@ -371,6 +372,7 @@ fn profile_plan() -> ProfilePlan {
         target: "performance".into(),
         previous: "balanced".into(),
         scope: "fixture".into(),
+        details: None,
         source: source(),
     }
 }

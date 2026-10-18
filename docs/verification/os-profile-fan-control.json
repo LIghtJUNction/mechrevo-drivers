@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T11:39:10.181404+00:00",
+  "outcome": "source_candidate_pending_full_verification_not_installed_no_hardware_acceptance",
+  "scope": "Linux system power-profile service and complete-user-fan-curve minimum-duty source candidate. PPD live-service behavior, actual package deployment and native/hardware fan acceptance are separate.",
+  "source": {
+    "base_commit_at_documentation": "b45e2dce69915486aa6926d6c2fd9c1b8f5b1ee1",
+    "feature_source_commit": null,
+    "feature_source_committed": false,
+    "final_input_snapshot_sha256": null,
+    "final_full_verification_pending": true
+  },
+  "implemented": {
+    "ppd_discovery": "Real native /sys only: prefer modern org.freedesktop.UPower.PowerProfiles, then legacy net.hadess.PowerProfiles only if modern is unowned. ACPI fallback requires both names explicitly absent and stable bus identity; query errors, untrusted owners, malformed responses and authority changes do not fall through. Fixtures do not query a live system bus.",
+    "ppd_binding": "Bind system-bus ID, unique owner, endpoint, UID0, active profile, all advertised profile metadata, holds and degradation metadata; revalidate around queries and again before apply. Evidence source linux_power_profiles_daemon; PowerPolicy/ProfilePlan.details and ApplyResult.receipt retain their separate meanings.",
+    "ppd_apply": "Same-profile no-op submits no setter. Otherwise at most one explicit ActiveProfile Set followed by independent observation. Holds may be released before activation fails; no automatic retry, old-profile rollback or reconstruction of application holds. Submitted errors preserve primary/readback errors and unknown/writer_may_continue even if a later observation sees the target.",
+    "legacy_os_recovery": "ACPI/Windows direct profile transactions retain primary errors and conditionally recover only when fresh observations still identify this transaction target. Previous/foreign/unknown/changed state is not overwritten; recovery is read back. No global OS CAS or same-value ABA guarantee. This contract is separate from PPD holds semantics.",
+    "cli": "profile balanced|performance|power-saver [--expected-current RAW] [--dry-run]. Exact raw name/GUID guard rejects before setter on mismatch; dry-run only observes/plans. Output failure retains completed result/error without repeating a setter.",
+    "gui": "Display service provenance, degradation, holds, explicit preview/Apply and typed receipt/error. Refresh preserves earlier uncertainty. New explicit preview/apply can express new intent; no automatic retry. Closing waits for actual local in-flight work/worker exit, not forever on remote-writer uncertainty.",
+    "minimum_fan_output": "Validated complete user curve only; independently optional CPU/GPU integer floors 1..100, default None. Raise only lower selected duty bytes, preserve temperatures and unselected channels. Zero bytes remain unless --raise-stopped-stages is explicit and at least one channel floor is provided. Output percent is not RPM, vibration threshold or thermal/acoustic qualification.",
+    "fan_gui_handoff": "Controls do not alter the curve until Apply to draft; editing invalidates old preview, then normal preview/explicit apply and original exclusive lease/raw-table restore remain required. A lower later floor does not undo earlier draft increases. No model whitelist expansion."
+  },
+  "verification": {
+    "final_rust": {
+      "status": "pending",
+      "tests_passed": null,
+      "fmt": null,
+      "clippy": null,
+      "windows_compile": null
+    },
+    "final_python_console": {
+      "status": "pending",
+      "tests_passed": null
+    },
+    "fan_floor_portable_production_check": {
+      "receipt_sha256": "a2da29690110717f5bd0cba6db174210d400ea1c7839cfba9e812b402afcc19b",
+      "scope": "Production pure policy/codec tests; no native lease, installed CLI/GUI or hardware exercise",
+      "baseline_tests_passed": 12,
+      "mutant_exit_code": 101,
+      "mutant_compiled_and_behavior_assertion_failed": true,
+      "restored_exact_test_passed": 1,
+      "isolated_source_restored": true,
+      "production_source_unchanged": true,
+      "production_module_sha256": "a3b718e852c1366d8b045a9bbf63b390250b7ea25655c1aa18a7fe1ba92d9567",
+      "agcc_session": "a1207c62-550f-4a00-837c-2cf64c842c95",
+      "scope_limit": "Production portable policy/codec module only. Not complete CLI/GUI, native lease, package or hardware acceptance."
+    },
+    "native_ppd_read_write_verified": false,
+    "native_gui_profile_apply_verified": false,
+    "fan_lease_transaction_verified": false,
+    "physical_rpm_cooling_or_noise_verified": false,
+    "earlier_unstable_workspace_attempt": {
+      "rust_tests_passed": 580,
+      "windows_compile": "passed",
+      "clippy": "failed_large_enum_variant",
+      "source_unchanged": false,
+      "accepted_as_final_green": false,
+      "scope": "First whole verification attempt changed during execution and failed Clippy. Passing tests/Windows compile from that attempt do not establish final frozen-source qualification; rerun is pending."
+    },
+    "packaging_contracts": {
+      "tests_passed": 40,
+      "historical_recipe_expected_failing_behavior_subtests": 9,
+      "scope": "Bounded offline packaging suite and expected negative subtests against the actual previous recipe; these counts are not an installed package or a full console-domain verification."
+    },
+    "conditional_profile_restore_production_regression": {
+      "receipt_sha256": "e7db468eadc9a6ef10872f2d7c9dcec4127f57491b533db2959c5b24324b66e0",
+      "baseline_tests_passed": 6,
+      "restored_tests_passed": 6,
+      "production_function": "apply_verified",
+      "uses_current_production_types_and_existing_tests": true,
+      "negative_implementation": "Actual previous HEAD unconditional-restore implementation, with only the receipt=None DTO compatibility field added.",
+      "negative_cases": [
+        {
+          "test": "tests::profile_failure_preserves_foreign_state_and_does_not_claim_a_restore",
+          "compiled": true,
+          "exit_code": 101,
+          "behavioral_assertion": "Legacy implementation returned balanced instead of preserving refused."
+        },
+        {
+          "test": "tests::os_profile_noop_rechecks_without_any_setter",
+          "compiled": true,
+          "exit_code": 101,
+          "behavioral_assertion": "Legacy same-profile operation called one setter; current contract requires zero."
+        }
+      ],
+      "production_unchanged": true,
+      "isolated_source_restored": true,
+      "scope": "Pure production conditional restore/no-op function regression only; no system Set, daemon, native backend, installation or hardware acceptance"
+    },
+    "second_workspace_attempt": {
+      "rust_tests_passed": 580,
+      "windows_compile": "passed",
+      "clippy": "failed_gui_type_complexity",
+      "accepted_as_final_green": false,
+      "scope": "Second whole verification attempt failed GUI type-complexity lint. A minimal named-payload fix and stable rerun are pending; no final green or deployment is established by the passing test/compile subsets."
+    }
+  },
+  "deployment": {
+    "this_candidate_installed": false,
+    "current_installed_linux_console": "0.1.0.r174.g256fb05-1",
+    "current_installed_receipt_ref": "docs/verification/deployment-console-r174.json",
+    "new_driver_interface_loaded": false,
+    "hardware_fan_write_exercised": false,
+    "hardware_setter_executed_by_this_documentation_work": false,
+    "scope": "Existing r174 and historical PL1/brightness/OEM proofs retain their original scopes; no installation, driver loading or live-service test is inferred for this candidate."
+  },
+  "tracking": {
+    "source": {
+      "session": "dd25938f-fdc6-43c1-a528-4487edfd0376",
+      "status": "running",
+      "gap_count_observed": 0,
+      "unresolved_event_count_observed": 0,
+      "final_tracking_status": "pending_root_finalization"
+    },
+    "packaging_contracts": {
+      "session_prefix": "37f072aa",
+      "tracking_status": "partial",
+      "gap_count": 16,
+      "unresolved_event_count": 0,
+      "scope": "Parent-supplied prefix and cumulative tracking counts; no full session UUID or additional command outcome inferred."
+    },
+    "conditional_profile_restore_production_regression": {
+      "session": "a4094eb5-b1be-45d9-a600-291c7e0c722e",
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "command_exit_code": 0
+    }
+  },
+  "parity_scope": "Only bounded candidate progress for F03/F04/F24; all 28 feature families and 77 issues remain unresolved. No fan preset/full-speed/acoustic fix is claimed.",
+  "references": [
+    "docs/SYSTEM-POWER-PROFILES.md",
+    "docs/FAN-CURVE-CONTROL.md",
+    "docs/MECHREVO-CONSOLE.md"
+  ],
+  "upstream_api_reference": "https://upower.pages.freedesktop.org/power-profiles-daemon/gdbus-org.freedesktop.UPower.PowerProfiles.html"
+}

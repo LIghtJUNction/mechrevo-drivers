@@ -21,7 +21,7 @@ use mechrevo_console_core::windows_oem::{
 use mechrevo_console_core::{
     ApplyResult, BrightnessApplyResult, BrightnessPlan, CapabilityStatus, CatalogModel,
     ControlError, OemApplyResult, OemControl, OemDomain, OemPlan, OemValue, PowerProfile,
-    ProfilePlan, SensorReading, Service, Snapshot, ThermalSample,
+    ProfileApplyReceipt, ProfilePlan, SensorReading, Service, Snapshot, ThermalSample,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -438,12 +438,20 @@ struct Request {
     job: Job,
 }
 
+struct AppliedReply {
+    applied: ApplyResult,
+    snapshot: Option<(Snapshot, ThermalSample)>,
+    refresh_error: Option<ControlError>,
+}
+
 enum Reply {
     Snapshot(Snapshot, Vec<CatalogModel>, ThermalSample),
     ThermalSample(ThermalSample),
     ThermalError(ControlError, Instant, Instant),
     Preview(ProfilePlan),
-    Applied(ApplyResult, Snapshot, ThermalSample),
+    Applied(Box<AppliedReply>),
+    ProfilePreviewError(ControlError),
+    ProfileFailed(ControlError),
     BrightnessPreview(BrightnessPlan),
     BrightnessPreviewError(ControlError),
     BrightnessApplied(
@@ -524,6 +532,10 @@ pub struct Controller {
     pub selected_profile: PowerProfile,
     pub preview: Option<ProfilePlan>,
     pub applied: Option<ApplyResult>,
+    pub profile_error: Option<ControlError>,
+    pub profile_preview_error: Option<ControlError>,
+    pub profile_receipt: Option<ProfileApplyReceipt>,
+    pub profile_refresh_error: Option<ControlError>,
     pub selected_brightness_device: Option<String>,
     pub requested_brightness: u8,
     pub brightness_preview: Option<BrightnessPlan>,
@@ -667,14 +679,30 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
         }
         Job::Preview(profile) => match backend.plan(profile) {
             Ok(plan) => Reply::Preview(plan),
-            Err(error) => Reply::Error(error),
+            Err(error) => Reply::ProfilePreviewError(error),
         },
         Job::Apply(plan) => match backend.apply(&plan) {
             Ok(result) => {
-                let (snapshot, thermal) = observed_snapshot(backend);
-                Reply::Applied(result, snapshot, thermal)
+                // A failed ancillary refresh cannot erase the backend's
+                // completed write/readback receipt or cause a setter retry.
+                let refresh = catch_unwind(AssertUnwindSafe(|| observed_snapshot(backend)));
+                let (snapshot, error) = match refresh {
+                    Ok(sample) => (Some(sample), None),
+                    Err(_) => (
+                        None,
+                        Some(ControlError::new(
+                            "profile_post_refresh_failed",
+                            "档位已应用并回读；随后的设备信息刷新失败。",
+                        )),
+                    ),
+                };
+                Reply::Applied(Box::new(AppliedReply {
+                    applied: result,
+                    snapshot,
+                    refresh_error: error,
+                }))
             }
-            Err(error) => Reply::Error(error),
+            Err(error) => Reply::ProfileFailed(error),
         },
         Job::PreviewBrightness { percent, device } => {
             match backend.plan_brightness(percent, &device) {
@@ -883,6 +911,10 @@ impl Controller {
             selected_profile: PowerProfile::Balanced,
             preview: None,
             applied: None,
+            profile_error: None,
+            profile_preview_error: None,
+            profile_receipt: None,
+            profile_refresh_error: None,
             selected_brightness_device: None,
             requested_brightness: 70,
             brightness_preview: None,
@@ -1289,14 +1321,25 @@ impl Controller {
     }
 
     pub fn preview_profile(&mut self) -> Result<(), SubmitError> {
-        if self.cpu_power_preview.is_some() {
+        if self.cpu_power_preview.is_some()
+            || self.windows_fn_preview.is_some()
+            || self.busy()
+            || self.close_requested
+            || self.fan_session_held
+            || !self.fan_cleanup_complete
+            || !self.fan_helper_reaped
+        {
             return Err(SubmitError::Busy);
+        }
+        if !self.worker_available {
+            return Err(SubmitError::WorkerStopped);
         }
         if self.policy_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
         self.invalidate_previews();
         self.submit(Job::Preview(self.selected_profile))?;
+        self.profile_preview_error = None;
         Ok(())
     }
 
@@ -1760,6 +1803,7 @@ impl Controller {
                 self.in_flight = None;
                 match response.reply {
                     Reply::Snapshot(snapshot, catalog, thermal) => {
+                        self.profile_refresh_error = None;
                         self.snapshot = Some(snapshot);
                         self.catalog = catalog;
                         self.last_refresh = Some(thermal.finished_at);
@@ -1794,6 +1838,12 @@ impl Controller {
                         // A selection made while a request ran must invalidate its late result.
                         if current_selection && plan.requested == self.selected_profile {
                             self.preview = Some(plan);
+                            self.profile_preview_error = None;
+                        }
+                    }
+                    Reply::ProfilePreviewError(error) => {
+                        if current_selection {
+                            self.profile_preview_error = Some(error);
                         }
                     }
                     Reply::BrightnessPreview(plan) => {
@@ -1811,11 +1861,39 @@ impl Controller {
                             self.brightness_preview_error = Some(error);
                         }
                     }
-                    Reply::Applied(result, snapshot, thermal) => {
+                    Reply::Applied(payload) => {
+                        let AppliedReply {
+                            applied: result,
+                            snapshot,
+                            refresh_error,
+                        } = *payload;
+                        if self.error.as_ref().is_some_and(|error| {
+                            self.profile_error.as_ref().is_some_and(|previous| {
+                                previous.code == error.code
+                                    && previous.message == error.message
+                                    && previous.details == error.details
+                            })
+                        }) {
+                            self.error = None;
+                        }
+                        self.profile_receipt = result.receipt.clone();
+                        self.profile_error = None;
+                        self.profile_preview_error = None;
+                        self.profile_refresh_error = refresh_error;
                         self.applied = Some(result);
-                        self.snapshot = Some(snapshot);
-                        self.last_refresh = Some(thermal.finished_at);
-                        self.accept_thermal_sample(thermal);
+                        if let Some((snapshot, thermal)) = snapshot {
+                            self.snapshot = Some(snapshot);
+                            self.last_refresh = Some(thermal.finished_at);
+                            self.accept_thermal_sample(thermal);
+                        }
+                    }
+                    Reply::ProfileFailed(error) => {
+                        self.profile_refresh_error = None;
+                        self.profile_receipt =
+                            mechrevo_console_core::power_profiles_daemon::error_receipt(&error);
+                        self.profile_error = Some(error.clone());
+                        self.applied = None;
+                        self.error = Some(error);
                     }
                     Reply::BrightnessApplied(payload) => {
                         let (plan, result, snapshot, thermal) = *payload;
@@ -2172,6 +2250,7 @@ mod tests {
                 current: Some("balanced".into()),
                 options: vec!["balanced".into(), "performance".into(), "low-power".into()],
                 source: None,
+                details: None,
             },
             brightness: vec![BrightnessDevice {
                 id: "fixture-display".into(),
@@ -2219,6 +2298,7 @@ mod tests {
                 target: profile.to_string(),
                 previous: "balanced".into(),
                 scope: "OS fixture".into(),
+                details: None,
                 source: EvidenceSource {
                     backend: "test".into(),
                     path: "fixture".into(),
@@ -2238,6 +2318,7 @@ mod tests {
                 confirmed: plan.target.clone(),
                 previous: plan.previous.clone(),
                 scope: plan.scope.clone(),
+                receipt: None,
             })
         }
         fn plan_brightness(

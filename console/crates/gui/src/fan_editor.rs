@@ -1,7 +1,7 @@
 //! Local fan-curve editing. No device access, defaults or raw-table decoding.
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
 use mechrevo_console_core::{
-    fan_curve::{FanCurve, FanCurveChannel, ValidatedFanCurve, MAX_INPUT_BYTES},
+    fan_curve::{FanCurve, FanCurveChannel, MinimumDutyPolicy, ValidatedFanCurve, MAX_INPUT_BYTES},
     ControlError,
 };
 
@@ -29,6 +29,8 @@ pub struct FanEditor {
     import_text: String,
     import_error: Option<ControlError>,
     update: Option<FanEditorUpdate>,
+    minimum_duty_policy: MinimumDutyPolicy,
+    minimum_duty_error: Option<ControlError>,
 }
 
 impl FanEditor {
@@ -75,6 +77,131 @@ impl FanEditor {
         self.working = Some(draft.curve().clone());
         self.import_error = None;
         self.update = None;
+    }
+
+    pub fn minimum_duty_policy(&self) -> MinimumDutyPolicy {
+        self.minimum_duty_policy
+    }
+
+    /// Configures local options only. The draft and its update remain unchanged
+    /// until the explicit apply-to-draft action succeeds.
+    pub fn set_minimum_duty_policy(
+        &mut self,
+        policy: MinimumDutyPolicy,
+    ) -> Result<(), ControlError> {
+        policy.validate()?;
+        self.minimum_duty_policy = policy;
+        self.minimum_duty_error = None;
+        Ok(())
+    }
+
+    pub fn apply_minimum_duty(&mut self, editable: bool) -> Result<(), ControlError> {
+        let result = (|| {
+            if !editable {
+                return Err(ControlError::new(
+                    "fan_editor_not_editable",
+                    "The current operation does not permit editing the fan draft",
+                ));
+            }
+            if self.import_error.is_some() {
+                return Err(ControlError::new(
+                    "fan_draft_invalid",
+                    "Resolve the failed import before adjusting the fan draft",
+                ));
+            }
+            let base = self
+                .working
+                .as_ref()
+                .ok_or_else(|| {
+                    ControlError::new(
+                        "fan_draft_required",
+                        "Import a complete curve before setting minimum duty",
+                    )
+                })?
+                .clone()
+                .validate()?;
+            let curve = base.with_minimum_duty(self.minimum_duty_policy)?;
+            self.working = Some(curve.curve().clone());
+            // Even a valid no-op is an explicit draft action, so an older
+            // preview is invalidated by the normal Edit handoff.
+            self.update = Some(FanEditorUpdate::Edit(curve.curve().clone()));
+            Ok(())
+        })();
+        self.minimum_duty_error = result.as_ref().err().cloned();
+        result
+    }
+
+    fn minimum_duty_controls(&mut self, ui: &mut egui::Ui, editable: bool) {
+        let allowed = editable && self.is_valid();
+        ui.add_space(12.0);
+        ui.label(RichText::new("最低输出比例").size(16.0));
+        let mut policy = self.minimum_duty_policy;
+        ui.add_enabled_ui(allowed, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let mut cpu = policy.cpu_min_percent.is_some();
+                if ui.checkbox(&mut cpu, "CPU 下限").changed() {
+                    policy.cpu_min_percent = cpu.then_some(1);
+                }
+                if let Some(percent) = policy.cpu_min_percent.as_mut() {
+                    let label = ui.label("CPU 最低输出");
+                    ui.add(
+                        egui::DragValue::new(percent)
+                            .range(1..=100)
+                            .speed(1.0)
+                            .suffix("%"),
+                    )
+                    .labelled_by(label.id);
+                }
+                let mut gpu = policy.gpu_min_percent.is_some();
+                if ui.checkbox(&mut gpu, "GPU 下限").changed() {
+                    policy.gpu_min_percent = gpu.then_some(1);
+                }
+                if let Some(percent) = policy.gpu_min_percent.as_mut() {
+                    let label = ui.label("GPU 最低输出");
+                    ui.add(
+                        egui::DragValue::new(percent)
+                            .range(1..=100)
+                            .speed(1.0)
+                            .suffix("%"),
+                    )
+                    .labelled_by(label.id);
+                }
+            });
+            let selected = policy.cpu_min_percent.is_some() || policy.gpu_min_percent.is_some();
+            if !selected {
+                policy.raise_stopped_stages = false;
+            }
+            ui.add_enabled(
+                selected,
+                egui::Checkbox::new(&mut policy.raise_stopped_stages, "同时抬高 0 值节点"),
+            );
+        });
+        if policy != self.minimum_duty_policy {
+            let _ = self.set_minimum_duty_policy(policy);
+        }
+        ui.label(RichText::new("默认保留 0 值节点；实际停转行为由设备决定。输出比例与 RPM 无固定换算，散热与声音仍需实测。").size(13.0).color(secondary(ui)));
+        let selected = self.minimum_duty_policy.cpu_min_percent.is_some()
+            || self.minimum_duty_policy.gpu_min_percent.is_some();
+        if ui
+            .add_enabled(allowed && selected, egui::Button::new("应用到草稿"))
+            .clicked()
+        {
+            let _ = self.apply_minimum_duty(allowed);
+        }
+        ui.label(
+            RichText::new(
+                "只提高当前草稿节点；降低下限不会撤销此前编辑。完成后仍需预览并应用曲线。",
+            )
+            .size(13.0)
+            .color(secondary(ui)),
+        );
+        if let Some(error) = &self.minimum_duty_error {
+            ui.label(
+                RichText::new(format!("草稿未调整：{}", error.message))
+                    .size(13.0)
+                    .color(error_color(ui)),
+            );
+        }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, editable: bool, applied: Option<&ValidatedFanCurve>) {
@@ -131,6 +258,9 @@ impl FanEditor {
                 self.import_error = None;
                 self.update = self.working.clone().map(FanEditorUpdate::Edit);
             }
+        }
+        if self.working.is_some() {
+            self.minimum_duty_controls(ui, editable);
         }
         let Some(mut curve) = self.working.clone() else {
             ui.add_space(18.0);
@@ -454,6 +584,102 @@ mod tests {
             Some(FanEditorUpdate::Import(_))
         ));
     }
+    #[test]
+    fn minimum_policy_is_local_until_explicit_edit_and_preserves_the_other_channel() {
+        let mut editor = FanEditor::default();
+        editor.load_json(&input()).unwrap();
+        let original = editor.curve().unwrap().clone();
+        let _ = editor.take_update();
+        editor
+            .set_minimum_duty_policy(MinimumDutyPolicy {
+                cpu_min_percent: Some(60),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(editor.curve(), Some(&original));
+        assert!(editor.take_update().is_none());
+        editor.apply_minimum_duty(true).unwrap();
+        let updated = editor.curve().unwrap();
+        assert_eq!(updated.cpu.duty_raw, [120; 16]);
+        assert_eq!(updated.gpu, original.gpu);
+        assert_eq!(updated.cpu.rise_celsius, original.cpu.rise_celsius);
+        assert_eq!(updated.cpu.fall_celsius, original.cpu.fall_celsius);
+        assert_eq!(updated.respective, original.respective);
+        assert!(
+            matches!(editor.take_update(), Some(FanEditorUpdate::Edit(curve)) if curve.cpu.duty_raw == [120;16])
+        );
+    }
+
+    #[test]
+    fn minimum_policy_cannot_edit_missing_invalid_or_locked_drafts() {
+        let mut editor = FanEditor::default();
+        let policy = MinimumDutyPolicy {
+            cpu_min_percent: Some(100),
+            ..Default::default()
+        };
+        editor.set_minimum_duty_policy(policy).unwrap();
+        assert_eq!(
+            editor.apply_minimum_duty(true).unwrap_err().code,
+            "fan_draft_required"
+        );
+        assert!(editor.take_update().is_none());
+        editor.load_json(&input()).unwrap();
+        let original = editor.curve().unwrap().clone();
+        let _ = editor.take_update();
+        assert_eq!(
+            editor.apply_minimum_duty(false).unwrap_err().code,
+            "fan_editor_not_editable"
+        );
+        assert_eq!(editor.curve(), Some(&original));
+        assert!(editor.take_update().is_none());
+        assert!(editor.load_json(b"{truncated").is_err());
+        let _ = editor.take_update();
+        assert_eq!(
+            editor.apply_minimum_duty(true).unwrap_err().code,
+            "fan_draft_invalid"
+        );
+        assert_eq!(editor.curve(), Some(&original));
+        assert!(editor.take_update().is_none());
+    }
+
+    #[test]
+    fn minimum_policy_keeps_zero_unless_explicitly_raised_and_rejects_orphan_raise() {
+        let mut curve = ValidatedFanCurve::from_json(&input())
+            .unwrap()
+            .curve()
+            .clone();
+        curve.cpu.duty_raw[..3].copy_from_slice(&[0, 1, 119]);
+        let mut editor = FanEditor::default();
+        editor.adopt_draft(&curve.validate().unwrap());
+        assert!(editor
+            .set_minimum_duty_policy(MinimumDutyPolicy {
+                raise_stopped_stages: true,
+                ..Default::default()
+            })
+            .is_err());
+        assert_eq!(editor.minimum_duty_policy(), MinimumDutyPolicy::default());
+        let mut policy = MinimumDutyPolicy {
+            cpu_min_percent: Some(60),
+            ..Default::default()
+        };
+        editor.set_minimum_duty_policy(policy).unwrap();
+        editor.apply_minimum_duty(true).unwrap();
+        assert_eq!(&editor.curve().unwrap().cpu.duty_raw[..3], &[0, 120, 120]);
+        policy.raise_stopped_stages = true;
+        editor.set_minimum_duty_policy(policy).unwrap();
+        editor.apply_minimum_duty(true).unwrap();
+        assert_eq!(&editor.curve().unwrap().cpu.duty_raw[..3], &[120; 3]);
+        editor
+            .set_minimum_duty_policy(MinimumDutyPolicy::default())
+            .unwrap();
+        editor.apply_minimum_duty(true).unwrap();
+        assert!(matches!(
+            editor.take_update(),
+            Some(FanEditorUpdate::Edit(_))
+        ));
+        assert_eq!(&editor.curve().unwrap().cpu.duty_raw[..3], &[120; 3]);
+    }
+
     #[test]
     fn all_sixteen_duty_stages_own_a_visible_interval_including_half_percent_last_stage() {
         let plot = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(320.0, 200.0));

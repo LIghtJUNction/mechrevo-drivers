@@ -7,6 +7,7 @@ use crate::{
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
 use mechrevo_console_core::{
     brightness::{BrightnessBackend, BrightnessOutcome, BrightnessRecovery},
+    power_profiles_daemon::{self, ProfileApplyOutcome, ProfileApplyStage, ProfileHoldEffect},
     CapabilityStatus, OemControlKind, OemDomain, OemValue, PowerProfile, SensorReading,
 };
 use std::{
@@ -1260,6 +1261,8 @@ impl DesktopApp {
             ![
                 self.controller.brightness_error.as_ref(),
                 self.controller.brightness_preview_error.as_ref(),
+                self.controller.profile_error.as_ref(),
+                self.controller.profile_preview_error.as_ref(),
             ]
             .into_iter()
             .flatten()
@@ -1736,7 +1739,9 @@ impl DesktopApp {
             });
             self.fan_editor.show(
                 ui,
-                !self.controller.write_in_progress() && !self.pending_close,
+                !self.controller.write_in_progress()
+                    && !self.controller.busy()
+                    && !self.pending_close,
                 self.controller.fan_applied.as_ref(),
             );
         });
@@ -1833,13 +1838,51 @@ impl DesktopApp {
 
     fn power_controls(&mut self, ui: &mut egui::Ui) {
         heading_with_icon(ui, "系统电源策略", Icon::Power);
+        let details = self
+            .controller
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.power_policy.details.clone());
         let current = self
             .controller
             .snapshot
             .as_ref()
             .and_then(|s| s.power_policy.current.as_deref())
             .unwrap_or("未采集");
-        ui.label(RichText::new(format!("当前  {}", profile_label(current))).color(secondary(ui)));
+        let current_label = if self.controller.profile_refresh_error.is_some() {
+            "上次完整采集"
+        } else {
+            "当前"
+        };
+        ui.label(
+            RichText::new(format!("{current_label}  {}", profile_label(current)))
+                .color(secondary(ui)),
+        );
+        if let Some(details) = &details {
+            ui.label(
+                RichText::new("系统电源服务")
+                    .size(13.0)
+                    .color(secondary(ui)),
+            );
+            if !details.performance_degraded.trim().is_empty() {
+                let reason = match details.performance_degraded.as_str() {
+                    "lap-detected" => "系统报告放腿使用限制，性能暂时受限。".to_owned(),
+                    "high-operating-temperature" => "系统报告温度偏高，性能暂时受限。".to_owned(),
+                    reason => format!("系统报告性能受限：{reason}"),
+                };
+                ui.add(egui::Label::new(RichText::new(reason).size(13.0).color(amber(ui))).wrap());
+            }
+            if !details.holds.is_empty() {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("{} 项应用临时请求正在生效。", details.holds.len()))
+                            .size(13.0)
+                            .color(secondary(ui)),
+                    )
+                    .wrap(),
+                );
+            }
+        }
         let mut selected = self.controller.selected_profile;
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
@@ -1871,6 +1914,85 @@ impl DesktopApp {
         if let Some(reason) = &reason {
             unavailable(ui, reason);
         }
+        if let Some(error) = &self.controller.profile_error {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("上次更改未确认 · {}", error.message))
+                        .size(13.0)
+                        .color(error_color(ui)),
+                )
+                .wrap(),
+            );
+        }
+        if let Some(error) = &self.controller.profile_preview_error {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&error.message)
+                        .size(13.0)
+                        .color(error_color(ui)),
+                )
+                .wrap(),
+            );
+        }
+        if let Some(error) = &self.controller.profile_refresh_error {
+            ui.add(
+                egui::Label::new(RichText::new(&error.message).size(13.0).color(amber(ui))).wrap(),
+            );
+        }
+        if let Some(receipt) = &self.controller.profile_receipt {
+            if receipt.writer_may_continue {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("先前请求仍可能生效；刷新不能证明该请求已结束。")
+                            .size(13.0)
+                            .color(amber(ui)),
+                    )
+                    .wrap(),
+                );
+            }
+            match receipt.outcome {
+                ProfileApplyOutcome::Confirmed => {}
+                ProfileApplyOutcome::NotSubmitted => {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("本次更改未提交。")
+                                .size(13.0)
+                                .color(secondary(ui)),
+                        )
+                        .wrap(),
+                    );
+                }
+                ProfileApplyOutcome::Unknown => {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("本次更改结果未确认；未自动重试或恢复。")
+                                .size(13.0)
+                                .color(amber(ui)),
+                        )
+                        .wrap(),
+                    );
+                }
+            }
+            if receipt.hold_effect == ProfileHoldEffect::ReleasedObserved {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("回读时原有的应用临时请求已不在列表中。")
+                            .size(13.0)
+                            .color(amber(ui)),
+                    )
+                    .wrap(),
+                );
+            } else if receipt.hold_effect == ProfileHoldEffect::Unknown {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("应用临时请求的保留状态未确认。")
+                            .size(13.0)
+                            .color(amber(ui)),
+                    )
+                    .wrap(),
+                );
+            }
+        }
         if let Some(plan) = &self.controller.preview {
             ui.label(
                 RichText::new(format!(
@@ -1880,27 +2002,45 @@ impl DesktopApp {
                 ))
                 .color(green(ui)),
             );
+            if let Some(details) = plan
+                .details
+                .as_ref()
+                .filter(|details| details.holds_will_be_released)
+            {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "应用此档位会释放 {} 项应用临时请求。",
+                            details.holds.len()
+                        ))
+                        .size(13.0)
+                        .color(amber(ui)),
+                    )
+                    .wrap(),
+                );
+            }
         }
         if reason.is_none() || self.controller.preview.is_some() {
             ui.horizontal_wrapped(|ui| {
-                if ui
+                let preview_clicked = ui
                     .add_enabled(
                         reason.is_none() && !self.controller.busy(),
                         egui::Button::new("预览更改"),
                     )
-                    .clicked()
+                    .clicked();
+                if let Some(Err(error)) = preview_clicked.then(|| self.controller.preview_profile())
                 {
-                    let _ = self.controller.preview_profile();
+                    self.profile_submit_error(error);
                 }
-                if self.controller.preview.is_some()
+                let apply_clicked = self.controller.preview.is_some()
                     && ui
                         .add_enabled(
                             reason.is_none() && !self.controller.busy(),
                             primary_button(ui, "应用并回读"),
                         )
-                        .clicked()
-                {
-                    let _ = self.controller.apply_preview();
+                        .clicked();
+                if let Some(Err(error)) = apply_clicked.then(|| self.controller.apply_preview()) {
+                    self.profile_submit_error(error);
                 }
             });
         }
@@ -1910,6 +2050,107 @@ impl DesktopApp {
                 evidence(ui, &plan.source.backend, &plan.source.path);
             });
         }
+        if details.is_some()
+            || self.controller.profile_receipt.is_some()
+            || self.controller.profile_error.is_some()
+        {
+            egui::CollapsingHeader::new("电源策略详情")
+                .id_salt("profile-service-details")
+                .show(ui, |ui| {
+                    if let Some(details) = self
+                        .controller
+                        .preview
+                        .as_ref()
+                        .and_then(|plan| plan.details.as_ref())
+                        .or(details.as_ref())
+                    {
+                        ui.add(
+                            egui::Label::new(format!(
+                                "系统服务：{} · {}",
+                                details.daemon.bus_name, details.daemon.unique_owner
+                            ))
+                            .wrap(),
+                        );
+                        for hold in &details.holds {
+                            ui.add(
+                                egui::Label::new(format!(
+                                    "{} · {} · {}",
+                                    hold.application_id,
+                                    profile_label(&hold.profile.to_string()),
+                                    hold.reason
+                                ))
+                                .wrap(),
+                            );
+                        }
+                        if !details.performance_degraded.is_empty() {
+                            ui.add(egui::Label::new(&details.performance_degraded).wrap());
+                        }
+                    }
+                    if let Some(receipt) = &self.controller.profile_receipt {
+                        ui.label(format!(
+                            "事务阶段：{}",
+                            match receipt.stage {
+                                ProfileApplyStage::BeforeWrite => "提交前",
+                                ProfileApplyStage::Setter => "发送更改",
+                                ProfileApplyStage::Readback => "回读",
+                                ProfileApplyStage::Complete => "完成",
+                            }
+                        ));
+                        ui.label(format!(
+                            "已提交：{} · 服务确认：{:?} · 同一服务：{:?} · 请求可能继续：{}",
+                            receipt.submitted,
+                            receipt.acknowledged,
+                            receipt.authority_unchanged,
+                            receipt.writer_may_continue
+                        ));
+                        ui.label(format!(
+                            "回读档位：{}",
+                            receipt
+                                .readback
+                                .as_deref()
+                                .map(profile_label)
+                                .unwrap_or("未确认")
+                        ));
+                        ui.label(format!(
+                            "更改前临时请求：{} · 回读临时请求：{}",
+                            receipt.holds_before.len(),
+                            receipt
+                                .holds_after
+                                .as_ref()
+                                .map(|holds| holds.len().to_string())
+                                .unwrap_or_else(|| "未确认".into())
+                        ));
+                        for (label, error) in [
+                            ("主要错误", receipt.primary_error.as_ref()),
+                            ("回读错误", receipt.readback_error.as_ref()),
+                        ] {
+                            if let Some(error) = error {
+                                profile_error_details(ui, label, error);
+                            }
+                        }
+                    }
+                    if let Some(error) = &self.controller.profile_error {
+                        profile_error_details(ui, "上次操作", error);
+                    }
+                });
+        }
+    }
+
+    fn profile_submit_error(&mut self, error: SubmitError) {
+        let reason = match error {
+            SubmitError::Busy => "其他后台操作或待确认预览尚未完成。".to_owned(),
+            SubmitError::WorkerStopped => "后台已停止，请重新打开控制台。".to_owned(),
+            SubmitError::Unsupported => self
+                .controller
+                .policy_unavailable_reason()
+                .unwrap_or("当前档位不可用。")
+                .to_owned(),
+            SubmitError::PreviewRequired => "档位预览已失效，请重新预览。".to_owned(),
+        };
+        self.controller.profile_preview_error = Some(mechrevo_console_core::ControlError::new(
+            "profile_request_not_submitted",
+            reason,
+        ));
     }
 
     // @mark mechrevo.display_brightness role=presentation
@@ -2650,6 +2891,19 @@ fn profile_label(profile: &str) -> &str {
         "performance" => "性能",
         "power-saver" | "low-power" => "节能",
         _ => profile,
+    }
+}
+fn profile_error_details(
+    ui: &mut egui::Ui,
+    label: &str,
+    error: &mechrevo_console_core::ControlError,
+) {
+    ui.add(egui::Label::new(format!("{label} · {} · {}", error.code, error.message)).wrap());
+    let has_typed_receipt = power_profiles_daemon::error_receipt(error).is_some();
+    for detail in error.details.iter().filter(|detail| {
+        !(has_typed_receipt && detail.starts_with(power_profiles_daemon::PROFILE_RECEIPT_MARKER))
+    }) {
+        ui.add(egui::Label::new(detail).wrap());
     }
 }
 fn oem_value_text(value: &OemValue) -> String {

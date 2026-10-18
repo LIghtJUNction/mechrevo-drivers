@@ -13,6 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE = ROOT / "packaging/arch/mechrevo-console"
+PPD_SOURCE = "console/crates/core/src/power_profiles_daemon.rs"
 WINDOWS_BUILD_INPUTS = (
     "console/crates/cli/build.rs", "console/crates/gui/build.rs",
     "console/resources/windows/embed-gnu-manifest.rs",
@@ -26,7 +27,7 @@ SOURCE_FILES = (
     "console/crates/cli/Cargo.toml", "console/crates/cli/src/main.rs",
     "console/crates/cli/src/oem_helper.rs", "console/crates/cli/src/fan_helper.rs",
     "console/crates/core/src/privilege.rs", "console/crates/core/src/fan_curve.rs",
-    "console/crates/core/src/cpu_power.rs",
+    "console/crates/core/src/cpu_power.rs", PPD_SOURCE,
     "console/crates/core/src/fan_curve/linux.rs",
     "console/crates/core/src/fan_curve/broker.rs", "console/crates/core/src/fan_curve/client.rs",
     "console/crates/gui/src/main.rs",
@@ -184,8 +185,8 @@ class ConsoleFanPackagingTests(unittest.TestCase):
                     "--features", "mechrevo-console-gui/gui", "--locked", "--offline",
                 ])
 
-    def assert_windows_build_input_rejected(self, mutation):
-        for relative in WINDOWS_BUILD_INPUTS:
+    def assert_build_inputs_rejected(self, inputs, mutation):
+        for relative in inputs:
             with self.subTest(relative=relative):
                 path = self.source / relative
                 original = path.read_bytes()
@@ -200,7 +201,7 @@ class ConsoleFanPackagingTests(unittest.TestCase):
                         self.commit()
                     elif mutation == "untracked":
                         self.git("rm", "--cached", relative)
-                        self.git("commit", "--quiet", "-m", "untrack Windows build input")
+                        self.git("commit", "--quiet", "-m", "untrack required build input")
                         self.commit_id = self.git("rev-parse", "HEAD")
                     else:
                         self.fail("Unknown fixture mutation")
@@ -218,13 +219,22 @@ class ConsoleFanPackagingTests(unittest.TestCase):
                     self.commit()
 
     def test_each_phase_rejects_missing_windows_build_inputs(self):
-        self.assert_windows_build_input_rejected("missing")
+        self.assert_build_inputs_rejected(WINDOWS_BUILD_INPUTS, "missing")
 
     def test_each_phase_rejects_committed_symlink_windows_build_inputs(self):
-        self.assert_windows_build_input_rejected("symlink")
+        self.assert_build_inputs_rejected(WINDOWS_BUILD_INPUTS, "symlink")
 
     def test_each_phase_rejects_untracked_windows_build_inputs(self):
-        self.assert_windows_build_input_rejected("untracked")
+        self.assert_build_inputs_rejected(WINDOWS_BUILD_INPUTS, "untracked")
+
+    def test_each_phase_rejects_missing_power_profile_daemon_source(self):
+        self.assert_build_inputs_rejected((PPD_SOURCE,), "missing")
+
+    def test_each_phase_rejects_committed_symlink_power_profile_daemon_source(self):
+        self.assert_build_inputs_rejected((PPD_SOURCE,), "symlink")
+
+    def test_each_phase_rejects_untracked_power_profile_daemon_source(self):
+        self.assert_build_inputs_rejected((PPD_SOURCE,), "untracked")
 
     def test_each_phase_rejects_missing_user_guide(self):
         (self.source / "docs/MECHREVO-CONSOLE-USER-GUIDE.md").unlink()

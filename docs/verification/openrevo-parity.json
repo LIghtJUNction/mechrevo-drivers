@@ -370,6 +370,17 @@
       "windows_runtime_verified": false,
       "physical_fn_key_verified": false,
       "scope": "Source/offline subset only. No Windows MSI build, UAC, installation/maintenance, native GUI or hardware acceptance; full feature family remains incomplete."
+    },
+    "os_profile_fan_development": {
+      "status": "source_candidate_full_suite_pending_not_installed",
+      "evidence_ref": "docs/verification/os-profile-fan-control.json",
+      "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+      "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
+      "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
+      "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+      "installed": false,
+      "physical_acceptance": false,
+      "complete_family_resolved": false
     }
   },
   "upstream": {
@@ -629,9 +640,21 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/os-profile-fan-control.json"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "os_profile_fan_candidate": {
+        "status": "source_candidate_full_suite_pending_not_installed",
+        "evidence_ref": "docs/verification/os-profile-fan-control.json",
+        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
+        "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
+        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "installed": false,
+        "physical_acceptance": false,
+        "complete_family_resolved": false
+      }
     },
     {
       "id": "F04",
@@ -689,7 +712,8 @@
         "docs/verification/fan-gui-broker.json",
         "docs/verification/deployment-fan-r162-r163.json",
         "docs/verification/thermal-sampling.json",
-        "docs/verification/deployment-console-r166.json"
+        "docs/verification/deployment-console-r166.json",
+        "docs/verification/os-profile-fan-control.json"
       ],
       "resolved_in_this_project": false,
       "source_development_notes": [
@@ -713,6 +737,17 @@
         "physical_fan_lease_response_and_noise": "not_verified",
         "complete_family_resolved": false,
         "python_console_tests_passed": 131
+      },
+      "os_profile_fan_candidate": {
+        "status": "source_candidate_full_suite_pending_not_installed",
+        "evidence_ref": "docs/verification/os-profile-fan-control.json",
+        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
+        "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
+        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "installed": false,
+        "physical_acceptance": false,
+        "complete_family_resolved": false
       }
     },
     {
@@ -2099,7 +2134,8 @@
         "docs/verification/deployment-cpu-r168.json",
         "docs/verification/deployment-console-r171.json",
         "docs/verification/windows-fnlock-control.json",
-        "docs/verification/deployment-console-r174.json"
+        "docs/verification/deployment-console-r174.json",
+        "docs/verification/os-profile-fan-control.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -2186,6 +2222,17 @@
         "installation": "r171_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
         "loading": "r171_installed_ordinary_user_cli_brightness_and_isolated_gui_preview_verified_gui_apply_pending",
         "scope": "Original r171 current fields retained when the later r174 package/read-only smoke became current; r171 brightness write/preview proof remains in brightness_deployment."
+      },
+      "os_profile_fan_candidate": {
+        "status": "source_candidate_full_suite_pending_not_installed",
+        "evidence_ref": "docs/verification/os-profile-fan-control.json",
+        "evidence_sha256": "31abef8abd00d8180a8c0c19bb10ed99d94a80bf728c7a576ed37c59339dbfcf",
+        "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
+        "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
+        "verification_scope": "Only portable production floor/codec baseline and mutation check recorded; unified Rust/Python, CLI/GUI and native lease acceptance pending.",
+        "installed": false,
+        "physical_acceptance": false,
+        "complete_family_resolved": false
       }
     },
     {

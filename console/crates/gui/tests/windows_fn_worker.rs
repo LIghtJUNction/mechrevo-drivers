@@ -396,6 +396,7 @@ fn profile_plan() -> ProfilePlan {
         target: "fixture".into(),
         previous: "fixture".into(),
         scope: "fixture".into(),
+        details: None,
         source: EvidenceSource {
             backend: "fixture".into(),
             path: "fixture://no-hardware".into(),

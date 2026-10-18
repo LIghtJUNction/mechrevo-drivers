@@ -7,10 +7,12 @@ pub mod command;
 pub mod cpu_power;
 pub mod fan_curve;
 pub mod oem;
+pub mod power_profiles_daemon;
 pub mod privilege;
 pub mod windows_oem;
 pub use brightness::{BrightnessApplyResult, BrightnessDevice, BrightnessPlan};
 pub use oem::{OemApplyResult, OemControl, OemControlKind, OemDomain, OemPlan, OemValue};
+pub use power_profiles_daemon::{ProfileApplyReceipt, ProfileDetails};
 #[cfg(any(target_os = "linux", test))]
 mod linux;
 pub mod registry;
@@ -95,6 +97,8 @@ pub struct PowerPolicy {
     pub current: Option<String>,
     pub options: Vec<String>,
     pub source: Option<EvidenceSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ProfileDetails>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -156,13 +160,32 @@ pub fn profile_available(snapshot: &Snapshot, profile: PowerProfile) -> bool {
         .current
         .as_ref()
         .is_some_and(|current| snapshot.power_policy.options.contains(current))
-        && profile_target(&snapshot.platform, profile).is_some_and(|target| {
+        && profile_target_for_source(
+            &snapshot.platform,
+            snapshot.power_policy.source.as_ref(),
+            profile,
+        )
+        .is_some_and(|target| {
             snapshot
                 .power_policy
                 .options
                 .iter()
                 .any(|option| option == target)
         })
+}
+fn profile_target_for_source(
+    platform: &str,
+    source: Option<&EvidenceSource>,
+    profile: PowerProfile,
+) -> Option<&'static str> {
+    if platform == "linux"
+        && source.is_some_and(|source| source.backend == "linux_power_profiles_daemon")
+        && profile == PowerProfile::PowerSaver
+    {
+        Some("power-saver")
+    } else {
+        profile_target(platform, profile)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfilePlan {
@@ -171,6 +194,8 @@ pub struct ProfilePlan {
     pub previous: String,
     pub scope: String,
     pub source: EvidenceSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ProfileDetails>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyResult {
@@ -178,6 +203,8 @@ pub struct ApplyResult {
     pub confirmed: String,
     pub previous: String,
     pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<ProfileApplyReceipt>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlError {
@@ -473,7 +500,8 @@ impl Service {
         }
     }
 }
-/// One control is changed at a time. A failed/ambiguous write triggers a verified restore.
+/// Restore only a still-observed value belonging to this request. Foreign or
+/// unreadable profiles are preserved; matching-value ABA is not excluded.
 // @mark mechrevo.os_power_policy role=implementation
 fn apply_verified<R, W>(
     plan: &ProfilePlan,
@@ -489,6 +517,22 @@ where
             "stale_plan",
             "Current profile changed before write",
         ));
+    }
+    if plan.target == plan.previous {
+        let confirmed = read()?;
+        if confirmed != plan.previous {
+            return Err(ControlError::new(
+                "stale_plan",
+                "Current profile changed during the no-op check",
+            ));
+        }
+        return Ok(ApplyResult {
+            requested: plan.requested,
+            confirmed,
+            previous: plan.previous.clone(),
+            scope: plan.scope.clone(),
+            receipt: None,
+        });
     }
     let attempt = write(&plan.target)
         .and_then(|()| read())
@@ -508,8 +552,51 @@ where
             confirmed,
             previous: plan.previous.clone(),
             scope: plan.scope.clone(),
+            receipt: None,
         }),
         Err(mut error) => {
+            // A failed call or mismatched readback does not give us ownership
+            // of another application's profile. Never overwrite it to make
+            // the old value appear restored.
+            let current = match read() {
+                Ok(current) => current,
+                Err(observation) => {
+                    error.details.push(format!(
+                        "restore_unknown: {observation}; no recovery write attempted"
+                    ));
+                    return Err(error);
+                }
+            };
+            if current == plan.previous {
+                error.details.push(format!(
+                    "restore_not_needed: previous profile observed, {}",
+                    plan.previous
+                ));
+                return Err(error);
+            }
+            if current != plan.target {
+                error
+                    .details
+                    .push(format!("restore_skipped_foreign_profile: {current}"));
+                return Err(error);
+            }
+            // Recheck immediately before recovery. There is no OS-level CAS:
+            // another writer can still race after this final observation.
+            match read() {
+                Ok(current) if current == plan.target => {}
+                Ok(current) => {
+                    error
+                        .details
+                        .push(format!("restore_skipped_changed_profile: {current}"));
+                    return Err(error);
+                }
+                Err(observation) => {
+                    error.details.push(format!(
+                        "restore_unknown: {observation}; no recovery write attempted"
+                    ));
+                    return Err(error);
+                }
+            }
             match write(&plan.previous).and_then(|()| read()) {
                 Ok(actual) if actual == plan.previous => error
                     .details
@@ -587,7 +674,7 @@ mod tests {
         assert!(cache.get().unwrap().is_err());
     }
     #[test]
-    fn profile_readback_failure_restores_and_reports_unknown_restore() {
+    fn profile_failure_preserves_foreign_state_and_does_not_claim_a_restore() {
         use std::cell::RefCell;
         let state = RefCell::new("balanced".to_string());
         let p = ProfilePlan {
@@ -600,6 +687,7 @@ mod tests {
                 path: "test".into(),
                 device_id: None,
             },
+            details: None,
         };
         let r = apply_verified(
             &p,
@@ -616,15 +704,173 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(r.code, "readback_mismatch");
-        assert_eq!(state.borrow().as_str(), "balanced");
-        assert!(r.details.iter().any(|d| d.starts_with("restore_confirmed")));
+        assert_eq!(state.borrow().as_str(), "refused");
+        assert!(r
+            .details
+            .iter()
+            .any(|d| d.starts_with("restore_skipped_foreign_profile")));
         let r = apply_verified(
             &p,
             || Ok("balanced".into()),
             |_| Err(ControlError::new("io", "write failed")),
         )
         .unwrap_err();
-        assert!(r.details.iter().any(|d| d.starts_with("restore_unknown")));
+        assert!(r
+            .details
+            .iter()
+            .any(|d| d.starts_with("restore_not_needed")));
+    }
+    fn os_profile_test_plan() -> ProfilePlan {
+        ProfilePlan {
+            requested: PowerProfile::Performance,
+            previous: "balanced".into(),
+            target: "performance".into(),
+            scope: "offline OS profile transaction".into(),
+            source: EvidenceSource {
+                backend: "test".into(),
+                path: "test".into(),
+                device_id: None,
+            },
+            details: None,
+        }
+    }
+    #[test]
+    fn os_profile_failed_call_landed_target_is_conditionally_restored() {
+        use std::cell::RefCell;
+        let state = RefCell::new("balanced".to_string());
+        let writes = RefCell::new(Vec::new());
+        let error = apply_verified(
+            &os_profile_test_plan(),
+            || Ok(state.borrow().clone()),
+            |value| {
+                writes.borrow_mut().push(value.to_owned());
+                *state.borrow_mut() = value.to_owned();
+                if value == "performance" {
+                    Err(ControlError::new("write_failed", "failed after submission"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "write_failed");
+        assert_eq!(&*writes.borrow(), &["performance", "balanced"]);
+        assert_eq!(&*state.borrow(), "balanced");
+        assert!(error
+            .details
+            .iter()
+            .any(|detail| detail.starts_with("restore_confirmed:")));
+    }
+    #[test]
+    fn os_profile_third_party_change_before_recovery_is_preserved() {
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        let observations = RefCell::new(VecDeque::from(["balanced", "performance", "power-saver"]));
+        let writes = RefCell::new(Vec::new());
+        let error = apply_verified(
+            &os_profile_test_plan(),
+            || Ok(observations.borrow_mut().pop_front().unwrap().into()),
+            |value| {
+                writes.borrow_mut().push(value.to_owned());
+                Err(ControlError::new("write_failed", "failed after submission"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(&*writes.borrow(), &["performance"]);
+        assert!(error
+            .details
+            .iter()
+            .any(|detail| detail == "restore_skipped_changed_profile: power-saver"));
+    }
+    #[test]
+    fn os_profile_unknown_state_never_causes_a_recovery_write() {
+        use std::cell::{Cell, RefCell};
+        let reads = Cell::new(0);
+        let writes = RefCell::new(Vec::new());
+        let error = apply_verified(
+            &os_profile_test_plan(),
+            || {
+                reads.set(reads.get() + 1);
+                if reads.get() == 1 {
+                    Ok("balanced".into())
+                } else {
+                    Err(ControlError::new("read_failed", "unavailable"))
+                }
+            },
+            |value| {
+                writes.borrow_mut().push(value.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "read_failed");
+        assert_eq!(&*writes.borrow(), &["performance"]);
+        assert!(error
+            .details
+            .iter()
+            .any(|detail| detail.starts_with("restore_unknown:")));
+    }
+    #[test]
+    fn os_profile_noop_rechecks_without_any_setter() {
+        use std::cell::Cell;
+        let writes = Cell::new(0);
+        let mut plan = os_profile_test_plan();
+        plan.target = plan.previous.clone();
+        plan.requested = PowerProfile::Balanced;
+        let result = apply_verified(
+            &plan,
+            || Ok("balanced".into()),
+            |_| {
+                writes.set(writes.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(result.confirmed, "balanced");
+        assert_eq!(writes.get(), 0);
+        let reads = Cell::new(0);
+        let error = apply_verified(
+            &plan,
+            || {
+                reads.set(reads.get() + 1);
+                Ok(if reads.get() == 1 {
+                    "balanced"
+                } else {
+                    "performance"
+                }
+                .into())
+            },
+            |_| {
+                writes.set(writes.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "stale_plan");
+        assert_eq!(writes.get(), 0);
+    }
+    #[test]
+    fn os_profile_failed_restore_never_claims_success_even_if_it_landed() {
+        use std::cell::RefCell;
+        let state = RefCell::new("balanced".to_string());
+        let error = apply_verified(
+            &os_profile_test_plan(),
+            || Ok(state.borrow().clone()),
+            |value| {
+                *state.borrow_mut() = value.to_owned();
+                Err(ControlError::new("write_failed", "failed after submission"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(&*state.borrow(), "balanced");
+        assert!(error
+            .details
+            .iter()
+            .any(|detail| detail.starts_with("restore_unknown:")));
+        assert!(!error
+            .details
+            .iter()
+            .any(|detail| detail.starts_with("restore_confirmed:")));
     }
     #[test]
     fn supported_profile_checks_are_platform_specific_and_require_known_current() {
@@ -638,12 +884,22 @@ mod tests {
                 current: Some("balanced".into()),
                 options: vec!["balanced".into(), "performance".into()],
                 source: None,
+                details: None,
             },
             diagnostics: vec![],
             brightness: vec![],
             oem_controls: vec![],
         };
         assert!(profile_available(&snapshot, PowerProfile::Performance));
+        assert!(!profile_available(&snapshot, PowerProfile::PowerSaver));
+        snapshot.power_policy.options = vec!["balanced".into(), "power-saver".into()];
+        snapshot.power_policy.source = Some(EvidenceSource {
+            backend: "linux_power_profiles_daemon".into(),
+            path: "system-bus".into(),
+            device_id: None,
+        });
+        assert!(profile_available(&snapshot, PowerProfile::PowerSaver));
+        snapshot.power_policy.source.as_mut().unwrap().backend = "linux_sysfs".into();
         assert!(!profile_available(&snapshot, PowerProfile::PowerSaver));
         snapshot.platform = "windows".into();
         assert!(!profile_available(&snapshot, PowerProfile::Balanced));

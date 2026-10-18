@@ -45,6 +45,7 @@ _validate_source_tree() {
         console/crates/cli/src/oem_helper.rs console/crates/cli/src/fan_helper.rs \
         console/crates/core/src/privilege.rs console/crates/core/src/fan_curve.rs \
         console/crates/core/src/cpu_power.rs \
+        console/crates/core/src/power_profiles_daemon.rs \
         console/crates/core/src/fan_curve/linux.rs \
         console/crates/core/src/fan_curve/broker.rs console/crates/core/src/fan_curve/client.rs \
         console/crates/gui/build.rs console/crates/gui/src/main.rs \

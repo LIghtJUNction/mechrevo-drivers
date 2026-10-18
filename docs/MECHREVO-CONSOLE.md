@@ -2,6 +2,14 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
+## 系统电源策略与风扇最低比例源码候选（尚未安装）
+
+Linux 源码新增 PPD 系统电源服务读取／设置及界面；只有确认两个服务名字都无 owner 才回退 ACPI，异常或身份变化不绕过服务。预览绑定真实公布档位、当前值、应用临时请求和服务身份；设置可能先释放应用请求再失败，故 PPD 不自动重试或恢复。CLI 新增 `profile … --expected-current RAW`，精确核对原始名称／GUID；刷新保留未知回执，新的显式意图和本地 worker 完成后关闭仍允许。[系统电源策略](SYSTEM-POWER-PROFILES.md)
+
+完整用户风扇曲线新增可选 CPU／GPU 最低输出比例 `1..100%`，默认不设置且保留 0 值档位；只有显式选定通道并允许抬高 0 值才修改它们。GUI 点“应用到草稿”后仍需预览和显式应用，继续走原有租约及原表恢复。它是占空比下限，不是 RPM 或已验证的避振参数。[风扇合同](FAN-CURVE-CONTROL.md#最低输出比例源码候选尚未安装)
+
+本轮统一套件仍待验证；目前纯策略模块的限定风扇负例不能算 CLI／GUI 或实机通过。当前安装仍为 r174，原驱动尚未新加载，没有新增风扇写入或噪声验收。[本轮候选收据](verification/os-profile-fan-control.json)
+
 ## r174 控制台已安装（2026-10-18）
 
 Linux 控制台 `0.1.0.r174.g256fb05-1` 已真实安装，功能源码为本地签名提交 `256fb05aded292eca662bc0eaf1d876320596a24`，打包元数据另由签名提交 `c0b11920db7a03a5bc32fb033bd9a470bd1db12c` 固定。92 份输入匹配最终 519 项全特性 Rust／140 项 Python 控制台检查；实际 Linux 包只启用 GUI 特性，对应离线测试 518 项通过、0 失败。另一次 Windows all-targets 仅编译检查退出 0，保留两条 unused 警告，不能算 Windows 运行通过。[r174 安装收据](verification/deployment-console-r174.json)
@@ -133,7 +141,7 @@ Rust 身份识别使用独立的精确规则。品牌命中仅是身份线索；
 
 ## 系统功能
 
-电源策略使用 Linux `platform_profile` 和 Windows `powercfg`。这里的系统策略不等于原厂办公、狂暴或指定瓦数模式。修改先生成计划，再检查当前值，最后写入并回读；失败报告与恢复结果分开。
+r174 及更早安装的电源策略使用 Linux `platform_profile` 和 Windows `powercfg`。新源码另接入优先的 Linux PPD 系统服务，具体资格、holds 副作用与失败合同见[系统电源策略](SYSTEM-POWER-PROFILES.md)；它尚未安装。这里的系统策略不等于原厂办公、狂暴或指定瓦数模式，PPD 的服务副作用也不能按直接 sysfs 写入处理。
 
 屏幕亮度使用 Linux backlight 或 Windows `WmiMonitorBrightness`。控制值与实际亮度分开；多屏需要选择目标。缺驱动、权限不足或不支持的目标值会返回明确错误，不显示虚构的成功状态。
 

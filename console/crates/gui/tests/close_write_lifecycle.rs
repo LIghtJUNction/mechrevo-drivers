@@ -48,6 +48,7 @@ impl Backend for WritingBackend {
                 confirmed: plan.target.clone(),
                 previous: plan.previous.clone(),
                 scope: plan.scope.clone(),
+                receipt: None,
             })
         }
     }
@@ -108,6 +109,7 @@ fn close_waits_without_freezing_for_success_and_completed_rollback() {
             target: "performance".into(),
             previous: "balanced".into(),
             scope: "fixture-only".into(),
+            details: None,
             source: EvidenceSource {
                 backend: "fixture-only".into(),
                 path: "fixture://no-hardware".into(),

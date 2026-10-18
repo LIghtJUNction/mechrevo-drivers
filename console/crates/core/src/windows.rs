@@ -146,6 +146,7 @@ fn parse_schemes(text: &str) -> Result<PowerPolicy, ControlError> {
             path: "powercfg /list".into(),
             device_id: None,
         }),
+        details: None,
     })
 }
 fn policy() -> Result<PowerPolicy, ControlError> {
@@ -222,6 +223,7 @@ pub(crate) fn plan(requested: PowerProfile) -> Result<ProfilePlan, ControlError>
         previous: state.current.unwrap(),
         scope: state.scope,
         source: state.source.unwrap(),
+        details: None,
     })
 }
 pub(crate) fn apply(requested: &ProfilePlan) -> Result<ApplyResult, ControlError> {
@@ -230,6 +232,7 @@ pub(crate) fn apply(requested: &ProfilePlan) -> Result<ApplyResult, ControlError
         || fresh.previous != requested.previous
         || fresh.source != requested.source
         || fresh.scope != requested.scope
+        || fresh.details != requested.details
     {
         return Err(ControlError::new(
             "stale_plan",

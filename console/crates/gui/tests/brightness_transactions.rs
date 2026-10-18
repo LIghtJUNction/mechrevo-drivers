@@ -417,6 +417,7 @@ fn profile_plan() -> ProfilePlan {
         target: "performance".into(),
         previous: "balanced".into(),
         scope: "fixture".into(),
+        details: None,
         source: device("panel-a").source,
     }
 }

@@ -183,7 +183,50 @@ pub(crate) fn sample_thermal(root: &Path) -> Result<ThermalSample, ControlError>
     })
 }
 
+fn native_profile_root(root: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if root != Path::new("/sys") {
+            return false;
+        }
+        let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: the fixed NUL-terminated path and writable statfs storage
+        // remain valid for the call. No system operation is performed.
+        if unsafe { libc::statfs(c"/sys".as_ptr(), info.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        // SAFETY: successful statfs initialized the structure.
+        unsafe { info.assume_init() }.f_type == 0x6265_6572
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        false
+    }
+}
+
 pub(crate) fn policy(root: &Path) -> PowerPolicy {
+    #[cfg(target_os = "linux")]
+    if native_profile_root(root) {
+        match power_profiles_daemon::discover() {
+            power_profiles_daemon::Discovery::Absent => {}
+            power_profiles_daemon::Discovery::Present(Ok(policy)) => return *policy,
+            power_profiles_daemon::Discovery::Present(Err(error)) => {
+                return PowerPolicy {
+                    scope: format!(
+                        "System power profile service unavailable: {}",
+                        error.message
+                    ),
+                    source: Some(EvidenceSource {
+                        backend: "linux_power_profiles_daemon".into(),
+                        path: "/org/freedesktop/UPower/PowerProfiles".into(),
+                        device_id: None,
+                    }),
+                    ..Default::default()
+                }
+            }
+        }
+    }
     let path = root.join("firmware/acpi/platform_profile");
     let choices = root.join("firmware/acpi/platform_profile_choices");
     let options = read(&choices)
@@ -194,6 +237,7 @@ pub(crate) fn policy(root: &Path) -> PowerPolicy {
         current: read(&path),
         options,
         source: Some(source(&path, "acpi_platform_profile")),
+        details: None,
     }
 }
 // @mark mechrevo.telemetry role=implementation
@@ -272,7 +316,33 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
         .is_some_and(|v| power_policy.options.contains(v))
         && !power_policy.options.is_empty();
     let mut capabilities = proprietary_capabilities();
-    capabilities.push(Capability{id:"power_profile".into(),label:"OS platform power profile".into(),status:if profile_available{CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:if profile_available{"Kernel exposes current platform profile and enumerated choices. Write permission and readback are checked on apply."}else{"Missing/unreadable current platform_profile or choices; no OEM profile guessed."}.into(),source:power_policy.source.clone(),options:power_policy.options.clone()});
+    let daemon_profile = power_policy
+        .source
+        .as_ref()
+        .is_some_and(|source| source.backend == "linux_power_profiles_daemon");
+    let profile_reason = if daemon_profile {
+        if profile_available {
+            "System power profile service reports the active profile and available choices. Explicit application uses its own system-bus authorization and independent readback.".into()
+        } else {
+            power_policy.scope.clone()
+        }
+    } else if profile_available {
+        "Kernel exposes current platform profile and enumerated choices. Write permission and readback are checked on apply.".into()
+    } else {
+        "Missing/unreadable current platform_profile or choices; no OEM profile guessed.".into()
+    };
+    capabilities.push(Capability {
+        id: "power_profile".into(),
+        label: "OS power profile".into(),
+        status: if profile_available {
+            CapabilityStatus::Available
+        } else {
+            CapabilityStatus::Unavailable
+        },
+        reason: profile_reason,
+        source: power_policy.source.clone(),
+        options: power_policy.options.clone(),
+    });
     capabilities.push(Capability{id:"telemetry".into(),label:"OS sensor telemetry".into(),status:if telemetry.iter().any(|r|r.value.is_some()){CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:"Each sensor retains its device identity, label, unit and sysfs source; missing values are unknown.".into(),source:None,options:vec![]});
     if batteries == 0 {
         diagnostics.push(Diagnostic {
@@ -294,6 +364,14 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
 // @mark mechrevo.os_power_policy role=implementation
 pub(crate) fn plan(root: &Path, requested: PowerProfile) -> Result<ProfilePlan, ControlError> {
     let state = policy(root);
+    #[cfg(target_os = "linux")]
+    if state
+        .source
+        .as_ref()
+        .is_some_and(|source| source.backend == "linux_power_profiles_daemon")
+    {
+        return power_profiles_daemon::plan(requested);
+    }
     let previous = state.current.ok_or_else(|| {
         ControlError::new(
             "profile_unavailable",
@@ -316,14 +394,26 @@ pub(crate) fn plan(root: &Path, requested: PowerProfile) -> Result<ProfilePlan, 
         previous,
         scope: state.scope,
         source: state.source.unwrap(),
+        details: None,
     })
 }
 pub(crate) fn apply(root: &Path, requested: &ProfilePlan) -> Result<ApplyResult, ControlError> {
+    if requested.source.backend == "linux_power_profiles_daemon" {
+        #[cfg(target_os = "linux")]
+        if native_profile_root(root) {
+            return power_profiles_daemon::apply(requested);
+        }
+        return Err(ControlError::new(
+            "stale_plan",
+            "A system-bus profile plan cannot be applied through a fixture or non-native backend",
+        ));
+    }
     let fresh = plan(root, requested.requested)?;
     if fresh.target != requested.target
         || fresh.previous != requested.previous
         || fresh.scope != requested.scope
         || fresh.source != requested.source
+        || fresh.details != requested.details
     {
         return Err(ControlError::new(
             "stale_plan",
