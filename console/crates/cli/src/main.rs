@@ -14,7 +14,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--expected-current RAW] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nBrightness --dry-run never writes or invokes a brightness setter. Applied output\nseparates source, selected write_backend, requested_control and actual_value.\n--expected-current RAW requires a target: RAW is the raw OS control value, not\na percent. This optional stale-request guard is not atomic kernel CAS.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 const CPU_POWER_HELP: &str = "\nCPU PL1 policy (independent of OS power profiles):\n  mechrevo-console cpu-power probe\n  mechrevo-console cpu-power set WATTS [--dry-run]\n      [--target-celsius native|90] [--polling-seconds native|1]\n      [--rapl-debounce-seconds native|0]\n  mechrevo-console cpu-power <clear|recover|reapply> [--dry-run]\n\nCPU commands require explicit authorization for their read-only probe. A CPU\n--dry-run probes, then previews locally without executing a policy change.\nSet preserves every omitted option from the observed complete policy; on a\nnative unmanaged host, absent options remain explicit null. Native and 90/1/0\nare distinct settings. Allowed watts come from the qualified controller.\nClear/recover return to native thermald policy, not a fixed watt value.\nExecuted CPU policies persist after this command exits. JSON output is default.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
@@ -25,7 +25,7 @@ enum Action {
     Capabilities,
     Models(String),
     Profile(PowerProfile, bool),
-    Brightness(Option<u8>, Option<String>, bool),
+    Brightness(Option<u8>, Option<String>, bool, Option<u32>),
     OemList,
     OemSet(String, String, bool),
     FanValidate(PathBuf),
@@ -127,6 +127,7 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             let mut percent = None;
             let mut device = None;
             let mut dry = false;
+            let mut expected_current = None;
             let mut i = 0;
             while i < rest.len() {
                 let token = text(&rest[i])?;
@@ -138,10 +139,22 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
                             .get(i)
                             .ok_or_else(|| usage("--device needs a device ID"))?;
                         let id = text(arg)?;
-                        if id.is_empty() {
-                            return Err(usage("Device ID must not be empty"));
+                        if id.is_empty() || id.starts_with("--") {
+                            return Err(usage("--device needs an explicit device ID, not an option"));
                         }
                         device = Some(id.into());
+                    }
+                    "--expected-current" if expected_current.is_none() => {
+                        i += 1;
+                        let raw = rest.get(i).map(text).transpose()?.ok_or_else(|| {
+                            usage("--expected-current needs an unsigned raw OS value")
+                        })?;
+                        if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+                            return Err(usage("--expected-current must be a whole raw OS value from 0 through 4294967295"));
+                        }
+                        expected_current = Some(raw.parse::<u32>().map_err(|_| {
+                            usage("--expected-current exceeds the unsigned 32-bit range")
+                        })?);
                     }
                     value if percent.is_none() => {
                         let value = value.parse::<u16>().map_err(|_| {
@@ -159,7 +172,10 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             if dry && percent.is_none() {
                 return Err(usage("--dry-run requires a target percent"));
             }
-            Ok(Action::Brightness(percent, device, dry))
+            if expected_current.is_some() && percent.is_none() {
+                return Err(usage("--expected-current requires a target percent"));
+            }
+            Ok(Action::Brightness(percent, device, dry, expected_current))
         }
         "oem" if rest.len() == 1 && rest[0] == "list" => Ok(Action::OemList),
         "oem" if (rest.len() == 3 || rest.len() == 4) && rest[0] == "set" => {
@@ -976,6 +992,485 @@ mod cpu_power_cli {
         }
     }
 }
+mod brightness_cli {
+    use super::*;
+    use mechrevo_console_core::{
+        brightness, BrightnessApplyResult, BrightnessDevice, BrightnessPlan,
+    };
+
+    const CONTEXT_MARKER: &str = "brightness_cli_context=";
+
+    trait Backend {
+        fn devices(&self) -> Vec<BrightnessDevice>;
+        fn plan(&self, percent: u8, device: Option<&str>) -> Result<BrightnessPlan, ControlError>;
+        fn apply(&self, plan: &BrightnessPlan) -> Result<BrightnessApplyResult, ControlError>;
+    }
+    impl Backend for Service {
+        fn devices(&self) -> Vec<BrightnessDevice> {
+            self.brightness_devices()
+        }
+        fn plan(&self, percent: u8, device: Option<&str>) -> Result<BrightnessPlan, ControlError> {
+            self.plan_brightness(percent, device)
+        }
+        fn apply(&self, plan: &BrightnessPlan) -> Result<BrightnessApplyResult, ControlError> {
+            self.apply_brightness(plan)
+        }
+    }
+    fn with_context(mut error: ControlError, context: Value) -> ControlError {
+        error.details.push(format!("{CONTEXT_MARKER}{context}"));
+        error
+    }
+    pub(super) fn error_document(error: &ControlError) -> Value {
+        let mut document = json!({"error":error});
+        if let Some(transaction) = brightness::transaction_from_error(error) {
+            document["brightness_transaction"] = json!(transaction);
+        }
+        if let Some(context) = error.details.iter().rev().find_map(|detail| {
+            detail
+                .strip_prefix(CONTEXT_MARKER)
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        }) {
+            document["brightness_context"] = context;
+        }
+        document
+    }
+    fn run_with(
+        percent: Option<u8>,
+        device: Option<&str>,
+        dry_run: bool,
+        expected_current: Option<u32>,
+        backend: &impl Backend,
+        writer: &mut impl Write,
+    ) -> Result<(), ControlError> {
+        let Some(percent) = percent else {
+            let mut devices = backend.devices();
+            if let Some(id) = device {
+                devices.retain(|candidate| candidate.id == id);
+                if devices.is_empty() {
+                    return Err(ControlError::new(
+                        "brightness_device_unavailable",
+                        "Requested device was not enumerated",
+                    ));
+                }
+                if devices.len() != 1 {
+                    return Err(ControlError::new(
+                        "brightness_device_ambiguous",
+                        "Multiple brightness devices have this exact ID; no write was attempted",
+                    ));
+                }
+            }
+            return write_json(writer, &json!(devices));
+        };
+        let plan = backend.plan(percent, device)?;
+        if let Some(expected) = expected_current {
+            if expected != plan.previous {
+                return Err(with_context(ControlError::new("brightness_plan_stale",
+                    "The raw OS brightness no longer matches --expected-current; no write was attempted"),
+                    json!({"plan":plan,"expected_current":expected,"apply_attempted":false})));
+            }
+        }
+        if dry_run {
+            return write_json(writer, &json!({"dry_run":true,"plan":plan}));
+        }
+        let applied = backend.apply(&plan).map_err(|error| {
+            with_context(error, json!({"plan":plan,"apply_returned_success":false}))
+        })?;
+        let mut output = json!(applied);
+        // The backend verifies this exact route and never silently falls back.
+        // source identifies the observed OS interface; it is not the write route.
+        output["write_backend"] = json!(plan.backend);
+        output["logind_session"] = json!(plan.logind_session);
+        output["requested_control"] = json!(plan.target);
+        write_json(writer, &output).map_err(|error| with_context(error,
+            json!({"plan":plan,"apply_returned_success":true,"applied_result":output,
+                "scope":"The apply result was returned before output failed; no retry or restoration was initiated by the CLI."})))
+    }
+    pub(super) fn run(
+        percent: Option<u8>,
+        device: Option<&str>,
+        dry_run: bool,
+        expected_current: Option<u32>,
+        service: &Service,
+        writer: &mut impl Write,
+    ) -> Result<(), ControlError> {
+        run_with(percent, device, dry_run, expected_current, service, writer)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::{Cell, RefCell};
+
+        fn source() -> Value {
+            json!({"backend":"linux_backlight","path":"/fixture/devices/panel","device_id":"panel"})
+        }
+        fn binding() -> Value {
+            json!({"session_id":"3","object_path":"/org/freedesktop/login1/session/_33",
+                "uid":1000,"seat_id":"seat0","seat_path":"/org/freedesktop/login1/seat/seat0"})
+        }
+        fn transaction(outcome: &str, recovery: &str) -> Value {
+            json!({"outcome":outcome,"write_attempted":outcome!="not_applied" && outcome!="conflict",
+                "writer_may_continue":outcome=="unknown","observed_control":if outcome=="unknown" {Value::Null}else{json!(700)},
+                "primary_error":null,"rollback_error":null,"readback_error":null,
+                "recovery":recovery,"recovery_reason":null})
+        }
+        struct Stub {
+            devices: Vec<BrightnessDevice>,
+            enumerations: Cell<usize>,
+            plan: BrightnessPlan,
+            plans: RefCell<Vec<(u8, Option<String>)>>,
+            plan_error: Option<ControlError>,
+            applications: Cell<usize>,
+            result: Result<BrightnessApplyResult, ControlError>,
+        }
+        impl Stub {
+            fn new() -> Self {
+                let device = serde_json::from_value(json!({"id":"panel","label":"Fixture screen",
+                    "current_percent":70.0,"control_value":700,"actual_value":690,"maximum":1000,
+                    "source":source(),"status":"available","readable":true,"writable":false,
+                    "write_backend":"linux_logind","logind_session":binding(),"supported_percentages":[],"reason":null})).unwrap();
+                let plan =
+                    serde_json::from_value(json!({"device_id":"panel","requested_percent":50,
+                    "target":500,"previous":700,"maximum":1000,"source":source(),
+                    "backend":"linux_logind","logind_session":binding()}))
+                    .unwrap();
+                let mut tx = transaction("confirmed", "not_needed");
+                tx["observed_control"] = json!(500);
+                let result = serde_json::from_value(json!({"device_id":"panel","requested_percent":50,
+                    "confirmed":500,"previous":700,"actual_value":490,"source":source(),"transaction":tx})).unwrap();
+                Self {
+                    devices: vec![device],
+                    enumerations: Cell::new(0),
+                    plan,
+                    plans: RefCell::new(Vec::new()),
+                    plan_error: None,
+                    applications: Cell::new(0),
+                    result: Ok(result),
+                }
+            }
+        }
+        impl Backend for Stub {
+            fn devices(&self) -> Vec<BrightnessDevice> {
+                self.enumerations.set(self.enumerations.get() + 1);
+                self.devices.clone()
+            }
+            fn plan(
+                &self,
+                percent: u8,
+                device: Option<&str>,
+            ) -> Result<BrightnessPlan, ControlError> {
+                self.plans
+                    .borrow_mut()
+                    .push((percent, device.map(str::to_owned)));
+                if let Some(error) = &self.plan_error {
+                    return Err(error.clone());
+                }
+                Ok(self.plan.clone())
+            }
+            fn apply(&self, _: &BrightnessPlan) -> Result<BrightnessApplyResult, ControlError> {
+                self.applications.set(self.applications.get() + 1);
+                self.result.clone()
+            }
+        }
+        fn run_args(
+            args: &[&str],
+            backend: &Stub,
+            output: &mut impl Write,
+        ) -> Result<(), ControlError> {
+            let action = super::super::parse(args.iter().map(OsString::from).collect())?;
+            let Action::Brightness(percent, device, dry, expected) = action else {
+                panic!("brightness command fixture expected");
+            };
+            run_with(percent, device.as_deref(), dry, expected, backend, output)
+        }
+        #[test]
+        fn expected_raw_value_syntax_and_missing_device_are_rejected_before_backend_calls() {
+            for args in [
+                vec!["brightness", "50", "--expected-current"],
+                vec!["brightness", "50", "--expected-current", "4294967296"],
+                vec!["brightness", "50", "--expected-current", "-1"],
+                vec!["brightness", "50", "--expected-current", "+1"],
+                vec!["brightness", "50", "--expected-current", "1.0"],
+                vec!["brightness", "50", "--expected-current", "７００"],
+                vec![
+                    "brightness",
+                    "50",
+                    "--expected-current",
+                    "0",
+                    "--expected-current",
+                    "0",
+                ],
+                vec!["brightness", "--expected-current", "700"],
+                vec![
+                    "brightness",
+                    "--device",
+                    "panel",
+                    "--expected-current",
+                    "700",
+                ],
+                vec!["brightness", "50", "--device", "--dry-run"],
+                vec!["brightness", "50", "--expected-current", "--dry-run"],
+            ] {
+                let backend = Stub::new();
+                assert!(
+                    run_args(&args, &backend, &mut Vec::new()).is_err(),
+                    "accepted {args:?}"
+                );
+                assert_eq!(backend.enumerations.get(), 0);
+                assert!(backend.plans.borrow().is_empty());
+                assert_eq!(backend.applications.get(), 0);
+            }
+            for raw in ["0", "4294967295"] {
+                assert!(super::super::parse(vec![
+                    "brightness".into(),
+                    "50".into(),
+                    "--expected-current".into(),
+                    raw.into(),
+                    "--dry-run".into()
+                ])
+                .is_ok());
+            }
+        }
+        #[test]
+        fn listing_preserves_source_route_requested_and_actual_as_distinct_fields() {
+            let backend = Stub::new();
+            let mut bytes = Vec::new();
+            run_args(&["brightness", "--device", "panel"], &backend, &mut bytes).unwrap();
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(output.is_array());
+            assert_eq!(output[0]["source"], source());
+            assert_eq!(output[0]["write_backend"], "linux_logind");
+            assert_eq!(output[0]["control_value"], 700);
+            assert_eq!(output[0]["actual_value"], 690);
+            assert_eq!(output[0]["writable"], false);
+            assert_eq!(backend.enumerations.get(), 1);
+            assert!(backend.plans.borrow().is_empty());
+            assert_eq!(backend.applications.get(), 0);
+            assert!(backend.devices[0].can_control());
+        }
+        #[test]
+        fn explicit_device_is_forwarded_and_ambiguous_or_missing_devices_never_apply() {
+            let backend = Stub::new();
+            run_args(
+                &["brightness", "50", "--device", "panel", "--dry-run"],
+                &backend,
+                &mut Vec::new(),
+            )
+            .unwrap();
+            assert_eq!(*backend.plans.borrow(), vec![(50, Some("panel".into()))]);
+            assert_eq!(backend.applications.get(), 0);
+            for code in ["brightness_device_ambiguous", "brightness_device_missing"] {
+                let mut backend = Stub::new();
+                backend.plan_error =
+                    Some(ControlError::new(code, "fixture device selection refused"));
+                let error = run_args(&["brightness", "50"], &backend, &mut Vec::new()).unwrap_err();
+                assert_eq!(error.code, code);
+                assert_eq!(backend.applications.get(), 0);
+            }
+            let mut backend = Stub::new();
+            backend.devices.push(backend.devices[0].clone());
+            assert_eq!(
+                run_args(
+                    &["brightness", "--device", "panel"],
+                    &backend,
+                    &mut Vec::new()
+                )
+                .unwrap_err()
+                .code,
+                "brightness_device_ambiguous"
+            );
+            assert_eq!(backend.applications.get(), 0);
+        }
+        #[test]
+        fn logind_dry_run_has_original_shape_and_never_calls_apply() {
+            let backend = Stub::new();
+            let mut bytes = Vec::new();
+            run_args(
+                &[
+                    "brightness",
+                    "50",
+                    "--device",
+                    "panel",
+                    "--expected-current",
+                    "700",
+                    "--dry-run",
+                ],
+                &backend,
+                &mut bytes,
+            )
+            .unwrap();
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(output, json!({"dry_run":true,"plan":backend.plan}));
+            assert_eq!(output["plan"]["backend"], "linux_logind");
+            assert_eq!(backend.applications.get(), 0);
+        }
+        #[test]
+        fn expected_current_guard_matches_raw_plan_previous_and_does_not_replan_or_apply_on_mismatch(
+        ) {
+            let backend = Stub::new();
+            run_args(
+                &["brightness", "50", "--expected-current", "700"],
+                &backend,
+                &mut Vec::new(),
+            )
+            .unwrap();
+            assert_eq!(backend.plans.borrow().len(), 1);
+            assert_eq!(backend.applications.get(), 1);
+            for dry in [false, true] {
+                let backend = Stub::new();
+                let mut args = vec!["brightness", "50", "--expected-current", "699"];
+                if dry {
+                    args.push("--dry-run");
+                }
+                let mut bytes = Vec::new();
+                let error = run_args(&args, &backend, &mut bytes).unwrap_err();
+                assert_eq!(error.code, "brightness_plan_stale");
+                assert_eq!(backend.plans.borrow().len(), 1);
+                assert_eq!(backend.applications.get(), 0);
+                assert!(bytes.is_empty());
+                let document = error_document(&error);
+                assert_eq!(document["brightness_context"]["expected_current"], 699);
+                assert_eq!(document["brightness_context"]["plan"]["previous"], 700);
+                assert_eq!(document["brightness_context"]["apply_attempted"], false);
+            }
+        }
+        #[test]
+        fn successful_apply_preserves_flat_result_and_separates_write_route_from_observation() {
+            let backend = Stub::new();
+            let mut bytes = Vec::new();
+            run_args(&["brightness", "50"], &backend, &mut bytes).unwrap();
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(output["source"], source());
+            assert_eq!(output["write_backend"], "linux_logind");
+            assert_eq!(output["logind_session"], binding());
+            assert_eq!(output["requested_percent"], 50);
+            assert_eq!(output["requested_control"], 500);
+            assert_eq!(output["confirmed"], 500);
+            assert_eq!(output["actual_value"], 490);
+            assert_eq!(output["transaction"]["outcome"], "confirmed");
+            assert!(!output["transaction"]["writer_may_continue"]
+                .as_bool()
+                .unwrap());
+            assert_eq!(backend.applications.get(), 1);
+        }
+        #[test]
+        fn failed_apply_retains_all_typed_transaction_states_and_primary_secondary_errors() {
+            for (outcome, recovery) in [
+                ("not_applied", "not_needed"),
+                ("conflict", "skipped"),
+                ("restored", "restored"),
+                ("recovery_failed", "failed"),
+                ("unknown", "unknown"),
+            ] {
+                let mut backend = Stub::new();
+                let mut tx = transaction(outcome, recovery);
+                tx["primary_error"] = json!({"code":"fixture_primary","message":"write or readback failed","details":["primary evidence"]});
+                if outcome == "recovery_failed" {
+                    tx["rollback_error"] = json!({"code":"fixture_rollback","message":"recovery failed","details":["rollback evidence"]});
+                    tx["readback_error"] = json!({"code":"fixture_readback","message":"confirmation failed","details":[]});
+                }
+                let typed: brightness::BrightnessTransaction =
+                    serde_json::from_value(tx.clone()).unwrap();
+                let mut failure = ControlError::new(
+                    if outcome == "unknown" {
+                        "brightness_outcome_unknown"
+                    } else {
+                        "brightness_write_failed"
+                    },
+                    "fixture primary failure",
+                );
+                failure.details = vec![
+                    "original driver evidence".into(),
+                    format!(
+                        "{}{}",
+                        brightness::BRIGHTNESS_TRANSACTION_MARKER,
+                        serde_json::to_string(&typed).unwrap()
+                    ),
+                ];
+                backend.result = Err(failure.clone());
+                let mut bytes = Vec::new();
+                let error = run_args(
+                    &["brightness", "50", "--device", "panel"],
+                    &backend,
+                    &mut bytes,
+                )
+                .unwrap_err();
+                assert_eq!(error.code, failure.code);
+                assert_eq!(
+                    &error.details[..failure.details.len()],
+                    failure.details.as_slice()
+                );
+                assert_eq!(backend.applications.get(), 1);
+                assert!(bytes.is_empty());
+                let document = error_document(&error);
+                assert_eq!(document["brightness_transaction"], tx);
+                assert_eq!(document["brightness_context"]["plan"]["source"], source());
+                assert_eq!(
+                    document["brightness_context"]["plan"]["backend"],
+                    "linux_logind"
+                );
+                assert_eq!(
+                    document["brightness_context"]["apply_returned_success"],
+                    false
+                );
+            }
+            let unrelated = ControlError::new("unrelated", "fixture");
+            assert_eq!(error_document(&unrelated), json!({"error":unrelated}));
+        }
+        #[test]
+        fn output_failure_after_apply_keeps_completed_transaction_without_retry_or_rollback() {
+            struct Broken {
+                remaining: usize,
+            }
+            impl Write for Broken {
+                fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                    if self.remaining == 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "fixture closed output",
+                        ));
+                    }
+                    let count = self.remaining.min(bytes.len());
+                    self.remaining -= count;
+                    Ok(count)
+                }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+            let mut successful_bytes = Vec::new();
+            run_args(&["brightness", "50"], &Stub::new(), &mut successful_bytes).unwrap();
+            // Cover both an immediately closed pipe and failure on the final
+            // newline after the complete JSON document has already been sent.
+            for remaining in [0, successful_bytes.len() - 1] {
+                let backend = Stub::new();
+                let error = run_args(&["brightness", "50"], &backend, &mut Broken { remaining })
+                    .unwrap_err();
+                assert_eq!(error.code, "output_failed");
+                assert_eq!(backend.applications.get(), 1);
+                let document = error_document(&error);
+                let context = &document["brightness_context"];
+                assert_eq!(context["apply_returned_success"], true);
+                assert_eq!(context["applied_result"]["write_backend"], "linux_logind");
+                assert_eq!(context["applied_result"]["requested_control"], 500);
+                assert_eq!(context["applied_result"]["actual_value"], 490);
+                assert_eq!(
+                    context["applied_result"]["transaction"]["outcome"],
+                    "confirmed"
+                );
+            }
+            let backend = Stub::new();
+            assert!(run_args(
+                &["brightness", "50", "--dry-run"],
+                &backend,
+                &mut Broken { remaining: 0 }
+            )
+            .is_err());
+            assert_eq!(backend.applications.get(), 0);
+        }
+    }
+}
+
 fn select_oem_control<'a>(
     controls: &'a [OemControl],
     id: &str,
@@ -1557,31 +2052,15 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
                 json!(service.apply_profile(&plan)?)
             }
         }
-        Action::Brightness(None, device, _) => {
-            let devices = service.brightness_devices();
-            if let Some(id) = device {
-                let selected = devices
-                    .into_iter()
-                    .filter(|d| d.id == id)
-                    .collect::<Vec<_>>();
-                if selected.is_empty() {
-                    return Err(ControlError::new(
-                        "brightness_device_unavailable",
-                        "Requested device was not enumerated",
-                    ));
-                }
-                json!(selected)
-            } else {
-                json!(devices)
-            }
-        }
-        Action::Brightness(Some(percent), device, dry) => {
-            let plan = service.plan_brightness(percent, device.as_deref())?;
-            if dry {
-                json!({"dry_run":true,"plan":plan})
-            } else {
-                json!(service.apply_brightness(&plan)?)
-            }
+        Action::Brightness(percent, device, dry, expected_current) => {
+            return brightness_cli::run(
+                percent,
+                device.as_deref(),
+                dry,
+                expected_current,
+                service,
+                &mut stdout,
+            )
         }
         Action::Export(path) => {
             let value = status_json(service)?;
@@ -1595,7 +2074,10 @@ fn main() {
     let result = parse(std::env::args_os().skip(1).collect())
         .and_then(|action| run(action, &Service::new()));
     if let Err(error) = result {
-        let _ = write_json(&mut io::stderr().lock(), &json!({"error":error}));
+        let _ = write_json(
+            &mut io::stderr().lock(),
+            &brightness_cli::error_document(&error),
+        );
         std::process::exit(2)
     }
 }
@@ -2106,6 +2588,8 @@ mod tests {
                 status: CapabilityStatus::Available,
                 readable: true,
                 writable: false,
+                write_backend: None,
+                logind_session: None,
                 supported_percentages: Vec::new(),
                 reason: None,
             }],

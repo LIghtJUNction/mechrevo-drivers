@@ -378,8 +378,29 @@ impl Service {
         let available = snapshot
             .brightness
             .iter()
-            .any(|device| device.status == CapabilityStatus::Available && device.writable);
-        snapshot.capabilities.push(Capability{id:"brightness".into(),label:"OS screen brightness".into(),status:if available{CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:if available{"Enumerated OS brightness device; writes require a validated plan and readback."}else{"No writable OS brightness device was identified; no OEM or EC fallback is attempted."}.into(),source:None,options:snapshot.brightness.iter().filter(|d|d.writable).map(|d|d.id.clone()).collect()});
+            .any(|device| device.status == CapabilityStatus::Available && device.can_control());
+        snapshot.capabilities.push(Capability {
+            id: "brightness".into(),
+            label: "OS screen brightness".into(),
+            status: if available {
+                CapabilityStatus::Available
+            } else {
+                CapabilityStatus::Unavailable
+            },
+            reason: if available {
+                "Enumerated OS brightness control route; writes require a freshly validated plan and control-value readback."
+            } else {
+                "No usable OS brightness control route was identified; no OEM or EC fallback is attempted."
+            }
+            .into(),
+            source: None,
+            options: snapshot
+                .brightness
+                .iter()
+                .filter(|device| device.can_control())
+                .map(|device| device.id.clone())
+                .collect(),
+        });
         snapshot
     }
     pub fn brightness_devices(&self) -> Vec<BrightnessDevice> {

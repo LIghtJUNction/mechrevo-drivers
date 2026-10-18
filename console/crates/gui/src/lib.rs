@@ -1,5 +1,8 @@
 //! The UI never performs blocking platform calls or speculative hardware writes.
 //! A single worker and a one-item channel bound refresh requests and results.
+use mechrevo_console_core::brightness::{
+    self, BrightnessOutcome, BrightnessRecovery, BrightnessTransaction,
+};
 use mechrevo_console_core::cpu_power::{
     self, Action as CpuAction, Client as CpuPowerClient, CpuPowerUpdate,
     Management as CpuManagement, Outcome as CpuOutcome, Plan as CpuPlan, Policy as CpuPolicy,
@@ -316,6 +319,7 @@ pub enum FanOperation {
 #[derive(Debug)]
 enum Job {
     Refresh,
+    RefreshBrightness,
     ThermalRefresh,
     Preview(PowerProfile),
     Apply(ProfilePlan),
@@ -336,6 +340,7 @@ impl Job {
     fn kind(&self) -> JobKind {
         match self {
             Self::Refresh
+            | Self::RefreshBrightness
             | Self::ThermalRefresh
             | Self::ProbeFan
             | Self::RefreshFan
@@ -376,7 +381,20 @@ enum Reply {
     Preview(ProfilePlan),
     Applied(ApplyResult, Snapshot, ThermalSample),
     BrightnessPreview(BrightnessPlan),
-    BrightnessApplied(BrightnessApplyResult, Snapshot, ThermalSample),
+    BrightnessPreviewError(ControlError),
+    BrightnessApplied(
+        Box<(
+            BrightnessPlan,
+            BrightnessApplyResult,
+            Snapshot,
+            ThermalSample,
+        )>,
+    ),
+    BrightnessFailed {
+        plan: BrightnessPlan,
+        error: ControlError,
+        writer_unknown: bool,
+    },
     OemPreview(OemPlan),
     OemApplied(OemApplyResult, Snapshot, ThermalSample),
     CpuPower {
@@ -418,6 +436,8 @@ struct InFlight {
     fan_operation: Option<FanOperation>,
     thermal_refresh: bool,
     cpu_power_operation: bool,
+    brightness_reconcile: bool,
+    brightness_plan: Option<BrightnessPlan>,
 }
 
 pub struct Controller {
@@ -438,6 +458,12 @@ pub struct Controller {
     pub requested_brightness: u8,
     pub brightness_preview: Option<BrightnessPlan>,
     pub brightness_applied: Option<BrightnessApplyResult>,
+    pub brightness_error: Option<ControlError>,
+    pub brightness_preview_error: Option<ControlError>,
+    pub brightness_transaction: Option<BrightnessTransaction>,
+    pub brightness_last_plan: Option<BrightnessPlan>,
+    pub brightness_needs_refresh: bool,
+    pub brightness_writer_may_continue: bool,
     pub selected_oem_control: Option<String>,
     pub requested_oem_value: Option<OemValue>,
     pub oem_preview: Option<OemPlan>,
@@ -540,7 +566,7 @@ fn reconcile_fan_update(update: &mut FanClientUpdate) {
 
 fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
     match job {
-        Job::Refresh => {
+        Job::Refresh | Job::RefreshBrightness => {
             let (snapshot, thermal) = observed_snapshot(backend);
             Reply::Snapshot(snapshot, backend.catalog(), thermal)
         }
@@ -565,15 +591,19 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
         Job::PreviewBrightness { percent, device } => {
             match backend.plan_brightness(percent, &device) {
                 Ok(plan) => Reply::BrightnessPreview(plan),
-                Err(error) => Reply::Error(error),
+                Err(error) => Reply::BrightnessPreviewError(error),
             }
         }
         Job::ApplyBrightness(plan) => match backend.apply_brightness(&plan) {
             Ok(result) => {
                 let (snapshot, thermal) = observed_snapshot(backend);
-                Reply::BrightnessApplied(result, snapshot, thermal)
+                Reply::BrightnessApplied(Box::new((plan, result, snapshot, thermal)))
             }
-            Err(error) => Reply::Error(error),
+            Err(error) => Reply::BrightnessFailed {
+                plan,
+                error,
+                writer_unknown: false,
+            },
         },
         Job::PreviewOem { control, target } => match backend.plan_oem(&control, target) {
             Ok(plan) => Reply::OemPreview(plan),
@@ -678,8 +708,9 @@ impl Controller {
                     let thermal_refresh = matches!(&request.job, Job::ThermalRefresh);
                     let cpu_power_operation = matches!(&request.job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
                     let cpu_probe = matches!(&request.job, Job::ProbeCpuPower);
+                    let brightness_plan = match &request.job { Job::ApplyBrightness(plan) => Some(plan.clone()), _ => None };
                     let thermal_started_at = Instant::now();
-                    let preserve_backend = fan_may_live || fan_operation.is_some() || cpu_power_operation;
+                    let preserve_backend = fan_may_live || fan_operation.is_some() || cpu_power_operation || brightness_plan.is_some();
                     let result = catch_unwind(AssertUnwindSafe(|| execute_job(&mut backend, request.job)));
                     let panicked = result.is_err();
                     let mut reply = result.unwrap_or_else(|_| {
@@ -688,7 +719,11 @@ impl Controller {
                                 "温度与转速采样异常，自动采样已暂停；请点击刷新重试。"
                             } else { "后台控制发生异常；恢复完成前不能关闭会话。" },
                         );
-                        if cpu_power_operation {
+                        if let Some(plan) = brightness_plan {
+                            Reply::BrightnessFailed { plan,
+                                error: ControlError::new("brightness_worker_panicked", "亮度操作异常，未确认上次调节结束，不能再次提交。"),
+                                writer_unknown: true }
+                        } else if cpu_power_operation {
                             Reply::CpuPower { probe: cpu_probe, finished_at: Instant::now(), update: CpuPowerUpdate {
                                 status: None, outcome: CpuOutcome::FailedStateUnknown,
                                 error: Some(ControlError::new("cpu_power_worker_panicked", "CPU 功耗后台异常；未确认授权辅助进程退出，后续写入和关闭已阻止。")),
@@ -745,6 +780,12 @@ impl Controller {
             requested_brightness: 70,
             brightness_preview: None,
             brightness_applied: None,
+            brightness_error: None,
+            brightness_preview_error: None,
+            brightness_transaction: None,
+            brightness_last_plan: None,
+            brightness_needs_refresh: false,
+            brightness_writer_may_continue: false,
             selected_oem_control: None,
             requested_oem_value: None,
             oem_preview: None,
@@ -1176,11 +1217,26 @@ impl Controller {
     }
 
     pub fn brightness_unavailable_reason(&self) -> Option<&str> {
+        if self.brightness_writer_may_continue {
+            return Some("尚未确认上次调节结束，不能再次提交。刷新只能核对当前读数。");
+        }
+        if self.brightness_needs_refresh {
+            return Some("亮度状态未确认，请先刷新亮度状态，再重新预览。");
+        }
         if self.cpu_power_state_unknown {
             return Some("CPU 功耗状态未确认，请先显式检查；其他写入已阻止。");
         }
         if self.cpu_power_preview.is_some() {
             return Some("CPU 功耗预览待确认，请先完成或取消该预览。");
+        }
+        if self.close_requested || !self.worker_available {
+            return Some("后台正在退出或已停止，暂不能调节亮度。");
+        }
+        if self.fan_session_held || !self.fan_helper_reaped || !self.fan_cleanup_complete {
+            return Some("风扇会话尚未恢复并退出，暂不能调节亮度。");
+        }
+        if self.preview.is_some() || self.oem_preview.is_some() || self.fan_preview.is_some() {
+            return Some("其他控制的预览待确认，请先完成或取消该预览。");
         }
         let Some(snapshot) = &self.snapshot else {
             return Some("设备检测完成后才能预览亮度。");
@@ -1195,13 +1251,20 @@ impl Controller {
         let Some(device) = snapshot.brightness.iter().find(|device| &device.id == id) else {
             return Some("所选显示设备已离线，请刷新并重新选择。");
         };
-        if device.status != CapabilityStatus::Available || !device.readable || !device.writable {
+        if device.status != CapabilityStatus::Available || !device.can_control() {
             return Some(
                 device
                     .reason
                     .as_deref()
                     .unwrap_or("当前用户不能读写此设备的系统亮度接口。"),
             );
+        }
+        if !device
+            .control_value
+            .zip(device.maximum)
+            .is_some_and(|(value, maximum)| maximum > 0 && value <= maximum)
+        {
+            return Some("当前亮度或设备范围未确认，请刷新后重新预览。");
         }
         if self.requested_brightness > 100 {
             return Some("亮度必须在 0% 到 100% 之间。");
@@ -1223,7 +1286,6 @@ impl Controller {
         if self.brightness_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
-        self.invalidate_previews();
         self.submit(Job::PreviewBrightness {
             percent: self.requested_brightness,
             device: self
@@ -1231,10 +1293,15 @@ impl Controller {
                 .clone()
                 .ok_or(SubmitError::Unsupported)?,
         })?;
+        self.brightness_preview = None;
+        self.brightness_preview_error = None;
         Ok(())
     }
 
     pub fn apply_brightness_preview(&mut self) -> Result<(), SubmitError> {
+        if self.brightness_preview.is_none() {
+            return Err(SubmitError::PreviewRequired);
+        }
         if self.brightness_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
@@ -1248,9 +1315,79 @@ impl Controller {
             .cloned()
             .ok_or(SubmitError::PreviewRequired)?;
         self.submit(Job::ApplyBrightness(plan))?;
-        self.invalidate_previews();
+        self.brightness_preview = None;
         self.brightness_applied = None;
         Ok(())
+    }
+
+    /// Explicit reconciliation, never an automatic retry of the old plan.
+    pub fn refresh_brightness_state(&mut self) -> Result<(), SubmitError> {
+        if self.has_pending_preview() {
+            return Err(SubmitError::Busy);
+        }
+        self.submit(Job::RefreshBrightness)?;
+        self.brightness_preview_error = None;
+        Ok(())
+    }
+
+    fn reconcile_brightness_after_explicit_refresh(&mut self) {
+        if self.brightness_writer_may_continue || !self.brightness_needs_refresh {
+            return;
+        }
+        let valid = self.brightness_last_plan.as_ref().is_some_and(|plan| {
+            self.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.brightness.iter().any(|device| {
+                    self.selected_brightness_device.as_deref() == Some(plan.device_id.as_str())
+                        && device.id == plan.device_id
+                        && device.source == plan.source
+                        && device.maximum == Some(plan.maximum)
+                        && device.status == CapabilityStatus::Available
+                        && device.readable
+                        && device
+                            .control_value
+                            .is_some_and(|value| plan.maximum > 0 && value <= plan.maximum)
+                })
+            })
+        });
+        if valid {
+            self.brightness_needs_refresh = false;
+        } else {
+            self.brightness_preview_error = Some(ControlError::new(
+                "brightness_refresh_unconfirmed",
+                "未能确认上次调节的显示设备，请选择该设备并重新刷新亮度状态。",
+            ));
+        }
+    }
+
+    fn accept_brightness_failure(
+        &mut self,
+        plan: BrightnessPlan,
+        error: ControlError,
+        writer_unknown: bool,
+    ) {
+        let mut transaction =
+            brightness::transaction_from_error(&error).unwrap_or_else(|| BrightnessTransaction {
+                outcome: BrightnessOutcome::Unknown,
+                write_attempted: true,
+                writer_may_continue: writer_unknown,
+                observed_control: None,
+                primary_error: Some(error.clone()),
+                rollback_error: None,
+                readback_error: None,
+                recovery: BrightnessRecovery::Unknown,
+                recovery_reason: Some("未收到完整的亮度事务回执，不能推定未写入或已恢复。".into()),
+            });
+        if writer_unknown {
+            transaction.writer_may_continue = true;
+        }
+        self.brightness_writer_may_continue |= transaction.writer_may_continue;
+        self.brightness_needs_refresh =
+            self.brightness_writer_may_continue || transaction.blocks_further_writes();
+        self.brightness_transaction = Some(transaction);
+        self.brightness_last_plan = Some(plan);
+        self.brightness_applied = None;
+        self.error = Some(error.clone());
+        self.brightness_error = Some(error);
     }
 
     pub fn select_oem_control(&mut self, id: &str) {
@@ -1394,6 +1531,15 @@ impl Controller {
         let fan_operation = job.fan_operation();
         let thermal_refresh = matches!(&job, Job::ThermalRefresh);
         let cpu_power_operation = matches!(&job, Job::ProbeCpuPower | Job::ExecuteCpuPower(_));
+        let brightness_operation = matches!(
+            &job,
+            Job::PreviewBrightness { .. } | Job::ApplyBrightness(_) | Job::RefreshBrightness
+        );
+        let brightness_reconcile = matches!(&job, Job::RefreshBrightness);
+        let brightness_plan = match &job {
+            Job::ApplyBrightness(plan) => Some(plan.clone()),
+            _ => None,
+        };
         let result = self
             .requests
             .as_ref()
@@ -1410,11 +1556,17 @@ impl Controller {
                     fan_operation,
                     thermal_refresh,
                     cpu_power_operation,
+                    brightness_reconcile,
+                    brightness_plan,
                 });
                 // Fan lifecycle housekeeping has its own error channel. In
                 // particular, closing must retain an earlier write/rollback
                 // failure instead of erasing it while queuing ShutdownFan.
-                if fan_operation.is_none() && !thermal_refresh && !cpu_power_operation {
+                if fan_operation.is_none()
+                    && !thermal_refresh
+                    && !cpu_power_operation
+                    && !brightness_operation
+                {
                     self.error = None;
                 }
                 Ok(())
@@ -1454,6 +1606,10 @@ impl Controller {
                     .in_flight
                     .as_ref()
                     .is_some_and(|job| job.selection_revision == self.selection_revision);
+                let brightness_reconcile = self
+                    .in_flight
+                    .as_ref()
+                    .is_some_and(|job| job.brightness_reconcile);
                 self.in_flight = None;
                 match response.reply {
                     Reply::Snapshot(snapshot, catalog, thermal) => {
@@ -1461,6 +1617,9 @@ impl Controller {
                         self.catalog = catalog;
                         self.last_refresh = Some(thermal.finished_at);
                         self.accept_thermal_sample(thermal);
+                        if brightness_reconcile {
+                            self.reconcile_brightness_after_explicit_refresh();
+                        }
                     }
                     Reply::ThermalSample(sample) => {
                         self.accept_thermal_sample(sample);
@@ -1490,6 +1649,12 @@ impl Controller {
                             && plan.requested_percent == self.requested_brightness
                         {
                             self.brightness_preview = Some(plan);
+                            self.brightness_preview_error = None;
+                        }
+                    }
+                    Reply::BrightnessPreviewError(error) => {
+                        if current_selection {
+                            self.brightness_preview_error = Some(error);
                         }
                     }
                     Reply::Applied(result, snapshot, thermal) => {
@@ -1498,11 +1663,39 @@ impl Controller {
                         self.last_refresh = Some(thermal.finished_at);
                         self.accept_thermal_sample(thermal);
                     }
-                    Reply::BrightnessApplied(result, snapshot, thermal) => {
+                    Reply::BrightnessApplied(payload) => {
+                        let (plan, result, snapshot, thermal) = *payload;
+                        if self.error.as_ref().is_some_and(|error| {
+                            [
+                                self.brightness_error.as_ref(),
+                                self.brightness_preview_error.as_ref(),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .any(|brightness| {
+                                brightness.code == error.code
+                                    && brightness.message == error.message
+                                    && brightness.details == error.details
+                            })
+                        }) {
+                            self.error = None;
+                        }
+                        self.brightness_transaction = Some(result.transaction.clone());
+                        self.brightness_last_plan = Some(plan);
+                        self.brightness_error = None;
+                        self.brightness_preview_error = None;
+                        self.brightness_needs_refresh = false;
                         self.brightness_applied = Some(result);
                         self.snapshot = Some(snapshot);
                         self.last_refresh = Some(thermal.finished_at);
                         self.accept_thermal_sample(thermal);
+                    }
+                    Reply::BrightnessFailed {
+                        plan,
+                        error,
+                        writer_unknown,
+                    } => {
+                        self.accept_brightness_failure(plan, error, writer_unknown);
                     }
                     Reply::OemPreview(plan) => {
                         if current_selection {
@@ -1671,6 +1864,20 @@ impl Controller {
     }
 
     fn stopped(&mut self) {
+        if let Some(plan) = self
+            .in_flight
+            .as_ref()
+            .and_then(|job| job.brightness_plan.clone())
+        {
+            self.accept_brightness_failure(
+                plan,
+                ControlError::new(
+                    "brightness_worker_disconnected",
+                    "亮度后台中断，未确认上次调节结束，不能再次提交。",
+                ),
+                true,
+            );
+        }
         if self
             .in_flight
             .as_ref()
@@ -1812,6 +2019,8 @@ mod tests {
                 status: CapabilityStatus::Available,
                 readable: true,
                 writable: true,
+                write_backend: Some(BrightnessBackend::LinuxSysfs),
+                logind_session: None,
                 supported_percentages: vec![],
                 reason: None,
             }],
@@ -1879,6 +2088,7 @@ mod tests {
                     device_id: Some(device.into()),
                 },
                 backend: BrightnessBackend::LinuxSysfs,
+                logind_session: None,
             })
         }
         fn apply_brightness(
@@ -1898,6 +2108,17 @@ mod tests {
                 previous: plan.previous,
                 actual_value: Some(plan.target),
                 source: plan.source.clone(),
+                transaction: BrightnessTransaction {
+                    outcome: BrightnessOutcome::Confirmed,
+                    write_attempted: true,
+                    writer_may_continue: false,
+                    observed_control: Some(plan.target),
+                    primary_error: None,
+                    rollback_error: None,
+                    readback_error: None,
+                    recovery: BrightnessRecovery::NotNeeded,
+                    recovery_reason: None,
+                },
             })
         }
     }
@@ -2188,6 +2409,7 @@ mod tests {
         controller.set_brightness_target(100);
         assert!(controller.brightness_unavailable_reason().is_none());
         controller.snapshot.as_mut().unwrap().brightness[0].writable = false;
+        controller.snapshot.as_mut().unwrap().brightness[0].write_backend = None;
         assert_eq!(
             controller.preview_brightness(),
             Err(SubmitError::Unsupported)

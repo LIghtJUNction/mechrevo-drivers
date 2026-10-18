@@ -2,10 +2,11 @@
 use crate::{
     appearance,
     fan_editor::{FanEditor, FanEditorUpdate},
-    reading_text, Controller, DisplayMode, JobKind, Preferences, Theme,
+    reading_text, Controller, DisplayMode, JobKind, Preferences, SubmitError, Theme,
 };
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
 use mechrevo_console_core::{
+    brightness::{BrightnessBackend, BrightnessOutcome, BrightnessRecovery},
     CapabilityStatus, OemControlKind, OemDomain, OemValue, PowerProfile, SensorReading,
 };
 use std::{
@@ -1236,7 +1237,19 @@ impl DesktopApp {
                 );
             }
         }
-        if let Some(error) = &self.controller.error {
+        if let Some(error) = self.controller.error.as_ref().filter(|error| {
+            ![
+                self.controller.brightness_error.as_ref(),
+                self.controller.brightness_preview_error.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|brightness| {
+                brightness.code == error.code
+                    && brightness.message == error.message
+                    && brightness.details == error.details
+            })
+        }) {
             ui.add_space(12.0);
             surface(ui, |ui| {
                 ui.label(
@@ -1265,8 +1278,18 @@ impl DesktopApp {
         if let Some(applied) = &self.controller.brightness_applied {
             ui.label(
                 RichText::new(format!(
-                    "亮度请求已回读：{} → {}",
-                    applied.previous, applied.confirmed
+                    "{} · 亮度请求已回读：{} → {}",
+                    self.controller
+                        .snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot
+                            .brightness
+                            .iter()
+                            .find(|device| device.id == applied.device_id))
+                        .map(|device| device.label.as_str())
+                        .unwrap_or(&applied.device_id),
+                    applied.previous,
+                    applied.confirmed
                 ))
                 .color(green(ui)),
             );
@@ -1886,16 +1909,22 @@ impl DesktopApp {
         if let Some(device) = selected {
             self.controller.select_brightness_device(&device);
         }
-        let device = self.controller.snapshot.as_ref().and_then(|s| {
-            s.brightness.iter().find(|d| {
-                Some(d.id.as_str()) == self.controller.selected_brightness_device.as_deref()
+        let device = self
+            .controller
+            .snapshot
+            .as_ref()
+            .and_then(|s| {
+                s.brightness.iter().find(|d| {
+                    Some(d.id.as_str()) == self.controller.selected_brightness_device.as_deref()
+                })
             })
-        });
+            .cloned();
         let has_device = device.is_some();
         let levels = device
+            .as_ref()
             .map(|d| d.supported_percentages.clone())
             .unwrap_or_default();
-        if let Some(device) = device {
+        if let Some(device) = &device {
             let requested = device
                 .control_value
                 .zip(device.maximum)
@@ -1903,19 +1932,37 @@ impl DesktopApp {
                 .map(|(v, m)| format!("{:.0}%", f64::from(v) * 100.0 / f64::from(m)))
                 .unwrap_or_else(|| "未采集".into());
             let actual = device
-                .current_percent
-                .filter(|v| v.is_finite())
-                .map(|v| format!("{v:.0}%"))
+                .actual_value
+                .zip(device.maximum)
+                .filter(|(value, maximum)| *maximum > 0 && value <= maximum)
+                .map(|(value, maximum)| {
+                    format!("{:.0}%", f64::from(value) * 100.0 / f64::from(maximum))
+                })
                 .unwrap_or_else(|| "未采集".into());
             ui.label(
                 RichText::new(format!("请求 {requested}  ·  驱动报告 {actual}"))
                     .small()
                     .color(secondary(ui)),
             );
+            if let Some(backend) = device.write_backend {
+                ui.label(
+                    RichText::new(match backend {
+                        BrightnessBackend::LinuxLogind => "通过当前桌面会话调节",
+                        BrightnessBackend::LinuxSysfs | BrightnessBackend::WindowsWmi => "直接调节",
+                    })
+                    .size(13.0)
+                    .color(secondary(ui)),
+                );
+            }
         }
         let mut percent = self.controller.requested_brightness;
-        let adjustable = device.is_some_and(|device| {
-            device.status == CapabilityStatus::Available && device.readable && device.writable
+        let adjustable = device.as_ref().is_some_and(|device| {
+            device.status == CapabilityStatus::Available
+                && device.can_control()
+                && device
+                    .control_value
+                    .zip(device.maximum)
+                    .is_some_and(|(value, maximum)| maximum > 0 && value <= maximum)
         });
         if adjustable {
             if levels.is_empty() {
@@ -1923,7 +1970,7 @@ impl DesktopApp {
                 ui.scope(|ui| {
                     slider_style(ui);
                     ui.add_enabled(
-                        adjustable,
+                        !self.controller.write_in_progress(),
                         egui::Slider::new(&mut percent, 0..=100)
                             .trailing_fill(true)
                             .handle_shape(egui::style::HandleShape::Circle)
@@ -1934,7 +1981,9 @@ impl DesktopApp {
             } else {
                 ui.horizontal_wrapped(|ui| {
                     for level in &levels {
-                        ui.selectable_value(&mut percent, *level, format!("{level}%"));
+                        ui.add_enabled_ui(!self.controller.write_in_progress(), |ui| {
+                            ui.selectable_value(&mut percent, *level, format!("{level}%"));
+                        });
                     }
                 });
             }
@@ -1947,6 +1996,18 @@ impl DesktopApp {
         if let Some(reason) = &reason {
             unavailable(ui, reason);
         }
+        if let Some(error) = &self.controller.brightness_error {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("亮度调节未确认 · {}", error.message))
+                        .color(error_color(ui)),
+                )
+                .wrap(),
+            );
+        }
+        if let Some(error) = &self.controller.brightness_preview_error {
+            ui.add(egui::Label::new(RichText::new(&error.message).color(error_color(ui))).wrap());
+        }
         if let Some(plan) = &self.controller.brightness_preview {
             ui.label(
                 RichText::new(format!(
@@ -1958,28 +2019,44 @@ impl DesktopApp {
         }
         if reason.is_none() || self.controller.brightness_preview.is_some() {
             ui.horizontal_wrapped(|ui| {
-                if ui
+                let preview_clicked = ui
                     .add_enabled(
                         reason.is_none() && !self.controller.busy(),
                         egui::Button::new("预览亮度"),
                     )
-                    .clicked()
+                    .clicked();
+                if let Some(Err(error)) =
+                    preview_clicked.then(|| self.controller.preview_brightness())
                 {
-                    let _ = self.controller.preview_brightness();
+                    self.brightness_submission_error(error);
                 }
-                if self.controller.brightness_preview.is_some()
+                let apply_clicked = self.controller.brightness_preview.is_some()
                     && ui
                         .add_enabled(
                             reason.is_none() && !self.controller.busy(),
                             primary_button(ui, "应用并回读"),
                         )
-                        .clicked()
+                        .clicked();
+                if let Some(Err(error)) =
+                    apply_clicked.then(|| self.controller.apply_brightness_preview())
                 {
-                    let _ = self.controller.apply_brightness_preview();
+                    self.brightness_submission_error(error);
                 }
             });
         }
-        if has_device || self.controller.brightness_applied.is_some() {
+        let refresh_clicked = (has_device || self.controller.brightness_needs_refresh)
+            && ui
+                .add_enabled(
+                    !self.controller.busy() && !self.controller.has_pending_preview(),
+                    egui::Button::new("刷新亮度状态"),
+                )
+                .clicked();
+        if let Some(Err(error)) =
+            refresh_clicked.then(|| self.controller.refresh_brightness_state())
+        {
+            self.brightness_submission_error(error);
+        }
+        if has_device || self.controller.brightness_transaction.is_some() {
             egui::CollapsingHeader::new("背光设备详情")
                 .id_salt("brightness-details")
                 .show(ui, |ui| {
@@ -1990,6 +2067,19 @@ impl DesktopApp {
                                 "请求值 {:?} · 驱动报告值 {:?} · 上限 {:?}",
                                 device.control_value, device.actual_value, device.maximum
                             ));
+                            ui.label(format!(
+                                "可直接写入：{} · 调节通道：{:?}",
+                                if device.writable { "是" } else { "否" },
+                                device.write_backend
+                            ));
+                            if let Some(session) = &device.logind_session {
+                                ui.label(format!(
+                                    "会话 {} · UID {} · seat {}",
+                                    session.session_id, session.uid, session.seat_id
+                                ));
+                                ui.label(&session.object_path);
+                                ui.label(&session.seat_path);
+                            }
                             evidence(ui, &device.source.backend, &device.source.path);
                         }
                     }
@@ -1999,8 +2089,81 @@ impl DesktopApp {
                             applied.actual_value
                         ));
                     }
+                    if let Some(plan) = &self.controller.brightness_last_plan {
+                        ui.label(format!(
+                            "上次事务设备：{} · 请求 {}% · 通道 {:?}",
+                            plan.device_id, plan.requested_percent, plan.backend
+                        ));
+                        evidence(ui, &plan.source.backend, &plan.source.path);
+                    }
+                    if let Some(transaction) = &self.controller.brightness_transaction {
+                        ui.label(format!(
+                            "上次事务：{}",
+                            match transaction.outcome {
+                                BrightnessOutcome::Confirmed => "请求已回读确认",
+                                BrightnessOutcome::NotApplied => "未执行写入",
+                                BrightnessOutcome::Conflict => "设备状态已变化",
+                                BrightnessOutcome::Restored => "写入失败，原请求值已恢复",
+                                BrightnessOutcome::RecoveryFailed => "恢复失败，状态未确认",
+                                BrightnessOutcome::Unknown => "结果未确认",
+                            }
+                        ));
+                        ui.label(format!(
+                            "回读请求值：{:?} · 恢复：{}",
+                            transaction.observed_control,
+                            match transaction.recovery {
+                                BrightnessRecovery::NotNeeded => "无需恢复",
+                                BrightnessRecovery::Skipped => "未执行恢复",
+                                BrightnessRecovery::Restored => "已回读确认",
+                                BrightnessRecovery::Failed => "失败",
+                                BrightnessRecovery::Unknown => "未确认",
+                            }
+                        ));
+                        if let Some(reason) = &transaction.recovery_reason {
+                            ui.label(reason);
+                        }
+                        for (label, error) in [
+                            ("调节错误", transaction.primary_error.as_ref()),
+                            ("恢复错误", transaction.rollback_error.as_ref()),
+                            ("回读错误", transaction.readback_error.as_ref()),
+                        ] {
+                            if let Some(error) = error {
+                                ui.label(format!("{label} · {} · {}", error.code, error.message));
+                                for detail in &error.details {
+                                    ui.add(egui::Label::new(detail).wrap());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(error) = &self.controller.brightness_error {
+                        ui.label(&error.code);
+                        for detail in error.details.iter().filter(|detail| {
+                            !detail.starts_with(
+                                mechrevo_console_core::brightness::BRIGHTNESS_TRANSACTION_MARKER,
+                            )
+                        }) {
+                            ui.add(egui::Label::new(detail).wrap());
+                        }
+                    }
                 });
         }
+    }
+
+    fn brightness_submission_error(&mut self, error: SubmitError) {
+        let message = match error {
+            SubmitError::Busy => "其他操作仍在进行或预览待确认，请完成后再试。".to_owned(),
+            SubmitError::WorkerStopped => "亮度后台已停止，请重新打开控制台。".to_owned(),
+            SubmitError::Unsupported => self
+                .controller
+                .brightness_unavailable_reason()
+                .unwrap_or("当前设备暂不能调节亮度。")
+                .to_owned(),
+            SubmitError::PreviewRequired => "亮度预览已失效，请重新预览后应用。".to_owned(),
+        };
+        self.controller.brightness_preview_error = Some(mechrevo_console_core::ControlError::new(
+            "brightness_request_not_submitted",
+            message,
+        ));
     }
 
     fn power_source(&self, ui: &mut egui::Ui) {

@@ -383,6 +383,7 @@ fn brightness_plan() -> BrightnessPlan {
         maximum: 100,
         source: source(),
         backend: BrightnessBackend::LinuxSysfs,
+        logind_session: None,
     }
 }
 fn oem_plan() -> OemPlan {
@@ -407,7 +408,7 @@ fn snapshot() -> Snapshot {
         "capabilities":[{"id":"power_profile","label":"fixture","status":"available","reason":"fixture","source":null,"options":["balanced","performance"]}],
         "power_policy":{"scope":"fixture","current":"balanced","options":["balanced","performance"],"source":null},
         "brightness":[{"id":"fixture-display","label":"fixture","current_percent":50.0,"control_value":50,"actual_value":50,
-            "maximum":100,"source":source(),"status":"available","readable":true,"writable":true,"supported_percentages":[],"reason":null}],
+            "maximum":100,"source":source(),"status":"available","readable":true,"writable":true,"write_backend":"linux_sysfs","logind_session":null,"supported_percentages":[],"reason":null}],
         "oem_controls":[{"id":"fixture-fn","kind":"fn_lock","label":"fixture","current":{"type":"boolean","value":false},
             "domain":{"type":"boolean"},"status":"available","writable":false,"source":source(),"binding":"fixture-identity",
             "readback_scope":"fixture driver request","reason":null}]

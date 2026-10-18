@@ -16,7 +16,8 @@ depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'libxkbcommon-x11'
 # Cargo enforces the GUI's Rust 1.95 minimum; rustup also provides `rust`.
 makedepends=('git' 'rust' 'pkgconf' 'desktop-file-utils' 'libxml2')
 optdepends=('noto-fonts-cjk: Chinese system font fallback'
-            'mechrevo-power-control>=0.1.0-18: qualified CPU PL1 policy control')
+            'mechrevo-power-control>=0.1.0-18: qualified CPU PL1 policy control'
+            'systemd: session-authorized screen brightness through logind')
 options=('!strip' '!debug' '!lto')
 
 # Always build the reviewed commit, including when using an existing local repo.
