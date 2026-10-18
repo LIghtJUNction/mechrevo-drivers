@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T12:38:31.574271+00:00",
+  "status": "linux_native_cli_profile_write_verified_persistent_cpu_policy_contended",
+  "source": {
+    "commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+    "snapshot_sha256": "db4fd335730b372e46b44c8544d1a36537828c4a2fafd7925f69c9c6304e584d",
+    "input_files": 95,
+    "installed_console": "0.1.0.r177.gd48692a-1",
+    "installed_cli_sha256": "025d8401c4547d6c9aa018eda71c8e1a0f32857b8b57e14af911e607c282b7b6",
+    "installation_evidence_ref": "docs/verification/deployment-console-r177.json"
+  },
+  "native_control": {
+    "request_uid": 1000,
+    "root_used_for_profile_set": false,
+    "root_used_for_readonly_guards_and_bounded_syscall_observer": true,
+    "roundtrips": [
+      {
+        "from": "balanced",
+        "to": "power-saver",
+        "restored_to": "balanced",
+        "forward_acknowledged": true,
+        "restore_acknowledged": true,
+        "independent_system_bus_readback_verified": true
+      },
+      {
+        "from": "balanced",
+        "to": "power-saver",
+        "restored_to": "balanced",
+        "forward_acknowledged": true,
+        "restore_acknowledged": true,
+        "independent_system_bus_readback_verified": true
+      }
+    ],
+    "confirmed_set_requests": 4,
+    "confirmed_same_profile_no_ops": 2,
+    "no_op_setter_submitted": false,
+    "application_holds_before_and_after": [],
+    "stale_expected_current": {
+      "exit_code": 2,
+      "error_code": "profile_expected_current_changed",
+      "service_policy_before_and_after_equal": true,
+      "guard_scope": "Compiled CLI source rejects before setter invocation; no independent D-Bus call counter is claimed."
+    }
+  },
+  "cpu_observation": {
+    "observed_trial": {
+      "epp_before": {
+        "policy_count": 24,
+        "values": [
+          "power"
+        ]
+      },
+      "epp_target": {
+        "policy_count": 24,
+        "values": [
+          "power"
+        ]
+      },
+      "epp_after": {
+        "policy_count": 24,
+        "values": [
+          "balance_performance"
+        ]
+      },
+      "epb_before": {
+        "policy_count": 24,
+        "values": [
+          "6"
+        ]
+      },
+      "epb_target": {
+        "policy_count": 24,
+        "values": [
+          "15"
+        ]
+      },
+      "epb_after": {
+        "policy_count": 24,
+        "values": [
+          "6"
+        ]
+      }
+    },
+    "delayed_final_epp": {
+      "policy_count": 24,
+      "values": [
+        "power"
+      ]
+    },
+    "delayed_final_epb": {
+      "policy_count": 24,
+      "values": [
+        "6"
+      ]
+    },
+    "positive_syscall_writes": [
+      {
+        "actor": "power_profiles_daemon",
+        "interface": "energy_performance_preference",
+        "value": "power",
+        "write_bytes": 5,
+        "seconds_from_first_observed_write": 0.0
+      },
+      {
+        "actor": "power_profiles_daemon",
+        "interface": "energy_perf_bias",
+        "value": "15",
+        "write_bytes": 2,
+        "seconds_from_first_observed_write": 0.008163
+      },
+      {
+        "actor": "power_profiles_daemon",
+        "interface": "energy_performance_preference",
+        "value": "balance_performance",
+        "write_bytes": 19,
+        "seconds_from_first_observed_write": 2.184791
+      },
+      {
+        "actor": "power_profiles_daemon",
+        "interface": "energy_perf_bias",
+        "value": "6",
+        "write_bytes": 1,
+        "seconds_from_first_observed_write": 2.197497
+      },
+      {
+        "actor": "tccd",
+        "interface": "energy_performance_preference",
+        "value": "default",
+        "write_bytes": 7,
+        "seconds_from_first_observed_write": 5.047374
+      },
+      {
+        "actor": "tccd",
+        "interface": "energy_performance_preference",
+        "value": "power",
+        "write_bytes": 5,
+        "seconds_from_first_observed_write": 5.062766
+      }
+    ],
+    "tcc_overrode_balanced_epp_after_seconds": 2.877975,
+    "finding": "PPD successfully writes EPP and EPB. The qualified running tccd subsequently writes EPP default then power, overriding the balanced request. Two controllers demonstrably write the same CPU preference. This is not a fan-noise diagnosis.",
+    "sampling_scope": "24 CPU policy snapshots; syscall observation covers policy0 EPP and cpu0 EPB for the two qualified service process trees only."
+  },
+  "runtime_protection": {
+    "original_runtime_guard_passed_before_target_after_and_delayed": true,
+    "service_count": 4,
+    "service_pid_start_state_unchanged": true,
+    "loaded_module_count": 6,
+    "loaded_module_identities_unchanged": true,
+    "protected_cpu_pl1_watts": 55,
+    "observed_msr_mmio_pl2_watts": 140,
+    "software_target_celsius": 90,
+    "polling_seconds": 1,
+    "rapl_debounce_seconds": 0,
+    "tcc_configuration_changed": false,
+    "tcc_service_stopped_or_restarted": false,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "no_stress_workers_started": true,
+    "final_system_profile": "balanced"
+  },
+  "trace_validation": {
+    "trace_limit_seconds": 20,
+    "limit_exit_code": 124,
+    "tracee_kernel_tracer_pids_zero_before_and_after": true,
+    "two_qualified_service_pids_attached_before_control": true,
+    "loss_counter_exposed": false,
+    "absence_or_global_completeness_claimed": false,
+    "scope": "Positive successful write records support actor attribution. Exit124 is the deliberate observer duration limit, not a control timeout or restart."
+  },
+  "acceptance": {
+    "linux_cli_system_service_set_restore_and_no_op_verified": true,
+    "cpu_sysfs_write_effect_observed": true,
+    "persistent_cpu_policy_ownership_verified": false,
+    "native_gui_apply_verified": false,
+    "windows_runtime_verified": false,
+    "fan_lease_or_write_verified": false,
+    "fan_noise_causality_proven": false,
+    "thermal_or_performance_benchmark_verified": false,
+    "complete_feature_family_resolved": false
+  },
+  "evidence_sha256": {
+    "ppd-live/receipt.json": "38c387aea9f7c8ec75b10d890fcc5c518b2bb7e37d931c826d43385597ecf55d",
+    "ppd-live-observed/receipt.json": "d44224eeaf10bcd2782aeee032d0efca9b2d075676c1dc071907c61d276add48",
+    "observed-profile-control.json": "65766ce52a9272af7bd1812949a9e86144e13eee0753f6c68c24586ba5f417a1",
+    "epp-epb-active-trace.log": "458ff93828ac8130d48f012b84c6284b374c88a3fa581dc63984d3e7b6d65834",
+    "epp-passive-trace.json": "b88f7b2d233a44f0272973db63b9f01fae8664b501a6db53cc0d5ccd5f7e15cd",
+    "epp-passive-trace.log": "4ab8b75126d8cff9470a96196ee567800615dd7bb31acd59f8fe252bd975491b",
+    "stale-profile-request.json": "fb2b61824b12d1e017c65fabbe89a32c361240d55d9ad535bd98d64f2e707f5b",
+    "run_ppd_trial.py": "c5be025fa8521987052bffaa2a59b09ac9d9d025db8535025594730704736ae1",
+    "run_ppd_observed_trial.py": "3054de10b0a8c0cb760a6d7b16f55e90e7ad64e0308bd36a421f95c50c614ab4",
+    "run_observed_profile_control.py": "4ae914a3b77e298f7521782671141524b1eb8a98678e19219c4461aa11e2764e"
+  },
+  "tracking": {
+    "session": "eb4e1240-142b-4dde-92f2-d1ba44f7c79e",
+    "status": "finished",
+    "final_status": "complete",
+    "gap_count": 0,
+    "unresolved_event_count": 0,
+    "metadata_finalization_session": "e34bc5bf-3a6d-4563-9ea3-a743b15cdadd"
+  },
+  "next_required_implementation": "Explicit CPU-only ownership handoff between native PPD control and tccd, with no fan ownership change, global config reload or periodic competing rewrites. See docs/CPU-POLICY-OWNERSHIP.md."
+}

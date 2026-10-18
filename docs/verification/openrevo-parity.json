@@ -413,6 +413,19 @@
       "complete_family_resolved": false,
       "record_scope": "Linux package installation only. Historical r171 brightness and r168 CPU write records remain separate; Windows source/offline checks are not Windows installation or runtime acceptance.",
       "installed_native_gui_cleanup_scope": "App and owned registry reaped after SIGTERM -15, compositor/wrapper reaped exit0; exact app/registry PIDs absent and owned process group empty. No timeout/SIGKILL; user registry unchanged. This is not graceful-close or in-flight-writer recovery acceptance."
+    },
+    "os_profile_native_control": {
+      "status": "linux_native_cli_profile_write_verified_persistent_cpu_policy_contended",
+      "evidence_ref": "docs/verification/linux-profile-control-r177.json",
+      "evidence_sha256": "a4f60032e250eeaa35a6a64bf6f29bde743017791d0a6b15406f506ac21e31ed",
+      "linux_cli_service_set_restore_verified": true,
+      "cpu_sysfs_write_effect_observed": true,
+      "persistent_cpu_policy_verified": false,
+      "cpu_controller_contention_confirmed": true,
+      "native_gui_apply_verified": false,
+      "fan_or_noise_acceptance": false,
+      "complete_feature_family_resolved": false,
+      "required_followup": "docs/CPU-POLICY-OWNERSHIP.md"
     }
   },
   "upstream": {
@@ -2283,6 +2296,19 @@
         "installation": "r174_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
         "loading": "r174_installed_readonly_cli_and_isolated_gui_navigation_cleanup_verified_no_setters_no_gui_apply",
         "scope": "Prior r174 installation/runtime fields retained unchanged; not transferred to r177."
+      },
+      "os_profile_native_control": {
+        "status": "linux_native_cli_profile_write_verified_persistent_cpu_policy_contended",
+        "evidence_ref": "docs/verification/linux-profile-control-r177.json",
+        "evidence_sha256": "a4f60032e250eeaa35a6a64bf6f29bde743017791d0a6b15406f506ac21e31ed",
+        "linux_cli_service_set_restore_verified": true,
+        "cpu_sysfs_write_effect_observed": true,
+        "persistent_cpu_policy_verified": false,
+        "cpu_controller_contention_confirmed": true,
+        "native_gui_apply_verified": false,
+        "fan_or_noise_acceptance": false,
+        "complete_feature_family_resolved": false,
+        "required_followup": "docs/CPU-POLICY-OWNERSHIP.md"
       }
     },
     {

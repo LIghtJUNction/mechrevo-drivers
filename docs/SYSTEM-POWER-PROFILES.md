@@ -1,6 +1,8 @@
 # 系统电源策略
 
-本轮源码新增 Linux 系统电源服务后端及 GUI 接线。签名提交 `d48692a` 已推送，95 份冻结输入通过最终 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 目标编译；**已随 Linux r177 安装、未完成本轮实机写入验收**。当前安装为 `mechrevo-console 0.1.0.r177.gd48692a-1`，原有功耗工具、驱动和已加载模块不变。[候选收据](verification/os-profile-fan-control.json)、[当前安装记录](verification/deployment-console-r177.json)
+Linux r177 已安装，普通用户 CLI 已完成两轮真实的平衡→节能→平衡，并核对同档位零 setter 和错误基线拒绝。同步观察确认 CPU sysfs 写入，同时发现 TCC 随后覆盖 CPU 能效偏好，**持续生效的 CPU 控制权仍未解决**。[实测记录](verification/linux-profile-control-r177.json)、[控制权交接要求](CPU-POLICY-OWNERSHIP.md)
+
+签名提交 `d48692a` 已推送，95 份冻结输入通过 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 目标编译。当前安装为 `mechrevo-console 0.1.0.r177.gd48692a-1`，原有功耗工具、驱动和已加载模块不变。[历史候选收据](verification/os-profile-fan-control.json)、[安装记录](verification/deployment-console-r177.json)
 
 ## 服务与回退
 
@@ -32,4 +34,6 @@ CLI 即使在输出阶段失败，也保留已经完成的结果与原始错误�
 
 GUI 显示服务来源、性能受限原因、holds 和预览中的释放提示，只在显式应用时提交。刷新保留先前失败和不确定回执；新的显式预览／应用可表达新意图，不会自动重试旧请求。本地应用工作或 worker 未退出时延迟关闭；本地工作结束后，远端请求可能继续本身不会永久禁止关窗，也不证明远端请求已结束。
 
-统一离线回归已通过；实际 Linux 发布特性另有 579 项通过、源码前后一致；真实系统总线 Set、权限拒绝、服务变更和原生 GUI 应用仍待本轮验收。r177 安装版普通用户已完成真实 PPD `balanced` 的同档位只读预览／精确基线校验，前后仍为 `balanced`；私有 GUI 已核对系统服务显示和风扇空态，独立备份审计通过，但没有 Set／授权／应用。已有 r174 及历史 PL1、亮度写入不转算为本轮功能通过；Windows 继续使用既有系统电源方案后端，PPD 是 Linux 后端。
+统一离线回归已通过；实际 Linux 发布特性另有 579 项通过、源码前后一致。初始安装验收只进行了预览与私有 GUI 的服务显示／风扇空态检查，没有 Set；后续上述 CLI 实测新增了真实 Set、恢复、同档位操作和错误预期值拒绝。原生 GUI 应用、真实权限拒绝、服务变更与 CPU 控制权交接仍未验收，不能从一次服务应答推断长期 CPU 策略生效。
+
+已有 r174 及历史 PL1、亮度写入不转算为本轮功能通过；Windows 继续使用既有系统电源方案后端，PPD 是 Linux 后端。
