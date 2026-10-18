@@ -333,12 +333,14 @@ def apply_customizations(root_dir: Path) -> None:
     if zh_index.exists():
         text = zh_index.read_text(encoding="utf-8")
         text = text.replace('<html lang="en"', '<html lang="zh"')
-        text = text.replace("<title>TuxedoControlCenter</title>", "<title>机械革命控制中心 (Mechrevo TCC)</title>")
+        text = text.replace("<title>TuxedoControlCenter</title>", "<title>机械革命电竞控制台 (MECHREVO Gaming Center)</title>")
         zh_index.write_text(text, encoding="utf-8")
 
     # 3. Localize JavaScript frontend bundle
     for js_file in zh_dir.glob("main-*.js"):
         content = js_file.read_text(encoding="utf-8")
+        content = content.replace("TUXEDO Control Center", "机械革命电竞控制台")
+        content = content.replace("TUXEDO", "机械革命 MECHREVO")
         for src_str, dst_str in ZH_TRANSLATIONS.items():
             # Match localized template strings
             content = content.replace(f'"{src_str}"', f'"{dst_str}"')
@@ -379,7 +381,20 @@ def apply_customizations(root_dir: Path) -> None:
             )
         init_main.write_text(text, encoding="utf-8")
 
-    # 6. Inject Chinese XLIFF file in all assets/locale/ folders
+    # 6. Fix hardcoded camera and tccd paths in TccPaths.js
+    for p in (
+        root_dir / "dist/tuxedo-control-center/e-app/common/classes/TccPaths.js",
+        root_dir / "dist/tuxedo-control-center/service-app/common/classes/TccPaths.js",
+    ):
+        if p.exists():
+            txt = p.read_text(encoding="utf-8")
+            txt = txt.replace(
+                "/opt/tuxedo-control-center/resources/dist/tuxedo-control-center/data/",
+                "/usr/lib/tuxedo-control-center/data/",
+            )
+            p.write_text(txt, encoding="utf-8")
+
+    # 7. Inject Chinese XLIFF file in all assets/locale/ folders
     lang_xlf = root_dir / "dist/tuxedo-control-center/ng-app/browser/en/assets/locale/lang.xlf"
     if lang_xlf.exists():
         xlf_content = lang_xlf.read_text(encoding="utf-8")
@@ -387,6 +402,26 @@ def apply_customizations(root_dir: Path) -> None:
             loc_dir = ng_app_browser / sub / "assets/locale"
             if loc_dir.exists():
                 (loc_dir / "lang.zh.xlf").write_text(xlf_content, encoding="utf-8")
+
+
+def update_desktop_entry() -> None:
+    """Enhance .desktop application entry for Mechrevo Gaming Center."""
+    desktop_file = Path("/usr/share/applications/tuxedo-control-center.desktop")
+    if not desktop_file.exists():
+        return
+    try:
+        content = desktop_file.read_text(encoding="utf-8")
+        if "Name[zh_CN]" not in content:
+            additions = (
+                "Name[zh_CN]=机械革命电竞控制台 (MECHREVO Gaming Center)\n"
+                "Comment[zh_CN]=机械革命笔记本硬件性能、功耗、风扇强冷与RGB背光控制中心\n"
+                "GenericName=Gaming Center\n"
+                "GenericName[zh_CN]=电竞控制台\n"
+            )
+            content = content.replace("Name=TUXEDO Control Center\n", f"Name=TUXEDO Control Center\n{additions}")
+            desktop_file.write_text(content, encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: could not update desktop entry: {e}")
 
 
 def read_target(path: Path) -> tuple[bytes, os.stat_result]:
