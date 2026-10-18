@@ -4,12 +4,12 @@
 `mechrevo-control`、TCC 或已有热键守护进程。安装不新增服务、不修改风扇曲线，
 GUI 从应用菜单中的“机械革命控制台”启动。
 
-当前配方固定源码提交 `58e8d9c0c1b63dcb7a4af5f0d5c877a6214413e5`，包版本为
-`0.1.0.r163.g58e8d9c-1`。这是本地部署配方，不表示已经发布到 AUR。
+当前配方固定源码提交 `e3b785274eb4923eff311bb9c11f6074601411d6`，包版本为
+`0.1.0.r166.ge3b7852-1`。这是本地部署配方，不表示已经发布到 AUR。
 后续更新应一并修改提交、版本和部署验证记录，不能只替换安装目录里的二进制。
 
-本配方包含风扇编辑器与会话 helper；源码回归见
-[界面与代理验证收据](../../../docs/verification/fan-gui-broker.json)。实际安装、驱动加载与硬件效果由部署收据分别记录。
+本配方包含风扇编辑器、会话 helper 和预览／风扇会话期间的只读温度与转速采样；源码回归见
+[界面与代理验证收据](../../../docs/verification/fan-gui-broker.json)及[采样验证](../../../docs/verification/thermal-sampling.json)。实际安装、驱动加载与硬件效果由部署收据分别记录。
 
 构建需要系统已有 Rust 1.95 以上、Git、pkgconf、desktop-file-utils、libxml2，以及锁文件
 对应的 Cargo 缓存。Cargo 使用 `--release --workspace --all-features --locked --offline`，
@@ -27,14 +27,15 @@ nice -n 15 ionice -c 3 makepkg
 ```
 
 不设置 `MECHREVO_CONSOLE_SOURCE` 时，makepkg 从项目 GitHub 仓库取得同一固定提交。
+固定提交尚未推送时需使用上面的本地源；本地安装成功不代表远端已经包含该提交。
 `CARGO_TARGET_DIR` 可指定绝对路径，以复用受跟踪的构建缓存；未设置时，产物在
 makepkg 的 `src/cargo-target` 中。不要并行复用正在被其他 Cargo 构建写入的目录。
 
 检查包内容和部署材料后，通过 pacman 安装本地产物：
 
 ```sh
-pacman -Qlp mechrevo-console-0.1.0.r163.g58e8d9c-1-x86_64.pkg.tar.zst
-sudo pacman -U ./mechrevo-console-0.1.0.r163.g58e8d9c-1-x86_64.pkg.tar.zst
+pacman -Qlp mechrevo-console-0.1.0.r166.ge3b7852-1-x86_64.pkg.tar.zst
+sudo pacman -U ./mechrevo-console-0.1.0.r166.ge3b7852-1-x86_64.pkg.tar.zst
 mechrevo-console --version
 mechrevo-console status --json
 ```
@@ -49,7 +50,8 @@ mechrevo-console status --json
 `/usr/share/polkit-1/actions/org.mechrevo.console.fan.policy`（0644）。
 固定入口为 `fan-helper --serve`，不会将构建产物同时放进 `/usr/bin`。
 许可放在 `/usr/share/licenses/mechrevo-console/`，
-包含项目 GPL 许可声明和两份内嵌字体的 OFL；控制台说明放在对应的 `/usr/share/doc/` 目录。
+包含项目 GPL 许可声明和两份内嵌字体的 OFL；独立用户指南安装为
+`/usr/share/doc/mechrevo-console/MECHREVO-CONSOLE.md`，不依赖源码目录或开发文档中的相对链接。
 
 `prepare()`、`check()`、`package()` 均核对固定提交、干净工作树及必要文件的 Git 跟踪和普通文件类型，
 包括新 helper 源码及两份策略。`check()` 验证 desktop 文件及两份策略 XML，不联网读取 DTD，

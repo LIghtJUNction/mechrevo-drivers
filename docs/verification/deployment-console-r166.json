@@ -1,0 +1,395 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T07:44:08.987591+00:00",
+  "status": "linux_console_r166_installed_and_read_only_paths_verified_new_driver_not_loaded",
+  "source": {
+    "source_commit": "e3b785274eb4923eff311bb9c11f6074601411d6",
+    "source_snapshot_sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
+    "source_input_files": 44,
+    "matches_273_test_source_snapshot": true,
+    "recipe_sha256": "1615c019869da7e86f7cedc4323e519a0d4fda65c41ce84d1922aefbae1739e9",
+    "BUILDINFO_recipe_hash_matches": true
+  },
+  "verification": {
+    "rust_workspace_tests": 273,
+    "python_console_tests": 131,
+    "failed_or_skipped": 0,
+    "fmt_clippy_windows_compile": "passed",
+    "scope": "Whole local suites, not per-feature counts. Source/candidate verification is independently retained in thermal-sampling.json."
+  },
+  "installation": {
+    "schema_version": 1,
+    "installed_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+    "source_commit": "e3b785274eb4923eff311bb9c11f6074601411d6",
+    "archive_sha256": "1ea5fd17e5bbeffc0d8a081a981e2c08eb4abc7a4a936dd158b083f068f5a9b1",
+    "verified_regular_payload_files": 11,
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "pacman_integrity": "mechrevo-console: 23 total files, 0 altered files",
+    "runtime_guard_before_and_after": true,
+    "oem_transaction_lock_held_through_install_and_audit": true,
+    "protected_baseline_sha256": "3c44916ad0991188bfcedc3cd45710aa10b25e8fb442456debd88023a8ed9382",
+    "efi_hashes_before_and_after_identical": {
+      "/efi/EFI/Linux/omarchy_linux.efi": "d26288abf44dcf0fd8ef22f6693dc3f38a321a4c1358d54d533e65c03491f1c6",
+      "/efi/limine.conf": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+      "/efi/EFI/Linux/omarchy_linux_r106.efi": "67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2",
+      "/efi/limine.conf.old": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49"
+    },
+    "driver_package_unchanged": true,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "real_fan_lease_used": false,
+    "hardware_setter_executed": false,
+    "physical_noise_acceptance": false,
+    "backup_directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1",
+    "recovery_package": {
+      "path": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1/previous-r163.pkg.tar.zst",
+      "sha256": "dabaac63c0e766470565132ab5103742cc0a30ee7940a6d6f29bf51f8fc862bd"
+    },
+    "source_provenance_sha256": "1b32ce837c99c594811329d6d3ea25597b63cde4ef8be643949991545384f5aa",
+    "installation_log_sha256": "08f24600a8435a82c84fa7e0407ffc0c6c6a0e6fc0d2db0b39f0fbd883e3e76a"
+  },
+  "archive": {
+    "path": "/home/lightjunction/Documents/GITHUB/mechrevo-drivers-fan-control/.local-tests/rust-target/thermal-iteration/release-package/packages/mechrevo-console-0.1.0.r166.ge3b7852-1-x86_64.pkg.tar.zst",
+    "sha256": "1ea5fd17e5bbeffc0d8a081a981e2c08eb4abc7a4a936dd158b083f068f5a9b1",
+    "bytes": 7054272
+  },
+  "payload_files": {
+    "usr/bin/mechrevo-console": {
+      "sha256": "7281f9fa1fa737f429d4c912b9a5579e252b049e890ac984398f237f149e1a1c",
+      "bytes": 1782848,
+      "mode": 493
+    },
+    "usr/bin/mechrevo-console-gui": {
+      "sha256": "1228be50436365b58765ff469ab097c25ba2c3bf70e3dd3362a3e9f8017b7abf",
+      "bytes": 22624416,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/fan-helper": {
+      "sha256": "862a0c64ed2b305874345401a7f828e1806b360d5007a53b4f7d044e52dbda4d",
+      "bytes": 836408,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/oem-helper": {
+      "sha256": "f6e2dec9e4fa09a0cbe62ac02011ba101ad6f8840a42809e6822963ed658a38f",
+      "bytes": 922248,
+      "mode": 493
+    },
+    "usr/share/applications/best.lmm.mechrevo-console.desktop": {
+      "sha256": "0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48",
+      "bytes": 524,
+      "mode": 420
+    },
+    "usr/share/doc/mechrevo-console/MECHREVO-CONSOLE.md": {
+      "sha256": "ecb2cf6be6c37949cf20da25669965bdf3da9ed39f7d345fce775fdf9858cd46",
+      "bytes": 1524,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Cormorant-OFL.txt": {
+      "sha256": "60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/LICENSE": {
+      "sha256": "cd6cc5e62e8217ce3c538d256e8c1ef9c9128dc7b30b825c1512676c66461657",
+      "bytes": 1089,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Manrope-OFL.txt": {
+      "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.fan.policy": {
+      "sha256": "ca2b1b6bef6a8acd42047c2caae3edb7626c2346e72a0a5bbaf78c7571a4d76d",
+      "bytes": 1056,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.oem.policy": {
+      "sha256": "61872098435090906cb0b4d6ada336edd883dc712e102a8d6e6e07733100d47f",
+      "bytes": 991,
+      "mode": 420
+    }
+  },
+  "installed_cli_thermal": {
+    "schema_version": 1,
+    "binary_sha256": "7281f9fa1fa737f429d4c912b9a5579e252b049e890ac984398f237f149e1a1c",
+    "candidate_not_installed_package": false,
+    "sample_count": 3,
+    "readings_per_sample": [
+      33,
+      33,
+      33
+    ],
+    "unavailable_per_sample": [
+      0,
+      0,
+      0
+    ],
+    "collection_elapsed_seconds": [
+      0.185850113,
+      0.227157654,
+      0.242919684
+    ],
+    "wall_time_seconds": 2.672633432004659,
+    "traced_child_user_seconds": 0.015979999999999998,
+    "traced_child_system_seconds": 0.10367799999999999,
+    "cpu_scope": "CLI and strace overhead, not GUI/whole-host utilization",
+    "execve_count": 1,
+    "ioctl_count": 0,
+    "writable_open_count": 0,
+    "forbidden_discovery_open_count": 0,
+    "invalid_options_rejected": true,
+    "driver_activation_verified": false,
+    "real_fan_lease_used": false,
+    "physical_noise_acceptance": false,
+    "files": {
+      "samples.jsonl": "22e60c0b651477c9f3338512faa4bf36bc1a6334272f117759d6a66268985c71",
+      "stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trace.log": "28e0586e94417f071f2b5ea44723405c0053cfa034a7dc0d916424fa12529073"
+    }
+  },
+  "installed_commands": {
+    "schema_version": 1,
+    "installed_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+    "ordinary_uid": 1000,
+    "commands": {
+      "version": {
+        "exit_code": 0,
+        "stdout_sha256": "3b5777d9f33a93723a17a18659df4b19ba174ba7673b693266329d5d16ffcc3b",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "status": {
+        "exit_code": 0,
+        "stdout_sha256": "671ae750da10f6c2dbb2f09e2dfffc79f205cbbc81c2317b423cb753d763eed9",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "oem-list": {
+        "exit_code": 0,
+        "stdout_sha256": "65b8e74a6a1f96910be0066f1540db3b34536e78947c81d9f7e34870560e92b1",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "capabilities": {
+        "exit_code": 0,
+        "stdout_sha256": "0270d9a583f962672d628791ee9cd08ee3e21ac1f29c0aea5bdb9bb29d712a17",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "fan-policy": {
+        "exit_code": 0,
+        "stdout_sha256": "19818b8a427a3af9524b7e6bae25b0146579d6cd97caf9406e93d4185acd17e1",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "oem-policy": {
+        "exit_code": 0,
+        "stdout_sha256": "1c348026acf8e84ab1a00fb5ab9b35bd6420bce1a7d8d3322ad9adf0c98f1f72",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "desktop": {
+        "exit_code": 0,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "unprivileged-oem-helper": {
+        "exit_code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "82916f6fc24ff84ecccf8f26a1456405f9fff8b9f4fd956885fe078a55007c52"
+      },
+      "invalid-fan-helper": {
+        "exit_code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "543b7efb2036a00e5196f9a8964a10301dc06508c927cd02c7cc72fbcbb4fbba"
+      }
+    },
+    "unique_status_readings": 38,
+    "oem_control_count": 4,
+    "capability_count": 12,
+    "hardware_setter_executed": false,
+    "real_fan_lease_used": false,
+    "administrator_dialog_verified": false
+  },
+  "installed_native_gui": {
+    "capture": {
+      "schema_version": 1,
+      "binary": "/usr/bin/mechrevo-console-gui",
+      "binary_sha256": "1228be50436365b58765ff469ab097c25ba2c3bf70e3dd3362a3e9f8017b7abf",
+      "artifact_origin": "installed-r166",
+      "installed_package": "/usr/bin/mechrevo-console-gui is owned by mechrevo-console 0.1.0.r166.ge3b7852-1",
+      "source_snapshot": {
+        "sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
+        "file_count": 44,
+        "missing": []
+      },
+      "capture_session": "4e5828dd-277b-4b1f-a509-44e453f869f9",
+      "screenshots": {
+        "overview.png": {
+          "sha256": "8b452c5ed5dabe56e8a355d07c2910dda9ab3b405630ee986d10779391230e14",
+          "width": 1280,
+          "height": 720
+        },
+        "fans.png": {
+          "sha256": "4a1ad61e29eaccad2edde57ff7587d51262d552044e4bcd78da7ff4439e6c96d",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "input_events": [
+        {
+          "key": "Tab",
+          "elapsed_seconds": 10.098242231004406
+        },
+        {
+          "key": "Tab",
+          "elapsed_seconds": 10.530844944005366
+        },
+        {
+          "key": "Tab",
+          "elapsed_seconds": 10.96343906000402
+        },
+        {
+          "key": "Tab",
+          "elapsed_seconds": 11.396067524998216
+        },
+        {
+          "key": "Return",
+          "elapsed_seconds": 11.828897596002207
+        }
+      ],
+      "app_reaped": true,
+      "app_exit_code": -15,
+      "app_termination": "SIGTERM after read-only screenshots; no fan lease acquired",
+      "lifetime_seconds": 15.379536207998171,
+      "startup_error_lines": [],
+      "hardware_setter_executed": false,
+      "scope": "Installed r166 native binary startup and read-only navigation in dedicated cage headless compositor, pixman/llvmpipe; all XDG state/cache and outputs are private beneath thermal-iteration. No actual desktop, fan lease/apply/restore or service changes."
+    },
+    "visual_review": {
+      "method": "Both installed-r166 original 1280x720 PNGs inspected with view_image; four independent Tab presses and Return visibly selected Fans.",
+      "overview": "Device heading, compact thermal card, collection-start age/duration, actual CPU/GPU temperature, fan RPM, trend endpoints/time range, separate device-info timestamp and spaced lower controls are visible without overlap. Lower dashboard content continues below the viewport.",
+      "fans": "Four separate Tab events and Return visibly selected Fans. Initial unprobed interface, import affordance and absent-draft explanation are visible. No invented curve or applied state. Further actions continue below viewport.",
+      "startup": "gui-app.log is empty; app stayed alive for both captures.",
+      "compositor_notes": "Headless cage logged an INFO-level unavailable DRM lease manager and a bus-connection message during teardown; no application startup error or panic was logged."
+    },
+    "limitations": [
+      "Native Linux headless compositor with software rendering; this is not the actual user desktop or Windows runtime.",
+      "Only startup and read-only keyboard navigation were performed. No fan interface probe, lease acquisition, Apply, Restore, actuator write or service change was requested.",
+      "SIGTERM termination after capture proves process reaping, not graceful native close behavior.",
+      "No fan acoustics, cooling effect, hardware parity or DPI beyond the captured 1280x720 scene is claimed."
+    ],
+    "scope": "Installed Linux release on dedicated headless compositor; startup and read-only overview/unprobed fan-page navigation only. No real user desktop, fan lease, GUI Apply, administrator dialog or graceful-close acceptance."
+  },
+  "final_runtime": {
+    "schema_version": 1,
+    "installed_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+    "installed_paths_still_match_all_11_payloads": true,
+    "protected_runtime_still_matches": true,
+    "boot_id_unchanged": true,
+    "new_driver_loaded": false,
+    "kernel_observation": {
+      "command_exit_code": 1,
+      "matched_entries": 0,
+      "window": "last 5 minutes only"
+    },
+    "backup_all_selected_files_hash_verified": true,
+    "fan_lease_or_write_performed": false,
+    "physical_noise_acceptance": false
+  },
+  "boot_history_observation": {
+    "installed_before_and_after_identical": true,
+    "current_menu_sha256": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+    "current_history_sha256": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+    "previous_receipt_history_sha256": "989f6e440454bfa6bfe92bf8f959d5283cba8a8b16e2e19ce2b75ad05bfd92a9",
+    "preexisting_drift": true,
+    "independent_event": "07:05:17 UTC limine-snapper-sync under snapper-cleanup.service logged menu update; configured six-hour history rotation and 6h+2s mtime interval are consistent with the pre-install change. No direct history-file write syscall was traced. Canonical/recovery images and recovery block remain unchanged."
+  },
+  "recovery": {
+    "directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1",
+    "previous_package_sha256": "dabaac63c0e766470565132ab5103742cc0a30ee7940a6d6f29bf51f8fc862bd",
+    "initial_67_file_manifest_sha256": "fc5628e34378809734fdb4a88c37bbf056612782b1439b535da0b2c61b2c86d8",
+    "source_archive_sha256": "fe32c3a8fb1269933a5fd3e42e16f511895cbb844f5028daa323d4b87083b321",
+    "source_archive_all_44_tested_inputs_match": true,
+    "scope": "Packages, source and selected proof logs/screenshots are retained and verified; later public receipt/tracking snapshots get a separate manifest without rewriting the initial manifest."
+  },
+  "tracking": {
+    "source": {
+      "session": "7c3e2cbb-bbd3-4828-b70c-dc354c9c593f",
+      "status": "finished",
+      "gap_count": 7,
+      "unresolved_event_count": 34,
+      "scope": "Owned watcher finalized; 7 retained path-disappearance gaps and 34 unresolved transient fixture events. No complete write history is claimed; subsequent final metadata edit is separately wrapped.",
+      "tracking": "partial",
+      "ended": 1792309465.8646567
+    },
+    "package_build": {
+      "session": "c2be59ff-1607-4ac9-b0cc-e3b661a05ffa",
+      "command_exit_code": 0,
+      "tracking": "partial",
+      "gap_count": 1,
+      "unresolved_event_count": 0,
+      "scope": "Temporary permission gap at makepkg pkg directory during fakeroot; independent source and archive payload checks passed."
+    },
+    "installation": {
+      "session": "c990cb10-4e50-4b4d-8204-025e7ee793e7",
+      "command_exit_code": 0,
+      "tracking": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "installed_cli": {
+      "session": "4f42ec5b-4cde-4a18-b943-6d2781d64308",
+      "command_exit_code": 0,
+      "tracking": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "installed_commands": {
+      "session": "f1b134c5-bda4-46e9-b78b-dc8f579338c0",
+      "command_exit_code": 0,
+      "tracking": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "installed_gui": {
+      "capture": {
+        "session": "4e5828dd-277b-4b1f-a509-44e453f869f9",
+        "command_exit_code": 0,
+        "tracking_status": "partial",
+        "gap_count": 0,
+        "unresolved_event_count": 3,
+        "unresolved_paths": 2,
+        "note": "Temporary runtime files generated metadata-unavailable/removal notices; command success is separate from partial tracking."
+      }
+    },
+    "package_metadata": {
+      "session": "e1e2f983-14e1-444a-b4f2-a459403a0fb2",
+      "status": "finished",
+      "tracking": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "cleanup_performed": false,
+    "space_observation": "Selected output/cache/backup metadata scans complete; about 109.45 GiB free, df-style utilization about 88.21%, existing space attention retained; no threshold-triggered cleanup."
+  },
+  "publication": {
+    "local_source_committed": true,
+    "remote_pushed": false,
+    "reason": "Login secret collection remains locked; no unlock prompt or new authentication attempt was made.",
+    "AUR_published": false
+  },
+  "remaining": [
+    "New kernel fan interface is installed on disk and in the previously qualified signed image, but not loaded or boot-accepted.",
+    "No real ACQUIRE/APPLY/RESTORE, RPM response, cooling/noise effect or suspend/resume acceptance.",
+    "Normal-user administrator dialog and GUI hardware Apply remain unaccepted.",
+    "Windows runtime/OEM control and other-model compatibility remain incomplete.",
+    "All 28 complete feature families and 77 upstream issues remain unresolved requirements."
+  ],
+  "evidence_sha256": {
+    ".local-tests/rust-target/thermal-iteration/release-package/provenance.json": "1b32ce837c99c594811329d6d3ea25597b63cde4ef8be643949991545384f5aa",
+    ".local-tests/rust-target/thermal-iteration/installed-cli-smoke/receipt.json": "63b3a30cc55954476c960914e8eb9d1b5b67c29eeed785b1a017cdd329c2af9f",
+    ".local-tests/rust-target/thermal-iteration/installed-checks/receipt.json": "d007d15152f4f2e18217fba91e426929b9bc54cfce10211009efc148098c876d",
+    ".local-tests/rust-target/thermal-iteration/installed-native-gui-r166/gui-capture.json": "f0b9acce1d19943fe2f62bbe1075a8f7c2deb23daa8102d937abd089b461e328",
+    ".local-tests/rust-target/thermal-iteration/installed-native-gui-r166/review.json": "42d97fee7da7060245bc092fc2987b8c8cc196b2ddc3de098ac7c550d15d780c",
+    "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1/installed-verification.json": "41bf28c21acf6a978505e5f89c3ec28a9c5cefac9694ab0ad19080c595097b4f",
+    "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1/final-runtime-verification.json": "5699dd8e25898f182dc2eedb6a8c899b536c8b72364d33941da1b56c063af770",
+    "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1/manifest.json": "fc5628e34378809734fdb4a88c37bbf056612782b1439b535da0b2c61b2c86d8",
+    "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/thermal-console-0.1.0.r166.ge3b7852-1/additional-source-and-menu-evidence.json": "b102fdc587cd5fda0c59515ee345b8b69cdb6d981a8e63816493b7414480296c"
+  }
+}

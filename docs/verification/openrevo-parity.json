@@ -4,10 +4,10 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "partial_linux_installed_subset_verified",
+    "status": "partial_linux_r166_installed_read_only_subset_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "r162 driver disk package and coherent signed UKI, plus r163 console, OEM/fan helpers and policies are locally installed. Six loaded module IDs remain unchanged; four early modules directly match r106, while r106 origin of the other two remains historical. Installed r163 CLI, read-only fan-helper inspect/shutdown and isolated native overview/Fn/unprobed fan-page rendering are verified. No real fan transaction, normal-user administrator dialog, GUI Apply or physical effect is accepted. Four-control candidate and r160 deployment records below remain historical evidence.",
-    "installation_status": "r162_driver_signed_uki_and_r163_console_helpers_policies_installed_kernel_not_loaded",
+    "scope": "r166 console fixed source, payloads, ordinary-user CLI and isolated native startup/navigation verified; existing driver/config/service identities unchanged. New fan interface, real fan transactions, physical effect and Windows runtime remain unaccepted. Historical candidate and older deployment fields retain their original scopes.",
+    "installation_status": "r166_console_installed_r162_driver_signed_image_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -85,6 +85,38 @@
     "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
     "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
     "latest_deployment": {
+      "evidence_ref": "docs/verification/deployment-console-r166.json",
+      "evidence_sha256": "fb3cc3493081f0c1027bf4741109736168937a267b51dee5b1b61407d9e826a2",
+      "console_source_commit": "e3b785274eb4923eff311bb9c11f6074601411d6",
+      "console_package": "mechrevo-console 0.1.0.r166.ge3b7852-1",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "new_driver_loaded": false,
+      "installed_cli_scope": "Ordinary-user status/OEM/capabilities and three thermal frames, 33 readings each, zero ioctl/writable opens in thermal trace.",
+      "installed_native_gui_scope": "Installed Linux headless startup/overview and unprobed fan-page read-only navigation only; SIGTERM reaped.",
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false
+    },
+    "thermal_sampling_development": {
+      "status": "partial_linux_source_and_r166_installed_read_only_subset_verified",
+      "evidence_ref": "docs/verification/thermal-sampling.json",
+      "evidence_sha256": "5f904677ba89840541ea7ec7056f39acdefa8c2a6106f6d8b1853834cbea0f8a",
+      "source_snapshot_sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
+      "rust_workspace_tests_passed": 273,
+      "count_scope": "Whole workspace total, not added to other historical suites or counted per family",
+      "candidate_cli_read_scope": "Three actual read-only candidate CLI frames with 33 hwmon temperature/fan readings per frame; trace: 1 execve, 0 ioctl, 0 writable opens, 0 forbidden discovery opens",
+      "gui_scope": "Candidate 1280x720 isolated Linux startup/overview and keyboard navigation to unprobed no-draft fan page verified; no actual desktop, lease, Apply, Restore, native graceful-close or physical-effect acceptance",
+      "windows_scope": "Compile check only; dedicated thermal sampler explicitly unavailable",
+      "installation": "r166_release_payload_and_read_only_paths_verified_separate_from_candidate_receipt",
+      "physical_fan_lease_response_and_noise": "not_verified",
+      "complete_family_resolved": false,
+      "python_console_tests_passed": 131,
+      "installed_verification_ref": "docs/verification/deployment-console-r166.json"
+    },
+    "historical_r162_r163_deployment": {
       "evidence_ref": "docs/verification/deployment-fan-r162-r163.json",
       "evidence_sha256": "969c091a7ab60f984e8cb82e99e7eb08d0fb26948eafc8845f92f6ead1f17bc0",
       "driver_source_commit": "e4bfb3f5d728619e108dc7dbd42b90449d224ac7",
@@ -103,21 +135,6 @@
       "physical_effect_acceptance": false,
       "AUR_published": false,
       "record_scope": "Historical last recorded installation only; newer thermal sampling source is not covered by this installed r163 receipt."
-    },
-    "thermal_sampling_development": {
-      "status": "partial_linux_candidate_sampling_verified_not_installed",
-      "evidence_ref": "docs/verification/thermal-sampling.json",
-      "evidence_sha256": "5f904677ba89840541ea7ec7056f39acdefa8c2a6106f6d8b1853834cbea0f8a",
-      "source_snapshot_sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
-      "rust_workspace_tests_passed": 273,
-      "count_scope": "Whole workspace total, not added to other historical suites or counted per family",
-      "candidate_cli_read_scope": "Three actual read-only candidate CLI frames with 33 hwmon temperature/fan readings per frame; trace: 1 execve, 0 ioctl, 0 writable opens, 0 forbidden discovery opens",
-      "gui_scope": "Candidate 1280x720 isolated Linux startup/overview and keyboard navigation to unprobed no-draft fan page verified; no actual desktop, lease, Apply, Restore, native graceful-close or physical-effect acceptance",
-      "windows_scope": "Compile check only; dedicated thermal sampler explicitly unavailable",
-      "installation": "not_installed_this_candidate",
-      "physical_fan_lease_response_and_noise": "not_verified",
-      "complete_family_resolved": false,
-      "python_console_tests_passed": 131
     }
   },
   "upstream": {
@@ -404,7 +421,7 @@
           "readback": "source_whole_raw_table_and_owned_bits_offline_verified_not_runtime",
           "recovery": "source_fd_original_raw_restore_broker_process_and_gui_close_offline_verified_not_runtime",
           "automated_tests": "partial_engine_provider_ioctl_rust_broker_gui_and_packaging_verified_complete_family_pending",
-          "installation": "r162_driver_and_signed_uki_r163_console_fan_helper_policy_payload_verified",
+          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
           "loading": "new_fan_interface_not_loaded",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -436,7 +453,8 @@
         "docs/verification/fan-curve-control.json",
         "docs/verification/fan-gui-broker.json",
         "docs/verification/deployment-fan-r162-r163.json",
-        "docs/verification/thermal-sampling.json"
+        "docs/verification/thermal-sampling.json",
+        "docs/verification/deployment-console-r166.json"
       ],
       "resolved_in_this_project": false,
       "source_development_notes": [
@@ -485,7 +503,7 @@
           "readback": "not_integrated_at_baseline",
           "recovery": "not_integrated_at_baseline",
           "automated_tests": "partial_offline_coverage",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
           "loading": "feature_activation_not_verified",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -513,7 +531,8 @@
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
-        "docs/verification/thermal-sampling.json"
+        "docs/verification/thermal-sampling.json",
+        "docs/verification/deployment-console-r166.json"
       ],
       "resolved_in_this_project": false,
       "thermal_sampling_progress": {
@@ -555,7 +574,7 @@
           "readback": "not_integrated_at_baseline",
           "recovery": "not_integrated_at_baseline",
           "automated_tests": "partial_offline_coverage",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
           "loading": "feature_activation_not_verified",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -583,7 +602,8 @@
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
-        "docs/verification/thermal-sampling.json"
+        "docs/verification/thermal-sampling.json",
+        "docs/verification/deployment-console-r166.json"
       ],
       "resolved_in_this_project": false,
       "thermal_sampling_progress": {
@@ -1672,7 +1692,7 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r163_console_oem_and_fan_helpers_policies_payload_verified_subset",
+          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
           "loading": "r163_installed_cli_native_readonly_navigation_and_fan_helper_inspect_verified_gui_apply_pending",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -1704,7 +1724,8 @@
         "git:5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
         "docs/verification/deployment-console-r160.json",
         "docs/verification/deployment-fan-r162-r163.json",
-        "docs/verification/thermal-sampling.json"
+        "docs/verification/thermal-sampling.json",
+        "docs/verification/deployment-console-r166.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -1787,7 +1808,7 @@
           "readback": "not_integrated_at_baseline",
           "recovery": "not_integrated_at_baseline",
           "automated_tests": "partial_offline_coverage",
-          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "installation": "r166_console_payload_verified_r162_driver_not_loaded_no_complete_feature_acceptance",
           "loading": "feature_activation_not_verified",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
@@ -1816,7 +1837,8 @@
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
         "console/crates/core/src/windows.rs",
-        "docs/verification/thermal-sampling.json"
+        "docs/verification/thermal-sampling.json",
+        "docs/verification/deployment-console-r166.json"
       ],
       "resolved_in_this_project": false,
       "thermal_sampling_progress": {
