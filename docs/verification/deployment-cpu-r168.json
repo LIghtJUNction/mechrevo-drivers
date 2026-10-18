@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T08:40:54.710247+00:00",
+  "status": "linux_console_r168_power18_installed_bounded_cpu_pl1_write_and_full_policy_restore_verified",
+  "source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
+  "source_snapshot_sha256": "6b836131a210d535b786fa23e0f7cce4ab497672bbdd15168e368e59766c4fc6",
+  "source_input_files": 56,
+  "verification": {
+    "rust_workspace_tests": 342,
+    "python_power_domain_tests": 219,
+    "python_console_domain_tests": 135,
+    "failed_or_skipped": 0,
+    "fmt_clippy_windows_compile": "passed",
+    "scope": "Whole local suites; Windows compile only. Candidate evidence remains in cpu-power-control.json."
+  },
+  "installation": {
+    "installed_versions": {
+      "console": "mechrevo-console 0.1.0.r168.gd2d50f7-1",
+      "power": "mechrevo-power-control 0.1.0-18"
+    },
+    "verified_regular_payload_files": 23,
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "pacman_integrity": "mechrevo-console: 23 total files, 0 altered files\nmechrevo-power-control: 26 total files, 0 altered files",
+    "runtime_guard_before": true,
+    "runtime_guard_after": true,
+    "protected_counts": {
+      "configs": 13,
+      "modules": 6,
+      "services": 3
+    },
+    "protected_baseline_sha256": "3c44916ad0991188bfcedc3cd45710aa10b25e8fb442456debd88023a8ed9382",
+    "efi_before": {
+      "/efi/EFI/Linux/omarchy_linux.efi": "d26288abf44dcf0fd8ef22f6693dc3f38a321a4c1358d54d533e65c03491f1c6",
+      "/efi/EFI/Linux/omarchy_linux_r106.efi": "67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2",
+      "/efi/limine.conf": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+      "/efi/limine.conf.old": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49"
+    },
+    "efi_after": {
+      "/efi/EFI/Linux/omarchy_linux.efi": "d26288abf44dcf0fd8ef22f6693dc3f38a321a4c1358d54d533e65c03491f1c6",
+      "/efi/EFI/Linux/omarchy_linux_r106.efi": "67febd41124b2dc9ce0770701962b64d3af4c7a44e6f42bc0a1633280cb410a2",
+      "/efi/limine.conf": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49",
+      "/efi/limine.conf.old": "6b2ab89ff2ec03af1c5dffb9090be3511f0b4c62d8f8f0d7db2f98cf9a912e49"
+    },
+    "driver_before": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+    "driver_after": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+    "both_locks_acquired_and_held_through_audit": true,
+    "backup_directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/cpu-console-0.1.0.r168.gd2d50f7-1",
+    "hardware_setter_executed": false,
+    "direct_service_command_executed": false
+  },
+  "archives": {
+    "console": {
+      "path": "/home/lightjunction/Documents/GITHUB/mechrevo-drivers-fan-control/.local-tests/rust-target/cpu-power-integration/release-console/packages/mechrevo-console-0.1.0.r168.gd2d50f7-1-x86_64.pkg.tar.zst",
+      "sha256": "ffef19717ad29c6140924a30da50f9b9ce110bda0f3b52dcfdf4529ee567c0e9",
+      "bytes": 7189360
+    },
+    "power": {
+      "path": "/home/lightjunction/Documents/GITHUB/mechrevo-drivers-fan-control/.local-tests/rust-target/cpu-power-integration/release-power/packages/mechrevo-power-control-0.1.0-18-x86_64.pkg.tar.zst",
+      "sha256": "918c3ce39cf1f2d9424f47c25b86a6ead1545ef5d26843c622504ddc538f5af3",
+      "bytes": 77812
+    }
+  },
+  "cpu_hardware_trial": {
+    "schema_version": 1,
+    "completed": true,
+    "versions": [
+      "mechrevo-console 0.1.0.r168.gd2d50f7-1",
+      "mechrevo-power-control 0.1.0-18"
+    ],
+    "source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
+    "binary_sha256": {
+      "/usr/bin/mechrevo-console": "84c94da11e3dfca4e28bedaae4cd1bffcdacbff39852bbbdd1001832ad6d0037",
+      "/usr/lib/mechrevo-power-control/console-helper": "f023c64f2b3eec4742f9ce35021d7d99da1f21193241571a8e703a176b0f2f97",
+      "/usr/lib/mechrevo-power-control/mechrevo_power.py": "f26764e2af78a82208483c157f1006a8c99619136c2179add6553472e558b5b2"
+    },
+    "initial_policy": {
+      "cap_uw": 55000000,
+      "polling_seconds": 1,
+      "rapl_debounce_seconds": 0,
+      "target_celsius": 90
+    },
+    "temporary_cap_uw": 54000000,
+    "write_attempted": true,
+    "set_transaction": "c815f2cf-001e-426c-9011-7c7039b2f48e",
+    "restore_transaction": "5ee73249-71d6-473a-9476-9d1ef36356a1",
+    "primary_error": null,
+    "restoration_error": null,
+    "postverification_error": null,
+    "restored_full_original_policy": true,
+    "fixed_constraints_unchanged": true,
+    "protected_runtime_unchanged_except_expected_state_receipts_and_thermald_restart": true,
+    "ordinary_user_authentication_ui_tested": false,
+    "gui_write_tested": false,
+    "rust_cli_execute_tested": false,
+    "fan_write_or_noise_acceptance": false,
+    "scope": "Installed Rust CLI explicit probe/local dry-run; correlated fixed installed helper executions via root pkexec, exact CAS plan for one lower PL1 transaction and full-policy restore. No stress workload, PL2/Tau/TCC/fan writes, ordinary-user authentication UI or Rust CLI execute acceptance."
+  },
+  "observed_after_lowering": [
+    {
+      "interface": "msr",
+      "pl1_uw": 54000000
+    },
+    {
+      "interface": "mmio",
+      "pl1_uw": 54000000
+    }
+  ],
+  "observed_after_restoration": [
+    {
+      "interface": "msr",
+      "pl1_uw": 55000000
+    },
+    {
+      "interface": "mmio",
+      "pl1_uw": 55000000
+    }
+  ],
+  "evidence_sha256": {
+    "installed_verification": "4a7e037716a0c358af6151e877142da5b716704e5b0e4fd94bde03a20290e702",
+    "hardware_trial_receipt": "150c648fb08536025b1e4f23a6d9af5e9927915a253e0d27a63ddd2cace04808",
+    "console_provenance": "c22f587e698d9bf488621a1e5c9b03550f8b1ba2a528c5df40371146e801c70c",
+    "power_provenance": "ea2183bde99bb9746341e880c90d26f5d13a220d72bc60519edf3a87150bf7ce",
+    "green_verification": "9ce99a068cb493852d6a6a14e34d2890305fcadffcf5429b407a4db97dfb5ffe"
+  },
+  "driver_activation": {
+    "disk_package": "4.24.0.r162.ge4bfb3f-1",
+    "loaded_identity_unchanged": true,
+    "new_fan_interface_loaded": false,
+    "reboot_or_reload_executed": false
+  },
+  "remaining_acceptance": [
+    "Ordinary-user administrator authentication dialog",
+    "Rust CLI execute runtime path",
+    "Native GUI authorization and writes",
+    "Actual fan curve lease/write/restore and physical noise",
+    "Windows runtime and CPU PL1 backend",
+    "Other models, BIOS combinations, PL2/PL4/Tau and full OpenRevo parity"
+  ],
+  "upstream_issues_closed": 0,
+  "complete_families_closed": 0,
+  "remote_push_completed": false,
+  "aur_published": false,
+  "installed_cli": {
+    "recorded_at_utc": "2026-10-18T08:39:33.540027+00:00",
+    "binary_sha256": "84c94da11e3dfca4e28bedaae4cd1bffcdacbff39852bbbdd1001832ad6d0037",
+    "commands": {
+      "help": {
+        "exit_code": 0,
+        "stdout_sha256": "23ab6798d73739f0c0c5abd328c80f49e916bab5968dfff4a5fb873004e8f587",
+        "stderr_bytes": 0
+      },
+      "status": {
+        "exit_code": 0,
+        "stdout_sha256": "476e2afbca02c07cca5cbef7b7aaa6680b96dbb43e338703071480694acc9af9",
+        "stderr_bytes": 0
+      },
+      "oem": {
+        "exit_code": 0,
+        "stdout_sha256": "65b8e74a6a1f96910be0066f1540db3b34536e78947c81d9f7e34870560e92b1",
+        "stderr_bytes": 0
+      },
+      "capabilities": {
+        "exit_code": 0,
+        "stdout_sha256": "0270d9a583f962672d628791ee9cd08ee3e21ac1f29c0aea5bdb9bb29d712a17",
+        "stderr_bytes": 0
+      },
+      "thermal": {
+        "exit_code": 0,
+        "stdout_sha256": "372dc6c6f51e168e6d6645aa387b01d46b3f4cc83aa789e6d3600f2831d937c1",
+        "stderr_bytes": 0
+      }
+    },
+    "status_readings": 38,
+    "oem_controls": 4,
+    "capabilities": 12,
+    "thermal_frames": 3,
+    "thermal_readings_per_frame": [
+      33,
+      33,
+      33
+    ],
+    "scope": "Installed ordinary-user read-only commands and thermal observations; CPU authorized probe and transactions recorded separately."
+  },
+  "gui": {
+    "installed_binary_sha256": "4eba53d21ef8d5cde206eba5febc7e8f92d64a8c9d64a3d5bc97d384611f0ecd",
+    "installed_startup_verified": true,
+    "overview_visually_reviewed": true,
+    "cpu_page_navigation_verified": false,
+    "first_attempt": "QA object path corrected after UnknownMethod",
+    "second_attempt": "Private AT-SPI Registry activation unavailable without its systemd unit; no navigation or authorization action sent",
+    "app_and_compositor_reaped": true,
+    "ordinary_user_authentication_tested": false,
+    "gui_write_tested": false,
+    "scope": "Dedicated headless compositor startup and overview only; CPU controls have offline UI regressions but native CPU page was not accepted"
+  },
+  "file_tracking": {
+    "source_watcher": "989b2f2f-64d6-4887-afe7-e83d2ef638ea",
+    "rust_final_session": "28512b5c-fc34-439a-a277-b85f5833b79f",
+    "rust_final_tracking": "complete_0_gaps_0_unresolved",
+    "power_tests_tracking": "partial_1_permission_gap_0_unresolved",
+    "console_tests_tracking": "complete_0_gaps_0_unresolved",
+    "console_build_tracking": "partial_2_gaps_0_unresolved",
+    "power_build_tracking": "complete_0_gaps_0_unresolved",
+    "isolated_mutations_tracking": "partial_0_gaps_166_unresolved",
+    "installation_watcher": "9eb0fdc6-6062-4296-b6ae-124ac31afac5",
+    "note": "Short-lived test fixtures and temporary unreadable makepkg pkg directory retained as gaps. Git internal state is excluded by AgentGC; source edits and final payload bytes were checked separately. Final watcher receipts follow separately.",
+    "gui_first_tracking": "complete_0_gaps_0_unresolved",
+    "gui_second_tracking": "partial_10_gaps_4_unresolved"
+  }
+}

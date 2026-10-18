@@ -21,7 +21,7 @@ depends=('python' 'thermald=2:2.5.13' 'systemd' 'polkit')
 makedepends=('git' 'libxml2')
 options=('!strip' '!debug' '!lto')
 
-_source_commit=${MECHREVO_POWER_COMMIT-a07327a656e3b620b9d5cf944928529b64ca09d4}
+_source_commit=${MECHREVO_POWER_COMMIT-d2d50f701a5d44498069fdaa1a053159775c4fb1}
 _source_url=${MECHREVO_POWER_SOURCE:-"${url}.git"}
 if [[ ! $_source_commit =~ ^[0-9a-f]{40}$ ]]; then
     printf '%s\n' 'Set MECHREVO_POWER_COMMIT to a reviewed full 40-character Git commit.' >&2

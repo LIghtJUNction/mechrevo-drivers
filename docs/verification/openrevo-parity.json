@@ -633,7 +633,7 @@
         "G05"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "open_not_claimed_complete",
+      "current_work_status": "linux_cpu_pl1_integrated_and_installed_complete_family_still_open",
       "baseline_notes": [
         "独立55W PL1有本机限定记录，不是完整Rust OEM调节。",
         "编码、范围、其他限值、所有权及恢复待验。"
@@ -672,9 +672,32 @@
       "evidence_refs": [
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
-        "docs/verification/deployment-r158.json"
+        "docs/verification/deployment-r158.json",
+        "docs/verification/cpu-power-control.json",
+        "docs/verification/deployment-cpu-r168.json",
+        "docs/POWER-CONTROL.md"
       ],
-      "resolved_in_this_project": false
+      "resolved_in_this_project": false,
+      "linux_cpu_pl1_progress": {
+        "source_commit": "d2d50f701a5d44498069fdaa1a053159775c4fb1",
+        "installed_console": "0.1.0.r168.gd2d50f7-1",
+        "installed_power_control": "0.1.0-18",
+        "rust_workspace_tests": 342,
+        "python_power_domain_tests": 219,
+        "python_console_domain_tests": 135,
+        "actual_python_to_rust_wire_cases": 15,
+        "explicit_probe_and_complete_policy_preview": "verified_with_installed_rust_cli",
+        "actual_set_and_restore": "fixed_installed_helper_via_root_pkexec_55_to_54_to_55_watts",
+        "complete_original_policy_restored": true,
+        "pl2_tau_tcc_reference_unchanged": true,
+        "rust_cli_execute_runtime": "not_verified",
+        "ordinary_user_authentication_ui": "not_verified",
+        "native_gui_startup": "verified_overview_only_cpu_navigation_incomplete_private_a11y_registry_unavailable",
+        "gui_write": "not_verified",
+        "windows_cpu_backend": "not_implemented",
+        "sustained_load_cooling_noise": "not_verified",
+        "complete_family_resolved": false
+      }
     },
     {
       "id": "F08",
