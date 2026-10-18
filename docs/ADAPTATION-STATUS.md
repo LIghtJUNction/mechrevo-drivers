@@ -116,7 +116,7 @@ pkgrel6 已完成一次真实 pacman 私有演练：合成软件包记录与空�
 针对 4 个关键逆向目标完成静态分析与 DSDT 分支闭合：
 
 1. **GPU 0xC5 固件触发源闭合**：DSDT `\_SB.INOU.PWBT`（`dsdt.dsl:126102`）在电源状态与适配器变化时显式派发 `Notify (^^PC00.PEG1.PEGP, 0xC5)`，与 `Notify (NPCF, 0xC0)` 并行触发。NVIDIA 开源驱动 `rm_acpi_notify()` 缺少 `0xC5` 分支，直接落入 `default` 导致 `osapi.c:2198 NV_ASSERT(0)`。
-2. **功耗控制路径判定**：DSDT `SMRW` 仅是对 `AX44` 命名缓冲区的内存读写，不控制硬件功耗；ACPI 真正控制硬件的入口是 `INOU.T1WR`（`0x81` PL1、`0x82` PL2、`0x84` PL4、`0x85` TCC、`0x1171` cTGP），而 Windows 服务实际直接走 `ACPIDriver` IOCTL（`0x9c40a484/88`）写入 EC 寄存器 `0x0783..0x0786`。
+2. **功耗控制路径判定**：DSDT `SMRW` 仅是对 `AX44` 命名缓冲区的内存读写，不控制硬件功耗；ACPI 真正控制硬件的入口是 `INOU.T1WR`（`0x81` PL1、`0x82` PL2、`0x84` PL4、`0x85` TCC、`0x1171` cTGP），而固定 5.17.51.34 版 Windows 服务的 EC 路径使用 `ACPIDriverDll` 的 `ReadEC`（`0x9c40a488`）与 `WriteEC`（`0x9c40a48c`），涉及 EC 寄存器 `0x0783..0x0786`。原记载的 `0x9c40a484` 是 CMOS 写入码，不是 EC 读取码。这里是静态调用证据；实际驱动会吞掉底层错误，返回成功和返回字节数均不能充当写入确认，详见 [Windows EC ABI 静态收据](verification/windows-ec-abi.json)。
 3. **电池充电模式与阈值持久化**：`GCUService` 的 `SetHealthProtectionStatus`（`0x06000944`）通过修改 EC `0x07a6`（bit 5:4）三档模式（00/01/10）并调用 `SMAPCTable`（IOCTL `0x9c40a500`）同步至 ACPI；51 版 `SetFwVars` 对自定义上下限百分比存在字段名不匹配缺陷。
 4. **睡眠唤醒恢复序列**：`ModernOn.MoveNext`（`0x06001266`）通过 `LoadProfileAll` 重新读取固件默认值，跳过电压/显存超频后重新应用 Profile 并异步提交风扇曲线；原厂存在异步吞错和异常打断后续电池恢复的缺陷。
 5. **本地测试套件健全性修复**：修复 `tests/test_tcc_packaging.py` 中跨语言环境（`LC_ALL=C`）下 `cmp` 报错匹配问题，全套离线回归验证无误。

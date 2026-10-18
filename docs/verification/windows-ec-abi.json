@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-18",
+  "outcome": "static_abi_candidate_not_windows_acceptance",
+  "scope": "Hash-pinned official Windows payloads, static user-mode wrapper and actual KMDF dispatch; no OEM code or assets reproduced.",
+  "method": "leanrea static PE export/import/string inventory and targeted objdump control-flow inspection; zip members CRC and SHA-256 verified without execution",
+  "offset_convention": "Driver and DLL locations are RVAs relative to each separately hashed PE image; file offsets are explicitly named.",
+  "provenance": {
+    "control_center": {
+      "version": "5.17.51.34",
+      "url": "https://driver.mechrevo.com/d.mechrevo.com/driver/MECHREVO2026/CCU/ControlCenter_5.17.51.34_Mechrevo.zip",
+      "package_sha256": "f73768655deb222125460af75fa5b9ff4d647f589b0602d83e2f2207b1b72c10",
+      "package_bytes": 275615905,
+      "package_verification_basis": "Existing local download receipt; installer was not executed. Nested driver zip and its payloads were independently re-read in this audit.",
+      "service_member": "app/AiStoneService/MyControlCenter/GCUService.exe",
+      "service_sha256": "a2b7d81ecf5c1dbdfc19738f17ba5e01e884d1b3688beb668858727307e2a318",
+      "dll_member": "app/AiStoneService/MyControlCenter/ACPIDriverDll.dll",
+      "dll_bytes": 4116648,
+      "dll_sha256": "d8698164417a8416c97b95d44bbd52efd2330f50299bfe0dc205ce0f4f6f5786",
+      "driver_zip_member": "app/ZipFiles/UWACPIDriver.zip",
+      "driver_zip_sha256": "b88d3307345c465597d7aaa1d1eaa04b96e25733fcc4fb0a709c8733dc537b19",
+      "driver_zip_bytes": 33303,
+      "driver_zip_crc_passed": true,
+      "driver_members": [
+        {
+          "member": "UWACPIDriver/UWACPIDriver.sys",
+          "bytes": 46352,
+          "sha256": "6e360ee4a0c42b2a4eaf46208c1592c87f8cd71aca2a6c52831a2ad356e61235"
+        },
+        {
+          "member": "UWACPIDriver/UWACPIDriver.inf",
+          "bytes": 2034,
+          "sha256": "ed17fb99b0d9fab6eb116a603ea34a42b8aa38e1978f128c826f8856b13f5e8e"
+        },
+        {
+          "member": "UWACPIDriver/uwacpidriver.cat",
+          "bytes": 11342,
+          "sha256": "27a8c480c1d9cdaa1ce5c4c8c9963c9df519061ce1476e398e8f6cdab2bacf6b"
+        }
+      ]
+    },
+    "openrevo_association": {
+      "version": "0.8.5",
+      "basis": "data/openrevo-085-analysis.json; the prior fixed outer-executable inventory was reused, not freshly re-extracted in this audit",
+      "outer_exe_sha256": "3e3b9d2297e36a0361d56c0f6357afdd9ebc8b201b943546c5cf8002cfabda09",
+      "embedded_native_file_offset": "0x6bf417",
+      "embedded_native_bytes_including_security_directory": 46352,
+      "embedded_native_sha256": "6e360ee4a0c42b2a4eaf46208c1592c87f8cd71aca2a6c52831a2ad356e61235",
+      "same_bytes_as_official_51_driver": true,
+      "different_payload": "The separate embedded CLR helper at 0x6bb753 is not the native driver and is not assigned the DLL export ABI.",
+      "limitation": "Matching native driver bytes do not establish which user-mode handle path, buffer format or error handling OpenRevo actually uses."
+    }
+  },
+  "device_binding": {
+    "inf_driver_version": "10/28/2025,10.48.11.331",
+    "inf_service": "UWACPIDriver",
+    "inf_hardware_id": "ACPI\\INOU0000",
+    "inf_kmdf_version": "1.15",
+    "dll_device_path": "\\\\.\\ACPIDriver",
+    "dll_device_path_rva": "0x2329c0",
+    "dll_device_path_file_offset": "0x2319c0",
+    "driver_symbolic_link": "\\DosDevices\\ACPIDriver",
+    "driver_symbolic_link_file_offset": "0x5580",
+    "not_interchangeable": "No ABI is assigned to a different binary, marketing model, \\\\.\\UniwillAcpiDriver name, or generic WinRing0 device merely by similarity.",
+    "not_verified": [
+      "Authenticode trust and revocation",
+      "Windows installation or loaded driver identity",
+      "Device ACL and elevated access on Windows",
+      "Current Windows DMI/firmware match"
+    ]
+  },
+  "wrapper": {
+    "ReadEC": {
+      "export_rva": "0x3410",
+      "ioctl": "0x9c40a488",
+      "input_prefix": "little-endian u32 address at offset 0",
+      "input_bytes_passed": 4194304,
+      "output_bytes_passed": 4194304,
+      "returned_value": "Wrapper consumes only output byte 0."
+    },
+    "WriteEC": {
+      "export_rva": "0x34f0",
+      "ioctl": "0x9c40a48c",
+      "input_prefix": "little-endian u32 address at offset 0, little-endian u32 data at offset 4; driver consumes only one data byte",
+      "input_bytes_passed": 4194304,
+      "output_bytes_passed": 4194304
+    },
+    "other_exports": {
+      "WriteCMOS": {
+        "export_rva": "0x3330",
+        "ioctl": "0x9c40a484",
+        "not_an_ec_read": true
+      },
+      "SMAPCTable": {
+        "export_rva": "0x4230",
+        "ioctl": "0x9c40a500",
+        "not_assigned_ec_read_write_layout": true
+      }
+    },
+    "do_not_copy": "Global 4 MiB buffers, byte-only decoding and ignored operation status are observations of this wrapper, not a recommended native client contract."
+  },
+  "driver_dispatch": {
+    "callback_rva": "0x2870",
+    "transfer_method": "METHOD_BUFFERED (both IOCTL values have method bits 0)",
+    "zero_length_check": {
+      "rvas": [
+        "0x28c3",
+        "0x28ce",
+        "0x28d9"
+      ],
+      "result": "Either caller input or output length zero completes STATUS_INVALID_PARAMETER (0xc000000d)."
+    },
+    "retrieve_input": {
+      "call_rva": "0x2917",
+      "wrapper_rva": "0x33bc",
+      "minimum_required_length": 0,
+      "wdf_index": 269
+    },
+    "retrieve_output": {
+      "call_rva": "0x2946",
+      "wrapper_rva": "0x3420",
+      "minimum_required_length": 0,
+      "wdf_index": 270
+    },
+    "per_operation_length_validation": "No EC-specific minimum size, firmware DataLength bound against caller output length, or response Count/returned-size validation was found. Nonzero acceptance is not proof that undersized buffers are safe.",
+    "read": {
+      "dispatch_call_rva": "0x2ae3",
+      "helper_rva": "0x2130",
+      "input_bytes_consumed": 4,
+      "firmware_method": "ECRR",
+      "underlying_ioctl": "0x32c004",
+      "underlying_send_rva": "0x22ad",
+      "success_checks": "Nonnegative ACPI status, output signature 0x426f6541 and first argument Type==0 (integer).",
+      "output_copy_call_rva": "0x2328",
+      "output_offset": 0,
+      "output_copy_length": "Variable u16 ACPI Argument[0].DataLength, read at RVA 0x22f2; passed as both memcpy_s destination size and count. Not a fixed one-byte store.",
+      "failure": "Negative ACPI status or invalid output signature/type returns from helper without writing caller output."
+    },
+    "write": {
+      "dispatch_call_rva": "0x2b14",
+      "helper_rva": "0x25b8",
+      "address_input_offset": 0,
+      "address_bytes_consumed": 4,
+      "data_input_offset": 4,
+      "data_bytes_consumed": 1,
+      "firmware_method": "ECRW",
+      "underlying_ioctl": "0x32c004",
+      "underlying_send_rva": "0x2757",
+      "output_copy_call_rva": "0x27d2",
+      "output_copy_length": "Variable u16 first integer argument DataLength if ACPI reports such a return; a valid EC write is not proven by output prefix."
+    },
+    "initialization_helper": {
+      "rva": "0x281c",
+      "effect": "Only advances local pointer/length copies; contains no caller-buffer dereference store. Does not clear METHOD_BUFFERED input/output storage."
+    },
+    "completion": {
+      "set_information_call_rva": "0x3077",
+      "information": "Original caller OutputBufferLength, not the number of bytes copied by ECRR/ECRW.",
+      "request_complete_call_rva": "0x3086",
+      "status": "STATUS_SUCCESS (0) after shared completion path, including negative EC helper status.",
+      "helper_error_discarded": true,
+      "request_complete_wdf_index": 263,
+      "set_information_wdf_index": 275
+    },
+    "conclusion": "DeviceIoControl success and BytesReturned cannot serve as an EC write acknowledgement or independently validate an EC read.",
+    "access_bits": {
+      "value": 2,
+      "required_handle_access": "FILE_WRITE_DATA / FILE_WRITE_ACCESS",
+      "effect": "Even the ECRR read IOCTL requires a handle opened with write access. This is not proof that an ordinary user is authorized: the actual device ACL remains unverified.",
+      "wrapper_CreateFile_desired_access": "GENERIC_READ | GENERIC_WRITE (0xc0000000)"
+    }
+  },
+  "strict_native_read_candidate": {
+    "status": "Static fail-closed candidate; not implemented or runtime-accepted by this receipt.",
+    "firmware_basis": {
+      "dsdt_dat_sha256": "de42c0d802ed746c1d032bf53ebb3b80f92172b8fb55e115b0e433566f542cda",
+      "dsdt_dsl_sha256": "43fe86ade0cac63a850902399a91b8baeec1adf6b190768e690da106d24cbe65",
+      "method": "MRO07 ECRR at DSL line 125737 calls the byte-read MMRW branch; the qualified firmware returns an integer in 0..255."
+    },
+    "dll_byte_only_ambiguity": "For address 0x074e, failed ECRR can retain input DWORD 0x0000074e. The DLL reads only low byte 0x4e, indistinguishable from a successful byte value 0x4e.",
+    "full_dword_distinction": "A native client can inspect the complete little-endian DWORD rather than truncating: an unchanged 0x0000074e exceeds 255 and must be rejected; a correctly copied ULONG byte value 0x0000004e is different. The two cases are not indistinguishable in a full-buffer decoder.",
+    "requirements": [
+      "Bind exact qualified device, driver hash/version and firmware before assigning ECRR byte semantics.",
+      "Require output prefix to satisfy the complete ULONG byte range; reject unchanged address echo, malformed upper bytes and uncertain response.",
+      "Preserve unknown/failure status; never claim successful restoration solely from DeviceIoControl success or the byte-only DLL getter.",
+      "Do not infer a smaller safe native buffer from the missing driver checks; validate the full native allocation/guard contract before runtime use."
+    ],
+    "limitations": [
+      "The driver copies response DataLength, not a fixed ULONG; actual Windows response length and guard behavior remain unobserved.",
+      "The greater-than-255 address-echo distinction does not generalize to addresses 0..255.",
+      "A user-mode mutex cannot exclude the original OEM service or other kernel/firmware writers."
+    ]
+  },
+  "implementation_entry": {
+    "first_oem_capability": "Qualified FnLock Boolean only after strict read and restricted Windows elevation are implemented and accepted.",
+    "fixed_fn_evidence": {
+      "register": "0x074e",
+      "mask": "0x10",
+      "service_getter_token": "0x06000fc7",
+      "service_setter_token": "0x06000fd6",
+      "getter_body_sha256": "52b72d4c1cedb04d335a5db2b2a017856c04dc7687f253f5a460ebe476eab802",
+      "setter_body_sha256": "f9b5d97b4f69bd8487a84d21feb66bd9bb5d57cfe6a8777c835ddd6135e81877",
+      "independent_linux_reference": "src/uniwill_interfaces.h and src/uniwill_keyboard.h fn_lock masked update"
+    },
+    "files": [
+      "console/crates/core/src/oem.rs",
+      "new console/crates/core/src/oem/windows.rs",
+      "console/crates/core/src/privilege.rs",
+      "console/crates/cli/src/oem_helper.rs"
+    ],
+    "required_boundary": "Existing non-Linux privilege fallback directly calls Service; it must not silently become an elevated OEM control implementation. Add a fixed, authenticated Windows helper and fresh typed plan validation together with any writable backend.",
+    "not_enabled": [
+      "Windows OEM writes",
+      "automatic driver installation",
+      "arbitrary raw register or IOCTL API",
+      "charging thresholds or modes via assumed SMAPC layout",
+      "keyboard HID reports inferred from VID/PID or imports"
+    ]
+  },
+  "official_protocol_references": [
+    {
+      "url": "https://raw.githubusercontent.com/microsoft/Windows-Driver-Frameworks/058a020ccd9db55bb8406323e78a6849e00cc5d4/src/publicinc/wdf/kmdf/1.15/wdffuncenum.h",
+      "sha256": "2042f92c5a6114d9a2d5443a2509e23e1ef0caebc52f5eacad37e25e1a0d4be7",
+      "purpose": "KMDF 1.15 function-table indices."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/buffer-descriptions-for-i-o-control-codes",
+      "purpose": "METHOD_BUFFERED shares the input/output system buffer."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/acpiioct/ns-acpiioct-_acpi_method_argument_v1",
+      "purpose": "Integer method arguments use ULONG; this does not prove the actual length produced on the untested Windows target."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/defining-i-o-control-codes",
+      "purpose": "IOCTL access bits require the corresponding rights on the device handle, including read operations whose vendor code requests FILE_WRITE_DATA."
+    }
+  ],
+  "acceptance": {
+    "oem_program_executed": false,
+    "driver_installed_or_loaded": false,
+    "hardware_read_or_write_performed": false,
+    "cargo_or_kernel_build_performed": false,
+    "windows_runtime_verified": false,
+    "cross_platform_parity_claimed": false
+  },
+  "private_artifacts": "console/.local-tests/windows-ec-abi-51 (ignored): exact driver payloads, disassembly, source provenance and independent dispatch analysis; no vendor code is committed.",
+  "offline_validation": {
+    "dispatch_receipt_sha256": "6a543114d3df312f422f5014085654d26bafdfaa668970fc351348777b92117b",
+    "dispatch_audit_script_sha256": "9a609357bf190fd0f11c2d652a8f24a7507c51c5ed709d0a2e0a3220ff9438c0",
+    "selected_disassembly_instruction_or_continuation_lines_checked": 821,
+    "byte_mismatches": 0,
+    "function_range_sha256_checks": 7,
+    "direct_call_checks": 6,
+    "wdf_index_checks": 4,
+    "public_json_parsed_and_payload_hash_association_asserted": true,
+    "git_diff_check_passed": true,
+    "scope": "Static PE byte/control-flow consistency checks only; no hardware emulation or runtime protocol success is claimed."
+  }
+}
