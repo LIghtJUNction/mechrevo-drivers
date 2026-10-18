@@ -1,5 +1,6 @@
 use crate::*;
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -40,6 +41,21 @@ fn device_id(path: &Path) -> String {
     let path = fs::canonicalize(path.join("device"))
         .unwrap_or_else(|_| fs::canonicalize(path).unwrap_or_else(|_| path.into()));
     path.to_string_lossy().into_owned()
+}
+fn sensor_id(path: &Path) -> String {
+    // A physical device can expose several hwmon interfaces with the same
+    // channel names. Resolving only its device link would merge those sensors.
+    // Canonicalization inspects paths, not the input value, including while the
+    // device is suspended. Fall back to its resolved interface path if an input
+    // disappears between directory enumeration and canonicalization.
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| {
+        path.parent()
+            .and_then(|parent| fs::canonicalize(parent).ok())
+            .zip(path.file_name())
+            .map(|(parent, name)| parent.join(name))
+            .unwrap_or_else(|| path.into())
+    });
+    canonical.to_string_lossy().into_owned()
 }
 fn reading(
     path: &Path,
@@ -98,6 +114,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
     identity.qualify();
     let mut telemetry = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut sensor_sources = HashSet::new();
     if identity.product_name.is_none() {
         diagnostics.push(Diagnostic {
             code: "identity_unavailable".into(),
@@ -125,9 +142,23 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
             {
                 continue;
             }
+            let id = sensor_id(&input);
+            // Class aliases of one canonical input describe one observation.
+            // Keep the first sorted class path as provenance; equal readings
+            // from different canonical inputs remain separate sensors.
+            if !sensor_sources.insert(id.clone()) {
+                diagnostics.push(Diagnostic {
+                    code: "sensor_source_alias".into(),
+                    message: format!(
+                        "Skipped duplicate hwmon source {}; canonical input={id}",
+                        input.display()
+                    ),
+                });
+                continue;
+            }
             if suspended {
                 telemetry.push(SensorReading {
-                    id: format!("{device}/{stem}"),
+                    id,
                     label: format!("{chip}: {stem}"),
                     device_id: device.clone(),
                     kind: kind.into(),
@@ -147,7 +178,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
             telemetry.push(reading(
                 &input,
                 &device,
-                &format!("{device}/{stem}"),
+                &id,
                 format!("{chip}: {label}"),
                 (kind, unit, scale, min, max),
             ));
@@ -306,6 +337,20 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, value).unwrap();
     }
+    #[cfg(unix)]
+    fn linked_hwmon(root: &Path, class_name: &str, interface: &str) -> PathBuf {
+        use std::os::unix::fs::symlink;
+        let physical = root.join("devices/pci0000:00/0000:00:02.0");
+        let hwmon = physical.join("hwmon").join(interface);
+        fs::create_dir_all(&hwmon).unwrap();
+        fs::create_dir_all(root.join("class/hwmon")).unwrap();
+        symlink(&physical, hwmon.join("device")).unwrap();
+        symlink(&hwmon, root.join("class/hwmon").join(class_name)).unwrap();
+        fs::write(hwmon.join("name"), "fixture_chip").unwrap();
+        fs::write(hwmon.join("temp1_input"), "48000").unwrap();
+        fs::write(hwmon.join("fan1_input"), "2400").unwrap();
+        fs::canonicalize(hwmon).unwrap()
+    }
     #[test]
     fn empty_machine_is_diagnostic_unknown_not_mock_zero() {
         let root = fixture();
@@ -362,6 +407,207 @@ mod tests {
             "boolean"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn one_physical_device_keeps_same_channels_from_distinct_hwmon_interfaces() {
+        let root = fixture();
+        let first = linked_hwmon(&root, "hwmon0", "hwmon0");
+        let second = linked_hwmon(&root, "hwmon1", "hwmon1");
+        let s = snapshot(&root);
+        assert_eq!(s.telemetry.len(), 4);
+        let ids: HashSet<_> = s.telemetry.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids.len(),
+            4,
+            "same device/channel is not a unique sensor ID"
+        );
+        let physical = fs::canonicalize(root.join("devices/pci0000:00/0000:00:02.0"))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        for reading in &s.telemetry {
+            assert_eq!(reading.device_id, physical);
+            assert_eq!(reading.source.device_id.as_deref(), Some(physical.as_str()));
+            assert_eq!(
+                reading.id,
+                fs::canonicalize(&reading.source.path)
+                    .unwrap()
+                    .to_string_lossy()
+            );
+        }
+        // Equal values do not establish that two interfaces are aliases.
+        for (kind, value, unit) in [("temperature", 48.0, "°C"), ("fan_speed", 2400.0, "RPM")] {
+            let readings: Vec<_> = s.telemetry.iter().filter(|r| r.kind == kind).collect();
+            assert_eq!(readings.len(), 2);
+            assert!(readings
+                .iter()
+                .all(|r| r.value == Some(value) && r.unit == unit));
+            assert!(readings
+                .iter()
+                .any(|r| r.id.starts_with(first.to_str().unwrap())));
+            assert!(readings
+                .iter()
+                .any(|r| r.id.starts_with(second.to_str().unwrap())));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn aliases_of_one_canonical_hwmon_input_are_reported_once() {
+        use std::os::unix::fs::symlink;
+        let root = fixture();
+        let hwmon = linked_hwmon(&root, "hwmon0", "hwmon7");
+        symlink(&hwmon, root.join("class/hwmon/hwmon1")).unwrap();
+        let s = snapshot(&root);
+        assert_eq!(
+            s.telemetry.len(),
+            2,
+            "class aliases must not duplicate sensors"
+        );
+        assert!(s
+            .telemetry
+            .iter()
+            .all(|r| Path::new(&r.source.path).starts_with(root.join("class/hwmon/hwmon0"))));
+        assert_eq!(
+            s.diagnostics
+                .iter()
+                .filter(|d| d.code == "sensor_source_alias")
+                .count(),
+            2
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn sensor_identity_survives_invalid_values_and_runtime_suspend() {
+        let root = fixture();
+        let hwmon = linked_hwmon(&root, "hwmon0", "hwmon7");
+        let active = snapshot(&root);
+        fs::write(hwmon.join("temp1_input"), "").unwrap();
+        fs::write(hwmon.join("fan1_input"), "invalid").unwrap();
+        let invalid = snapshot(&root);
+        let physical = root.join("devices/pci0000:00/0000:00:02.0");
+        fs::create_dir_all(physical.join("power")).unwrap();
+        fs::write(physical.join("power/runtime_status"), "suspended").unwrap();
+        // A suspended input must not become available even if it holds a valid
+        // cached value. The branch resolves its identity without reading it.
+        fs::write(hwmon.join("temp1_input"), "71000").unwrap();
+        fs::write(hwmon.join("fan1_input"), "3100").unwrap();
+        let suspended = snapshot(&root);
+        assert_eq!(active.telemetry.len(), 2);
+        assert_eq!(invalid.telemetry.len(), 2);
+        assert_eq!(suspended.telemetry.len(), 2);
+        for ((active, invalid), suspended) in active
+            .telemetry
+            .iter()
+            .zip(&invalid.telemetry)
+            .zip(&suspended.telemetry)
+        {
+            assert_eq!(active.id, invalid.id);
+            assert_eq!(active.id, suspended.id);
+            assert_eq!(active.device_id, suspended.device_id);
+            assert_eq!(active.source, invalid.source);
+            assert_eq!(active.source, suspended.source);
+            assert!(active.value.is_some());
+            assert_eq!(invalid.value, None);
+            assert_eq!(suspended.value, None);
+            assert_eq!(suspended.status, CapabilityStatus::Unavailable);
+            assert!(suspended.reason.as_deref().unwrap().contains("not read"));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn suspended_fifo_input_is_not_opened() {
+        use std::{
+            os::unix::fs::FileTypeExt,
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        const CHILD_ROOT: &str = "MECHREVO_TEST_SUSPENDED_FIFO_ROOT";
+        const COMPLETED: &str = "SUSPENDED_FIFO_SNAPSHOT_COMPLETED";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            for input in ["temp1_input", "fan1_input"] {
+                assert!(fs::metadata(root.join("class/hwmon/hwmon0").join(input))
+                    .unwrap()
+                    .file_type()
+                    .is_fifo());
+            }
+            // No writer opens either FIFO. Opening an input for reading would
+            // block this child, rather than merely return a cached/invalid value.
+            let s = snapshot(&root);
+            assert_eq!(s.telemetry.len(), 2);
+            for reading in s.telemetry {
+                assert_eq!(reading.value, None);
+                assert_eq!(reading.status, CapabilityStatus::Unavailable);
+                assert!(reading.reason.as_deref().unwrap().contains("not read"));
+                assert_eq!(
+                    reading.id,
+                    fs::canonicalize(&reading.source.path)
+                        .unwrap()
+                        .to_string_lossy()
+                );
+            }
+            println!("{COMPLETED}");
+            return;
+        }
+        let root = fixture();
+        let hwmon = linked_hwmon(&root, "hwmon0", "hwmon7");
+        for input in ["temp1_input", "fan1_input"] {
+            fs::remove_file(hwmon.join(input)).unwrap();
+        }
+        let status = Command::new("mkfifo")
+            .arg(hwmon.join("temp1_input"))
+            .arg(hwmon.join("fan1_input"))
+            .status()
+            .expect("Linux FIFO regression requires the mkfifo utility");
+        assert!(status.success(), "mkfifo failed: {status}");
+        put(
+            &root,
+            "devices/pci0000:00/0000:00:02.0/power/runtime_status",
+            "suspended",
+        );
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "linux::tests::suspended_fifo_input_is_not_opened",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, &root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Cannot start the bounded FIFO regression child");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let completed = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => break Err("suspended snapshot blocked on a FIFO for 5 seconds".into()),
+                Err(error) => break Err(format!("Cannot wait for the FIFO child: {error}")),
+            }
+        };
+        if completed.is_err() {
+            let _ = child.kill();
+        }
+        let output = child.wait_with_output().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(completed.is_ok(), "{completed:?}");
+        assert!(
+            output.status.success(),
+            "FIFO child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(COMPLETED),
+            "FIFO child did not run the exact regression: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
     #[test]
     fn suspended_gpu_is_not_read_as_zero() {

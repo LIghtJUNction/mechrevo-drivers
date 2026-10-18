@@ -23,7 +23,26 @@ Rust 身份识别使用独立的精确规则。品牌命中仅是身份线索；
 
 遥测保留设备 ID、单位和来源。EC 温度不是 CPU 核心温度，GPU 休眠也不证明功耗为零。缺失值显示不可用。启动和查询不自动调整 GPU、风扇、充电、ICC、MUX 或功耗限值。
 
+Linux hwmon 的传感器 `id` 使用解析符号链接后的完整输入路径，例如 `/sys/devices/…/hwmon/hwmon7/temp1_input`。旧版使用物理设备路径加通道名；同一设备的多个 hwmon 接口都含 `temp1_input` 时会发生 ID 冲突。新版把这些接口分别保留，即使读数相同也不会合并。多个 class 路径若指向同一输入，只保留排序后的第一个来源，并记录 `sensor_source_alias` 诊断。`device_id` 仍表示物理设备归属，`source.path` 仍保留实际枚举到的原始路径。
+
+依赖旧 `id` 的消费者需要迁移已有索引；此变化仅涉及 Linux hwmon，电池等其他 ID 不变。新 ID 不保证跨重启或 hwmon 重新编号稳定。输入在枚举后消失时，优先使用解析后的父目录加文件名，仍无法解析才保留原路径。设备被报告为 runtime-suspended 时，控制台解析路径但不打开传感器输入，保留 ID 与来源，将读数标为不可用；它不会以旧读数或零值代替本次采样。
+
 Windows 标准接口依据：[电源策略](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/powercfg-command-line-options)、[亮度类](https://learn.microsoft.com/en-us/windows/win32/wmicoreprov/wmimonitorbrightness)、[亮度方法](https://learn.microsoft.com/en-us/windows/win32/wmicoreprov/wmisetbrightness-method-in-class-wmimonitorbrightnessmethods)。Linux 接口依据：[backlight](https://docs.kernel.org/gpu/backlight.html)。
+
+## CLI JSON 与采集时间
+
+`status --json` 和 `export --output PATH` 使用相同的状态文档结构，保留 `schema_version: 1`、原有快照字段及 `identity_evidence`，新增 `collection` 对象。导出命令另外返回导出路径等确认信息；文件内保存完整状态文档。导出使用显式路径，不覆盖已有文件或符号链接，也不自动创建父目录。
+
+| `collection` 字段 | 含义与边界 |
+| --- | --- |
+| `started_at`、`finished_at` | 一次完整 `Service::snapshot()` 调用前后的系统时间，包含亮度枚举。各由 UTC Unix 纪元整数秒 `unix_seconds` 与不足一秒的整数纳秒 `nanoseconds` 组成；早于纪元的时间为 `null`。 |
+| `wall_clock_status` | `ordered` 表示结束不早于开始，`moved_backwards` 表示系统时间回退，任一时间早于纪元则为 `before_unix_epoch`。有序不证明时钟已同步，也不证明绝对时间准确。 |
+| `monotonic_elapsed`、`monotonic_clock_status` | 使用单调时钟计算耗时，包含快照与两次系统时间读取，以整数 `seconds`、`nanoseconds` 表示；不受通常的系统校时影响。若时钟顺序检查失败，耗时为 `null`、状态为 `moved_backwards`，正常为 `ordered`。 |
+| `consistency`、`scope`、`time_basis` | `consistency` 固定为 `non_atomic_sequential_reads`；各项按顺序读取，可能对应不同瞬间或系统缓存。时间范围不包含运行环境收集、型号匹配与 JSON 序列化，不能把它当作所有传感器的同时硬件采样或新鲜度保证。其余两字段在文档内说明范围和时间基准。 |
+| `tool`、`build_target` | 工具名称、Cargo 包名、包版本，以及构建目标操作系统和架构。构建目标不等于驱动版本或实机验收结果。 |
+| `runtime.kernel_release` | Linux 从 `/proc/sys/kernel/osrelease` 读取运行内核版本，含 `value`、`source`、`status`，失败时附 `reason`。最多接受 256 字节，拒绝无效 UTF-8、空值和非可打印版本内容；状态为 `available`、`read_failed` 或 `invalid_data`。其他平台为 `not_collected`，值与来源均为 `null`，不推测 Windows 版本。 |
+
+整数秒与纳秒分开保存，避免用浮点时间戳丢失精度；消费者仍须使用可保留整数精度的 JSON 解析方式。采集时间可用于关联录音和系统日志，但本身不判断风扇异响原因，也不改变风扇控制。
 
 ## 本地验证
 

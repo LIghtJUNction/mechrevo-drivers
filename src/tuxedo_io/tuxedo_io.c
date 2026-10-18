@@ -272,9 +272,13 @@ static void uw_id_tdp(void)
 
 static u32 uniwill_identify(void)
 {
+	struct uniwill_device_features_t *features;
 	u32 result = uniwill_get_active_interface_id(NULL) == 0 ? 1 : 0;
 	if (result) {
-		uw_feats = uniwill_get_device_features();
+		features = uniwill_get_device_features();
+		if (!features)
+			return 0;
+		uw_feats = features;
 		uw_id_tdp();
 	}
 	return result;
@@ -482,6 +486,8 @@ static int uw_get_tdp(u8 tdp_index)
 	int min_tdp_status = uw_get_tdp_min(tdp_index);
 	if (min_tdp_status < 0)
 		return min_tdp_status;
+	if (!uw_feats)
+		return -ENODEV;
 
 	status = uniwill_read_ec_ram(tdp_current_addr, &tdp_data);
 	if (status < 0)
@@ -509,6 +515,8 @@ static int uw_set_tdp(u8 tdp_index, int tdp_value)
 		return tdp_max;
 	if (tdp_value < tdp_min || tdp_value > tdp_max)
 		return -EINVAL;
+	if (!uw_feats)
+		return -ENODEV;
 
 	if (tdp_index == 2 && uw_feats->uniwill_has_double_pl4)
 		tdp_data = tdp_value / 2;
@@ -520,6 +528,8 @@ static int uw_set_tdp(u8 tdp_index, int tdp_value)
 
 static u32 uw_get_performance_profile_count(void)
 {
+	if (!uw_feats)
+		return 0;
 	if (uw_feats->uniwill_profile_v1_two_profs)
 		return 2;
 	if (uw_feats->uniwill_profile_v1_three_profs ||
@@ -609,10 +619,14 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			}
 			break;
 		case R_UW_MODEL_ID:
+			if (!uw_feats)
+				return -ENODEV;
 			result = uw_feats->model;
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FANSPEED:
+			if (!uw_feats)
+				return -ENODEV;
 			status = uniwill_read_ec_ram(0x1804, &byte_data);
 			if (status < 0)
 				return status;
@@ -622,6 +636,8 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;
 		case R_UW_FANSPEED2:
+			if (!uw_feats)
+				return -ENODEV;
 			status = uniwill_read_ec_ram(0x1809, &byte_data);
 			if (status < 0)
 				return status;
@@ -699,6 +715,8 @@ static long uniwill_ioctl_interface(struct file *file, unsigned int cmd, unsigne
 		case R_UW_TDP2_MAX:
 			return uw_copy_tdp_value(arg, uw_get_tdp_max(2));
 		case R_UW_PROFS_AVAILABLE:
+			if (!uw_feats)
+				return -ENODEV;
 			result = uw_get_performance_profile_count();
 			copy_result = copy_to_user((void *) arg, &result, sizeof(result));
 			break;

@@ -4,6 +4,19 @@
 
 当前状态与剩余验收见[适配进度](../ADAPTATION-STATUS.md)。以下各节为历史记录，包版本和运行结论以各节时间为准。
 
+## 2026-10-18 IO 模块身份只读复核
+
+内核 `7.2.9-arch1-1`，已安装 `mechrevo-drivers-dkms-git 4.24.0.r106.gaaf6b36-1`。
+从磁盘模块 ELF 与 `/sys/module/tuxedo_io/notes/.note.gnu.build-id` 分别读取身份：
+两者 GNU build ID 均为 `a0aeba3f4ea1cd34f3e88b6f255224ec2b0381ac`，
+srcversion 均为 `36810A4292AEA1531F6D02B`。这更新了此前 IO 仍运行 r37 的历史结论，
+但不补称其他模块也已复核。
+
+本轮未安装/加载新模块，未切换服务或写入功耗、风扇、EC 控件。
+未绑定特征保护的模拟回归和编译属于源码验证，不是本机 NULL 故障复现、
+transport 并发解绑修复或风扇噪声的实机验收；硬件验收评分不变。
+私有身份与配置快照保存在 `.local-tests/console-redesign/driver-continuation/runtime-before.json`。
+
 ## 2026-10-17 功耗试验恢复修复 r17 与快速采样
 
 `mechrevo-power-control 0.1.0-17` 已安装，候选 70499 字节，SHA256：
