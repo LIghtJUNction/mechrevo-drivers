@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "scope": "CPU ownership backend source/offline qualification, not console integration or installed hardware acceptance",
+  "checked_at_utc": "2026-10-18T13:33:22.638802+00:00",
+  "source_base_commit": "94ae1104625d82563716552f0a18dd27cd5c214c",
+  "source_commit_scope": "Base before this implementation; exact candidate bound by file hashes below. No self-referential commit hash.",
+  "tcc_upstream_version": "3.0.10",
+  "recipe_pkgrel": 7,
+  "patch7_sha256": "4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f",
+  "inputs_sha256": {
+    "packaging/arch/tuxedo-control-center-mechrevo/PKGBUILD": "b602af20042a1622f5530e6cfa6936af648106a9f937811acaad15ea11974ac6",
+    "packaging/arch/tuxedo-control-center-mechrevo/0007-cpu-control-ownership.patch": "4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f",
+    "tests/fixtures/tcc_3_0_10/provenance.json": "1422c150191c2c4e2fd3e3564d91a202f17a4f91af98061180c965de66f64a08",
+    "tests/fixtures/tcc_3_0_10/cpu_ownership_test.cjs": "4ed6c099162c5cf98fa06410f0e6f818a61c4fa4483406fcade80381f76516c1",
+    "tests/test_tcc_cpu_ownership.py": "f62f47402872ab28ffa31cffe95ab2233f314be6c75f7b6311b11a4da32c1d6b",
+    "tests/test_tcc_packaging.py": "7f7201cb5a0eb58f3e2fd173c3350e99c51a3682b9c8494705d41b4fefcf1ac5",
+    "tests/test_tcc_fan_error_contract.py": "27d73cebbc457ef51bf44a61458d7ed95b99b6a0c83667a80d2692319f9f920d"
+  },
+  "prepared_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
+    "src/service-app/classes/FanControlWorker.ts": "cc0e72e32ea5f99ff2c5b3420cf0c96bdb61dcbfa5dda30a8bf84f8a0ac7a3a2",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "e9c2a4076b9f20532abdeb2202053b39efb27c345acbe6eeddddc0ad4127f4b3",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
+    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726",
+    "src/service-app/classes/CpuControlOwnership.ts": "e0492187d8a2d019b70dc2a07764374d3017662c9145cc44b49debb2dcb5e901",
+    "src/service-app/classes/CpuWorker.ts": "d1ce76fbfb3b9163c1929cae956f3f8eb5d3db246830d294fb2359a8f6d2f791",
+    "src/service-app/classes/TccDBusInterface.ts": "bdf61dc9ae8f0941eb8193ed7485d83861afa32220a04ec77e97e9a6bc50dc71",
+    "src/service-app/classes/TccDBusService.ts": "f1a825420766b1927c5d3f7083207d9b17bfbc3a56734a8f652a9a3c4b6983f5",
+    "src/dist-data/com.tuxedocomputers.tccd.conf": "cd6bdb97b69efcfa43a2b05e35c33b5d69b237e45cca263c75c02a2b6ae18a96"
+  },
+  "full_recipe_prepare": {
+    "passed": true,
+    "fuzz": 0,
+    "source_archive_sha256": "d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532",
+    "prepared_regular_file_count": 437,
+    "regular_file_byte_inventory_sha256": "9ca400c79bbcded5924ead9a71c1620f04f828eb39ef7caabdab1e1dae1dcf54",
+    "regular_file_bytes_equal_after_checks": true,
+    "not_a_mode_or_transient_history_claim": true
+  },
+  "toolchain": {
+    "node": "24.22.0",
+    "node_sha256": "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c",
+    "typescript": "5.9.3",
+    "typescript_module_sha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675",
+    "dependency_install_performed": false,
+    "dependency_scope": "Existing qualified tree referenced read-only for noEmit and test prerequisites only; not a production packaging layout"
+  },
+  "typechecks": {
+    "whole_service_no_emit_exit": 0,
+    "whole_e_app_no_emit_exit": 0,
+    "incremental": false
+  },
+  "unified_verification": {
+    "domain": "tcc",
+    "outcome": "passed",
+    "discovered": 78,
+    "ran": 78,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "expected_failures": 0,
+    "unexpected_successes": 0,
+    "modules": [
+      "test_tcc_cpu_ownership.py",
+      "test_tcc_customize_deploy.py",
+      "test_tcc_fan_error_contract.py",
+      "test_tcc_packaging.py",
+      "test_tcc_resource_paths.py",
+      "test_tcc_settings_contract.py",
+      "test_tcc_test_log.py"
+    ]
+  },
+  "unified_verification_receipt_sha256": "a7498bdc9ff76bd3d1a8bce0d4b87f43355e6de8c64df1998796ab268462e4ee",
+  "private_qualification_receipt_sha256": "2c70580bd70db92b57d6eec534e1ff2d023697bc5f0e6fd053f9ec239a1e2cf3",
+  "cpu_test_methods": 18,
+  "behavior_evidence": {
+    "actual_cpu_worker_start_work_profile_exit_and_private_method_gate": true,
+    "synchronous_write_completion_before_release_ack_and_queued_work_rejection": true,
+    "actual_dbus_service_and_interface_adapter": true,
+    "actual_daemon_main_method_with_fake_process_hardware_and_other_workers": true,
+    "same_content_settings_file_replacement_invalidates_preview": true,
+    "new_instance_reads_persisted_owner_and_rejects_previous_instance_token": true,
+    "canonical_bounded_protected_store_and_conditional_write_checks": true,
+    "write_sync_rename_readback_cleanup_failure_outcomes": true,
+    "rename_error_submission_unknown_preserved": true,
+    "no_other_worker_or_global_settings_reset_during_tested_handoff": true,
+    "cpu_disabled_setting_not_reenabled": true,
+    "empty_cpu_false_success_reproduced_before_guard_and_rejected_after_guard": true,
+    "old_worker_start_work_exit_and_private_write_negative_controls_fail_as_expected": true,
+    "real_private_unix_dbus_ordinary_user_denied_named_and_unique_owner_omitted_and_wrong_interface": true,
+    "old_policy_actual_rpc_negative_control_fails_as_expected": true,
+    "private_bus_brokers_terminated_and_reaped": true,
+    "real_root_authenticated_rpc_success": false
+  },
+  "replay_validation_scope": "Existing upstream CpuWorker validator only; some intel_pstate frequency checks are skipped, and per-sysfs-write acknowledgement is not provided by this receipt. Persistence and replay are separate outcomes.",
+  "persistence_scope": "Real private files, fsync stages and new class/main instance tests. Not reboot, power-loss or production-daemon restart acceptance. Root-level actors outside this API are not covered by an atomic filesystem compare-and-swap guarantee.",
+  "delivery": {
+    "production_package_built": false,
+    "installed": false,
+    "runtime_activated": false,
+    "root_helper_integrated": false,
+    "native_cli_gui_transaction_integrated": false,
+    "live_ppd_after_handoff": false,
+    "observed_installed_tcc": "3.0.10-1",
+    "observed_installed_console": "0.1.0.r177.gd48692a-1",
+    "observed_tccd_pid": 1005,
+    "observed_ppd_pid": 3297,
+    "production_tcc_started_or_restarted_by_qualification": false,
+    "system_owner_file_created": false
+  },
+  "unverified": [
+    "Production native/service/UI package and packaged-byte qualification",
+    "Actual root-authenticated bus success and bounded authorization helper",
+    "Native CLI/GUI preview, owner binding, apply and partial-recovery transaction",
+    "Lost-response recovery and malformed ownership-state recovery entry",
+    "Installed CPU preference persistence across two TCC periods and confirmed return to TCC",
+    "Production daemon restart, reboot and sleep/wake behavior",
+    "Windows control integration and installation",
+    "Physical fan/noise behavior and complete 28-family/77-issue acceptance"
+  ],
+  "complete_feature_family_resolved": false
+}

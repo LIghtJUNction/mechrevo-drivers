@@ -6,6 +6,8 @@
 
 安装版 CLI 已用普通用户完成两轮平衡→节能→平衡，四次 Set 均确认并独立读回；同档位操作及错误基线拒绝也已核对。同步观察捕获到 PPD 的实际 CPU 偏好写入，但 TCC 随后又写回节能偏好，约 2.878 秒即覆盖一次平衡设置。当前系统档位已恢复平衡，原 55W 保护、TCC 配置与服务保持不变；持续 CPU 控制权交接尚未实现，不能据此声称性能或风扇异响已经修复。[实测记录](verification/linux-profile-control-r177.json)、[交接要求](CPU-POLICY-OWNERSHIP.md)
 
+后续 TCC pkgrel7 CPU 交接后端已落地源码并通过 78 项 TCC 离线回归及完整 TypeScript 检查；尚未生产打包、安装，也未接通控制台的提权 helper 和原生 CLI／GUI 操作。安装版的持续竞争限制仍保留。[后端验证](verification/cpu-ownership-backend-pkg7.json)
+
 ## 系统电源策略与风扇最低比例（r177 已安装，风扇实机待验）
 
 Linux 源码新增 PPD 系统电源服务读取／设置及界面；只有确认两个服务名字都无 owner 才回退 ACPI，异常或身份变化不绕过服务。预览绑定真实公布档位、当前值、应用临时请求和服务身份；设置可能先释放应用请求再失败，故 PPD 不自动重试或恢复。CLI 新增 `profile … --expected-current RAW`，精确核对原始名称／GUID；刷新保留未知回执，新的显式意图和本地 worker 完成后关闭仍允许。[系统电源策略](SYSTEM-POWER-PROFILES.md)

@@ -1,0 +1,513 @@
+--- /dev/null
++++ b/src/service-app/classes/CpuControlOwnership.ts
+@@ -0,0 +1,281 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++import * as fs from 'node:fs';
++import { createHash, randomBytes } from 'node:crypto';
++import { dirname } from 'node:path';
++
++export type CpuOwner = 'tcc' | 'system';
++export interface CpuOwnerRecord { schema_version: 1; revision: number; owner: CpuOwner; }
++export interface CpuOwnerFile { record: CpuOwnerRecord; fingerprint: string; }
++export interface CpuReplayResult { attempted: boolean; validation_passed: boolean; error: string | null; }
++export interface CpuOwnerContext {
++    version: string; settingsMemory: unknown; settingsDisk: unknown; profile: unknown;
++    configurationEpoch: number; settingsDiskEpoch: string;
++}
++
++const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
++const describe = (error: unknown): string => {
++    try { return String(error); } catch { return 'Unprintable CPU ownership error'; }
++};
++const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
++const canonicalRecord = (record: CpuOwnerRecord): string => JSON.stringify({
++    schema_version: record.schema_version, revision: record.revision, owner: record.owner,
++}) + '\n';
++function stableJSON(value: unknown): string {
++    return JSON.stringify(value, (_key: string, item: any): any => {
++        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
++            return Object.fromEntries(Object.keys(item).sort().map((key: string): [string, unknown] => [key, item[key]]));
++        }
++        return item;
++    });
++}
++
++export class CpuOwnerWriteFailure extends Error {
++    constructor(public readonly submitted: boolean | null, public readonly causes: string[]) {
++        super(causes.join('; '));
++    }
++}
++
++/** Fixed production location. Constructor injection is for local tests, never D-Bus input. */
++export class CpuOwnerStore {
++    constructor(
++        private readonly directory: string = '/var/lib/tuxedo-control-center',
++        private readonly uid: number = 0,
++        private readonly gid: number = 0,
++        private readonly io: typeof fs = fs,
++    ) {}
++
++    private protectedDirectory(path: string, exactMode?: number): fs.Stats {
++        const stat = this.io.lstatSync(path);
++        if (!stat.isDirectory() || stat.uid !== this.uid || stat.gid !== this.gid ||
++            (stat.mode & 0o022) !== 0 || (exactMode !== undefined && (stat.mode & 0o7777) !== exactMode) ||
++            this.io.realpathSync(path) !== path) {
++            throw Error('CPU ownership directory is not protected: ' + path);
++        }
++        return stat;
++    }
++
++    private sameFile(left: fs.Stats, right: fs.Stats): boolean {
++        return left.dev === right.dev && left.ino === right.ino;
++    }
++
++    private stamp(stat: fs.Stats): string {
++        return [stat.dev, stat.ino, stat.mode, stat.uid, stat.gid, stat.nlink,
++            stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
++    }
++
++    private withFd<T>(fd: number, action: () => T): T {
++        let failed = false;
++        let original: unknown;
++        try { return action(); }
++        catch (error: unknown) { failed = true; original = error; throw error; }
++        finally {
++            try { this.io.closeSync(fd); }
++            catch (error: unknown) {
++                if (failed) throw Error(describe(original) + '; close: ' + describe(error));
++                throw error;
++            }
++        }
++    }
++
++    private checkDirectoryFd(fd: number): void {
++        const actual = this.protectedDirectory(this.directory, 0o700);
++        if (!this.sameFile(actual, this.io.fstatSync(fd))) throw Error('CPU ownership directory changed');
++    }
++
++    private openDirectory(): number | undefined {
++        this.protectedDirectory(dirname(this.directory));
++        try { this.protectedDirectory(this.directory, 0o700); }
++        catch (error: unknown) { if (missing(error)) return undefined; throw error; }
++        const fd = this.io.openSync(this.directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
++        try { this.checkDirectoryFd(fd); return fd; }
++        catch (error: unknown) {
++            try { this.io.closeSync(fd); } catch (close: unknown) { throw Error(describe(error) + '; close: ' + describe(close)); }
++            throw error;
++        }
++    }
++
++    private legacy(): CpuOwnerFile {
++        return { record: { schema_version: 1, revision: 0, owner: 'tcc' }, fingerprint: digest('missing') };
++    }
++
++    private readAt(directoryFd: number): CpuOwnerFile {
++        const path = '/proc/self/fd/' + directoryFd + '/mechrevo-cpu-owner.json';
++        let fd: number;
++        try { fd = this.io.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
++        catch (error: unknown) { if (missing(error)) { this.checkDirectoryFd(directoryFd); return this.legacy(); } throw error; }
++        return this.withFd(fd, () => {
++            const before = this.io.fstatSync(fd);
++            if (!before.isFile() || before.uid !== this.uid || before.gid !== this.gid ||
++                before.nlink !== 1 || (before.mode & 0o7777) !== 0o600 || before.size > 4096) {
++                throw Error('CPU ownership file is not a protected bounded regular file');
++            }
++            // Bound the read independently of an earlier stat; a growing file cannot allocate unbounded memory.
++            const buffer = Buffer.alloc(4097);
++            let length = 0;
++            while (length < buffer.length) {
++                const count = this.io.readSync(fd, buffer, length, buffer.length - length, null);
++                if (count === 0) break;
++                length += count;
++            }
++            const after = this.io.fstatSync(fd);
++            if (length > 4096 || this.stamp(before) !== this.stamp(after) ||
++                this.stamp(after) !== this.stamp(this.io.lstatSync(path))) throw Error('CPU ownership file changed while reading');
++            this.checkDirectoryFd(directoryFd);
++            const text = buffer.subarray(0, length).toString('utf8');
++            const record: CpuOwnerRecord = JSON.parse(text);
++            if (record?.schema_version !== 1 || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
++                !['tcc', 'system'].includes(record.owner) || canonicalRecord(record) !== text) {
++                throw Error('CPU ownership record is malformed or noncanonical');
++            }
++            return { record, fingerprint: digest(this.stamp(after) + ':' + text) };
++        });
++    }
++
++    public read(): CpuOwnerFile {
++        const fd = this.openDirectory();
++        if (fd === undefined) return this.legacy();
++        return this.withFd(fd, () => this.readAt(fd));
++    }
++
++    public replace(expected: string, record: CpuOwnerRecord): void {
++        let submitted: boolean | null = false;
++        let directoryFd: number | undefined;
++        let fileFd: number | undefined;
++        let temporary: string | undefined;
++        let temporaryIdentity: fs.Stats | undefined;
++        const errors: string[] = [];
++        try {
++            if (record.schema_version !== 1 || !Number.isSafeInteger(record.revision) || record.revision < 1 ||
++                !['tcc', 'system'].includes(record.owner)) throw Error('Invalid CPU ownership record');
++            if (this.read().fingerprint !== expected) throw Error('CPU ownership changed before submission');
++            try {
++                this.io.mkdirSync(this.directory, { mode: 0o700 });
++                // The new directory entry must also survive a crash, not only the file inside it.
++                const parent = dirname(this.directory);
++                const parentIdentity = this.protectedDirectory(parent);
++                const parentFd = this.io.openSync(parent, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
++                this.withFd(parentFd, () => {
++                    if (!this.sameFile(parentIdentity, this.io.fstatSync(parentFd))) throw Error('CPU ownership parent changed');
++                    this.io.fsyncSync(parentFd);
++                });
++            }
++            catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error; }
++            directoryFd = this.openDirectory();
++            if (directoryFd === undefined) throw Error('CPU ownership directory disappeared');
++            if (this.readAt(directoryFd).fingerprint !== expected) throw Error('CPU ownership changed before submission');
++            const base = '/proc/self/fd/' + directoryFd + '/';
++            temporary = base + '.cpu-owner-' + randomBytes(16).toString('hex');
++            fileFd = this.io.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT |
++                fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
++            temporaryIdentity = this.io.fstatSync(fileFd);
++            if (temporaryIdentity.uid !== this.uid || temporaryIdentity.gid !== this.gid ||
++                temporaryIdentity.nlink !== 1 || (temporaryIdentity.mode & 0o7777) !== 0o600) throw Error('Unsafe temporary ownership file');
++            this.io.writeFileSync(fileFd, canonicalRecord(record), 'utf8');
++            this.io.fsyncSync(fileFd);
++            const closing = fileFd; fileFd = undefined; this.io.closeSync(closing);
++            this.checkDirectoryFd(directoryFd);
++            if (!this.sameFile(this.io.lstatSync(temporary), temporaryIdentity) ||
++                this.readAt(directoryFd).fingerprint !== expected) throw Error('CPU ownership changed before rename');
++            submitted = null; // A rename error is not proof that the destination remained unchanged.
++            this.io.renameSync(temporary, base + 'mechrevo-cpu-owner.json');
++            submitted = true;
++            this.io.fsyncSync(directoryFd);
++            if (canonicalRecord(this.readAt(directoryFd).record) !== canonicalRecord(record)) throw Error('CPU ownership readback mismatch');
++        } catch (error: unknown) { errors.push(describe(error)); }
++        finally {
++            if (fileFd !== undefined) {
++                try { this.io.closeSync(fileFd); } catch (error: unknown) { errors.push('close file: ' + describe(error)); }
++            }
++            if (temporary !== undefined && temporaryIdentity !== undefined) {
++                try {
++                    const current = this.io.lstatSync(temporary);
++                    if (!this.sameFile(current, temporaryIdentity)) throw Error('Temporary ownership path changed; retained');
++                    this.io.unlinkSync(temporary);
++                } catch (error: unknown) { if (!missing(error)) errors.push('cleanup: ' + describe(error)); }
++            }
++            if (directoryFd !== undefined) {
++                try { this.io.closeSync(directoryFd); } catch (error: unknown) { errors.push('close directory: ' + describe(error)); }
++            }
++        }
++        if (errors.length !== 0) throw new CpuOwnerWriteFailure(submitted, errors);
++    }
++}
++
++// @mark mechrevo.cpu_policy_ownership role=authority contract=cpu-owner-v1
++export class CpuControlOwnership {
++    private readonly instance = randomBytes(16).toString('hex');
++    private lastGateError: string | undefined;
++    constructor(
++        private readonly context: () => CpuOwnerContext,
++        private readonly replay: () => CpuReplayResult,
++        private readonly store: CpuOwnerStore = new CpuOwnerStore(),
++        private readonly log: (message: string) => void = console.error,
++    ) {}
++
++    public tccMayWrite(): boolean {
++        try { const permitted = this.store.read().record.owner === 'tcc'; this.lastGateError = undefined; return permitted; }
++        catch (error: unknown) {
++            const message = describe(error);
++            if (this.lastGateError !== message) this.log('CpuWorker: ownership unavailable; CPU writes blocked: ' + message);
++            this.lastGateError = message;
++            return false;
++        }
++    }
++
++    public state(): any {
++        try {
++            const file = this.store.read();
++            const context = this.context();
++            const memory = digest(stableJSON(context.settingsMemory));
++            const disk = digest(stableJSON(context.settingsDisk));
++            const profile = digest(stableJSON(context.profile));
++            const enabled = (context.settingsMemory as { cpuSettingsEnabled?: unknown })?.cpuSettingsEnabled;
++            const ready = memory === disk && typeof enabled === 'boolean' &&
++                Number.isSafeInteger(context.configurationEpoch) && context.configurationEpoch >= 0 &&
++                typeof context.settingsDiskEpoch === 'string' && context.settingsDiskEpoch.length > 0;
++            return {
++                protocol_version: 1, capability: 'cpu-owner-v1', daemon_instance: this.instance, version: context.version,
++                owner: file.record.owner, revision: file.record.revision, cpu_settings_enabled: enabled,
++                settings_memory_sha256: memory, settings_disk_sha256: disk, cpu_profile_sha256: profile,
++                configuration_epoch: context.configurationEpoch, settings_disk_epoch: context.settingsDiskEpoch,
++                ready, token: ready ? digest(stableJSON({ instance: this.instance, version: context.version,
++                    file: file.fingerprint, memory, disk, profile,
++                    configurationEpoch: context.configurationEpoch, settingsDiskEpoch: context.settingsDiskEpoch })) : null,
++                error: ready ? null : 'CPU ownership context is inconsistent',
++            };
++        } catch (error: unknown) {
++            return { protocol_version: 1, capability: 'cpu-owner-v1', daemon_instance: this.instance,
++                owner: null, revision: null, ready: false, token: null, error: describe(error) };
++        }
++    }
++
++    /** Synchronous CPU writes in CpuWorker finish on this event loop before this call can acknowledge release. */
++    public setOwner(owner: string, token: string): any {
++        const before = this.state();
++        const result: any = { protocol_version: 1, requested_owner: owner, submitted: false,
++            persistence_confirmed: false, noop: false, cpu_replay: { attempted: false, validation_passed: false, error: null },
++            error: null, state: before };
++        if (!['tcc', 'system'].includes(owner) || !/^[0-9a-f]{64}$/.test(token) || !before.ready || token !== before.token) {
++            result.error = 'CPU ownership request is invalid, unavailable, or stale'; return result;
++        }
++        if (before.owner === owner) { result.persistence_confirmed = true; result.noop = true; return result; }
++        try {
++            const file = this.store.read();
++            // Re-evaluate the whole context immediately before commit, including the instance and profile.
++            if (this.state().token !== token || file.record.revision >= Number.MAX_SAFE_INTEGER) throw Error('CPU ownership changed before submission');
++            this.store.replace(file.fingerprint, { schema_version: 1, revision: file.record.revision + 1, owner: owner as CpuOwner });
++            result.submitted = true;
++            result.persistence_confirmed = true;
++            if (owner === 'tcc') {
++                try { result.cpu_replay = this.replay(); }
++                catch (error: unknown) { result.cpu_replay = { attempted: true, validation_passed: false, error: describe(error) }; }
++                if (result.cpu_replay.error !== null) result.error = 'Ownership persisted; CPU replay: ' + result.cpu_replay.error;
++            }
++        } catch (error: unknown) {
++            if (error instanceof CpuOwnerWriteFailure) result.submitted = error.submitted;
++            result.error = describe(error);
++        }
++        result.state = this.state();
++        return result;
++    }
++}
+--- a/src/service-app/classes/CpuWorker.ts
++++ b/src/service-app/classes/CpuWorker.ts
+@@ -17,6 +17,7 @@
+  * along with TUXEDO Control Center.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++import type { CpuReplayResult } from './CpuControlOwnership';
+ import { CpuController } from '../../common/classes/CpuController';
+ import { ScalingDriver } from '../../common/classes/LogicalCpuController';
+ import { TUXEDODevice } from '../../common/models/DefaultProfiles';
+@@ -25,6 +26,7 @@
+ import type { TuxedoControlCenterDaemon } from './TuxedoControlCenterDaemon';
+ 
+ export class CpuWorker extends DaemonWorker {
++    private cpuWriteFailure: string | undefined;
+     private readonly basePath: string = '/sys/devices/system/cpu';
+     private readonly cpuCtrl: CpuController;
+ 
+@@ -59,7 +61,7 @@
+     }
+ 
+     public async onStart(): Promise<void> {
+-        if (this.tccd.settings.cpuSettingsEnabled) {
++        if (this.mayWriteCpu()) {
+             this.applyCpuProfile(this.activeProfile);
+         }
+     }
+@@ -69,7 +71,7 @@
+         // apply profile again
+ 
+         try {
+-            if (this.tccd.settings.cpuSettingsEnabled && !this.validateCpuFreq()) {
++            if (this.mayWriteCpu() && !this.validateCpuFreq()) {
+                 this.tccd.logLine('CpuWorker: Incorrect settings, reapplying profile');
+                 this.applyCpuProfile(this.activeProfile);
+             }
+@@ -166,11 +168,32 @@
+      * @param profile   Profile that contains a 'cpu' key of type ITccProfileCpu.
+      *                  Undefined values are interpreted as "use default".
+      */
+-    private applyCpuProfile(profile: ITccProfile): void {
++    private mayWriteCpu(): boolean {
++        return this.tccd.settings.cpuSettingsEnabled === true && this.tccd.cpuControlOwnership?.tccMayWrite() === true;
++    }
++
++    public reapplyAfterOwnershipChange(): CpuReplayResult {
++        if (!this.mayWriteCpu()) return { attempted: false, validation_passed: false, error: 'CPU settings disabled or ownership unavailable' };
++        if (this.cpuCtrl.cores.length === 0) return { attempted: false, validation_passed: false, error: 'No CPU cores available for replay' };
++        this.updateProfile(this.tccd.getCurrentProfile());
++        if (!this.applyCpuProfile(this.activeProfile)) {
++            return { attempted: true, validation_passed: false, error: this.cpuWriteFailure ?? 'CPU profile write was blocked' };
++        }
++        try {
++            const valid = this.validateCpuFreq();
++            return { attempted: true, validation_passed: valid, error: valid ? null : 'CPU profile readback mismatch' };
++        } catch (error: unknown) {
++            return { attempted: true, validation_passed: false, error: String(error) };
++        }
++    }
++
++    private applyCpuProfile(profile: ITccProfile): boolean {
++        if (!this.mayWriteCpu()) return false;
++        this.cpuWriteFailure = undefined;
+         try {
+             // Reset everything to default on all cores before applying settings
+             // Set online status last so that all cores get the same settings
+-            this.setCpuDefaultConfig();
++            if (!this.setCpuDefaultConfig()) return false;
+ 
+             if (!profile.cpu.useMaxPerfGov) {
+                 // Note: Hard set governor to default (not included in profiles atm)
+@@ -209,11 +232,15 @@
+                 }
+             }
+         } catch (err: unknown) {
++            this.cpuWriteFailure = String(err);
+             console.error(`CpuWorker: applyCpuProfile failed => ${err}`);
+-        }
+-    }
+-
+-    private setCpuDefaultConfig(): void {
++            return false;
++        }
++        return true;
++    }
++
++    private setCpuDefaultConfig(): boolean {
++        if (!this.mayWriteCpu()) return false;
+         try {
+             this.cpuCtrl.useCores();
+             this.cpuCtrl.setGovernorScalingMinFrequency();
+@@ -226,8 +253,11 @@
+                 this.cpuCtrl.intelPstate.noTurbo.writeValue(false);
+             }
+         } catch (err: unknown) {
++            this.cpuWriteFailure = String(err);
+             console.error(`CpuWorker: setCpuDefaultConfig failed => ${err}`);
+-        }
++            return false;
++        }
++        return true;
+     }
+ 
+     // todo: function too long
+--- a/src/service-app/classes/TuxedoControlCenterDaemon.ts
++++ b/src/service-app/classes/TuxedoControlCenterDaemon.ts
+@@ -19,6 +19,7 @@
+ 
+ import { SIGTERM } from 'node:constants';
+ import * as os from 'node:os';
++import * as fs from 'node:fs';
+ import { AvailabilityService } from '../../common/classes/availability.service';
+ import { ConfigHandler } from '../../common/classes/ConfigHandler';
+ import { CpuController } from '../../common/classes/CpuController';
+@@ -34,6 +35,7 @@
+ import { ChargingWorker } from './ChargingWorker';
+ import { CpuPowerWorker } from './CpuPowerWorker';
+ import { CpuWorker } from './CpuWorker';
++import { CpuControlOwnership } from './CpuControlOwnership';
+ import type { DaemonWorker } from './DaemonWorker';
+ import { DisplayBacklightWorker } from './DisplayBacklightWorker';
+ import { DisplayRefreshRateWorker } from './DisplayRefreshRateWorker';
+@@ -77,6 +79,9 @@
+ 
+     protected started: boolean = false;
+ 
++    private cpuOwnershipConfigEpoch: number = 0;
++    public cpuControlOwnership: CpuControlOwnership;
++    private cpuWorker: CpuWorker;
+     private stateWorker: StateSwitcherWorker;
+     private chargingWorker: ChargingWorker;
+     private displayWorker: DisplayRefreshRateWorker;
+@@ -113,12 +118,28 @@
+         await this.setupSignalHandling();
+ 
+         this.dbusData.tccdVersion = tccPackage.version;
++        this.cpuControlOwnership = new CpuControlOwnership(
++            () => {
++                const stamp = (value: fs.BigIntStats): string => [value.dev, value.ino, value.uid, value.gid,
++                    value.mode, value.nlink, value.size, value.mtimeNs, value.ctimeNs].map(String).join(':');
++                const before = fs.lstatSync(this.config.pathSettings, { bigint: true });
++                if (!before.isFile()) throw Error('CPU ownership settings path is not a regular file');
++                const settingsDisk = this.config.readSettings();
++                const after = fs.lstatSync(this.config.pathSettings, { bigint: true });
++                if (stamp(before) !== stamp(after)) throw Error('CPU ownership settings changed while reading');
++                return { version: tccPackage.version, settingsMemory: this.settings, settingsDisk,
++                    configurationEpoch: this.cpuOwnershipConfigEpoch, settingsDiskEpoch: stamp(after),
++                    profile: { id: this.getCurrentProfile().id, cpu: this.getCurrentProfile().cpu } };
++            },
++            () => this.cpuWorker.reapplyAfterOwnershipChange(),
++        );
+         this.stateWorker = new StateSwitcherWorker(this);
+         this.chargingWorker = new ChargingWorker(this);
+         this.workers.push(this.chargingWorker);
+         this.workers.push(this.stateWorker);
+         this.workers.push(new DisplayBacklightWorker(this));
+-        this.workers.push(new CpuWorker(this));
++        this.cpuWorker = new CpuWorker(this);
++        this.workers.push(this.cpuWorker);
+         this.workers.push(new WebcamWorker(this));
+         this.workers.push(new FanControlWorker(this, this.identifyDevice()));
+         this.workers.push(new YCbCr420WorkaroundWorker(this));
+@@ -322,6 +343,7 @@
+     }
+ 
+     public loadConfigsAndProfiles(): void {
++        this.cpuOwnershipConfigEpoch = (this.cpuOwnershipConfigEpoch ?? 0) + 1;
+         const dev: TUXEDODevice = this.identifyDevice();
+         this.dbusData.device = JSON.stringify(dev);
+         const aq: boolean = this.deviceHasAquaris(dev);
+--- a/src/service-app/classes/TccDBusInterface.ts
++++ b/src/service-app/classes/TccDBusInterface.ts
+@@ -72,6 +72,8 @@
+ export class TccDBusOptions {
+     public triggerStateCheck?: () => Promise<void>;
+     public chargingWorker?: ChargingWorker;
++    public getCpuControlState?: () => unknown;
++    public setCpuControlOwner?: (owner: string, token: string) => unknown;
+ }
+ 
+ export class TccDBusInterface extends dbus.interface.Interface {
+@@ -89,6 +91,16 @@
+         if (this.interfaceOptions.triggerStateCheck === undefined) {
+             this.interfaceOptions.triggerStateCheck = async (): Promise<void> => {};
+         }
++    }
++
++    private GetCpuControlStateJSON(): string {
++        if (this.interfaceOptions.getCpuControlState === undefined) throw new dbus.DBusError('com.tuxedocomputers.tccd.Unavailable', 'CPU ownership unavailable');
++        return JSON.stringify(this.interfaceOptions.getCpuControlState());
++    }
++
++    private SetCpuControlOwner(owner: string, token: string): string {
++        if (this.interfaceOptions.setCpuControlOwner === undefined) throw new dbus.DBusError('com.tuxedocomputers.tccd.Unavailable', 'CPU ownership unavailable');
++        return JSON.stringify(this.interfaceOptions.setCpuControlOwner(owner, token));
+     }
+ 
+     private resetDataCollectionTimeout(): void {
+@@ -417,6 +429,8 @@
+     properties: {},
+     methods: {
+         dbusAvailable: { outSignature: 'b' },
++        GetCpuControlStateJSON: { outSignature: 's' },
++        SetCpuControlOwner: { inSignature: 'ss', outSignature: 's' },
+         GetDeviceName: { outSignature: 's' },
+         DeviceHasAquaris: { outSignature: 'b' },
+         GetDisplayModesJSON: { outSignature: 's' },
+--- a/src/service-app/classes/TccDBusService.ts
++++ b/src/service-app/classes/TccDBusService.ts
+@@ -43,6 +43,8 @@
+             this.tccd.triggerStateCheck();
+         };
+         options.chargingWorker = this.tccd.getChargingWorker();
++        options.getCpuControlState = () => this.tccd.cpuControlOwnership.state();
++        options.setCpuControlOwner = (owner: string, token: string) => this.tccd.cpuControlOwnership.setOwner(owner, token);
+ 
+         try {
+             this.bus = dbus.systemBus();
+--- a/src/dist-data/com.tuxedocomputers.tccd.conf
++++ b/src/dist-data/com.tuxedocomputers.tccd.conf
+@@ -10,6 +10,8 @@
+         </policy>
+         <policy context="default">
+                 <allow send_destination="com.tuxedocomputers.tccd" />
++                <!-- All interfaces and paths, including calls to the unique owner name. -->
++                <deny send_destination="com.tuxedocomputers.tccd" send_member="SetCpuControlOwner" send_path="*" send_type="method_call" />
+                 <allow receive_sender="com.tuxedocomputers.tccd" />
+         </policy>
+ </busconfig>

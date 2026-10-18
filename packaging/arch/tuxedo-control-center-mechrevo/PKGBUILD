@@ -3,7 +3,7 @@
 # Run from this repository, or set TCC_CONTRACT_ROOT to its reviewed checkout.
 pkgname=tuxedo-control-center-mechrevo
 pkgver=3.0.10
-pkgrel=6
+pkgrel=7
 pkgdesc='TCC with qualified fan I/O failure reporting, rebuilt native/service/UI'
 arch=('x86_64')
 url='https://github.com/tuxedocomputers/tuxedo-control-center'
@@ -15,13 +15,13 @@ makedepends=('nodejs>=22.22.2' 'npm' 'git' 'gcc' 'make' 'python' 'patch' 'pkgcon
 options=('!strip' '!debug' '!lto')
 source=("tuxedo-control-center-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
         '0001-fan-io-error-contract.patch' '0002-fan-lifecycle.patch'
-        '0003-fan-readback-diagnostics.patch' '0004-installed-resource-paths.patch' '0005-settings-read-failclosed.patch' '0006-temperature-exception-invalidates-feedback.patch' 'electron-builder-dir.json')
+        '0003-fan-readback-diagnostics.patch' '0004-installed-resource-paths.patch' '0005-settings-read-failclosed.patch' '0006-temperature-exception-invalidates-feedback.patch' '0007-cpu-control-ownership.patch' 'electron-builder-dir.json')
 sha256sums=('d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532'
             '93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c'
             'fafffae6ed9923c6dcc2bb5faa90938fa68dcb1f72fff6e8060cc229403de285'
             '60353bd61a955dd3272e78df63906acc6279bbb85238f7a8ef3ee883a76e8120'
             '31486d0454b426440f789645bfa55f023f885ee5b42bca608ddba9b6cb5e10e3'
-            'c6ceb0e263cf81e80a1c3196a1e568d738fa270d8f1bdbecd4cac43a65c23f2b' '35935c2198aacaf9d1ac22c662355f80e637637a67dbed5176a4f253f9abff28' '641390a3c0837b13e9a9488c2256f21858360ac807336ae3bce7be725a6fb914')
+            'c6ceb0e263cf81e80a1c3196a1e568d738fa270d8f1bdbecd4cac43a65c23f2b' '35935c2198aacaf9d1ac22c662355f80e637637a67dbed5176a4f253f9abff28' '4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f' '641390a3c0837b13e9a9488c2256f21858360ac807336ae3bce7be725a6fb914')
 
 prepare() {
     cd "$srcdir/tuxedo-control-center-$pkgver" || return 1
@@ -31,6 +31,7 @@ prepare() {
     patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0004-installed-resource-paths.patch" || return 1
     patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0005-settings-read-failclosed.patch" || return 1
     patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0006-temperature-exception-invalidates-feedback.patch" || return 1
+    patch -p1 --fuzz=0 --batch --forward -i "$srcdir/0007-cpu-control-ownership.patch" || return 1
     # These shared paths are compiled into both the daemon and Electron ASAR.
     sed -i 's|/opt/tuxedo-control-center/resources/dist/|/usr/lib/|g' src/common/classes/TccPaths.ts || return 1
     # Preserve package.json/package-lock; no npm install/implicit Electron version rewrite.
@@ -73,18 +74,22 @@ check() {
     cmp "$srcdir/0004-installed-resource-paths.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0004-installed-resource-paths.patch" || return 1
     cmp "$srcdir/0005-settings-read-failclosed.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0005-settings-read-failclosed.patch" || return 1
     cmp "$srcdir/0006-temperature-exception-invalidates-feedback.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0006-temperature-exception-invalidates-feedback.patch" || return 1
+    cmp "$srcdir/0007-cpu-control-ownership.patch" "$contract_root/packaging/arch/tuxedo-control-center-mechrevo/0007-cpu-control-ownership.patch" || return 1
     export TCC_NODE=$(command -v node)
     export TCC_NODE_INCLUDE=$(node -p 'require("path").resolve(require("path").dirname(process.execPath),"../include/node")')
     export TCC_NODE_ADDON_API="$PWD/node_modules/node-addon-api"
     export TCC_TYPESCRIPT_MODULE="$PWD/node_modules/typescript/lib/typescript.js"
+    export TCC_DBUS_MODULE="$PWD/node_modules/dbus-next"
     [[ -f $TCC_TYPESCRIPT_MODULE && -x $TCC_NODE ]] || return 1
     [[ -f $contract_root/tests/test_tcc_resource_paths.py ]] || return 1
     [[ -f $contract_root/tests/test_tcc_settings_contract.py && ! -L $contract_root/tests/test_tcc_settings_contract.py ]] || return 1
+    [[ -f $contract_root/tests/test_tcc_cpu_ownership.py && ! -L $contract_root/tests/test_tcc_cpu_ownership.py ]] || return 1
     export MECHREVO_TEST_TMPDIR="$srcdir/.contract-tmp"
     mkdir -p "$MECHREVO_TEST_TMPDIR" || return 1
     python -B -m unittest discover -s "$contract_root/tests" -p test_tcc_fan_error_contract.py -v || return 1
     python -B -m unittest discover -s "$contract_root/tests" -p test_tcc_resource_paths.py -v || return 1
     python -B -m unittest discover -s "$contract_root/tests" -p test_tcc_settings_contract.py -v || return 1
+    python -B -m unittest discover -s "$contract_root/tests" -p test_tcc_cpu_ownership.py -v || return 1
 }
 
 package() {

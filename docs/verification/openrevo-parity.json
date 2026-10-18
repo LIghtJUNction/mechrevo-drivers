@@ -426,6 +426,21 @@
       "fan_or_noise_acceptance": false,
       "complete_feature_family_resolved": false,
       "required_followup": "docs/CPU-POLICY-OWNERSHIP.md"
+    },
+    "cpu_ownership_backend_source": {
+      "status": "source_offline_backend_candidate_not_production_built_or_installed",
+      "evidence_ref": "docs/verification/cpu-ownership-backend-pkg7.json",
+      "evidence_sha256": "de42e26a0f042e41e4d4adf6fb637e3f178d0586f48361222bb0b43350d203ae",
+      "tcc_patch7_sha256": "4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f",
+      "unified_tcc_tests_passed": 78,
+      "cpu_ownership_tests": 18,
+      "full_service_e_app_typechecks_passed": true,
+      "root_authenticated_rpc_verified": false,
+      "helper_cli_gui_integrated": false,
+      "runtime_cpu_policy_persistence_verified": false,
+      "production_package_built": false,
+      "installed": false,
+      "complete_feature_family_resolved": false
     }
   },
   "upstream": {
@@ -2189,7 +2204,8 @@
         "docs/verification/windows-fnlock-control.json",
         "docs/verification/deployment-console-r174.json",
         "docs/verification/os-profile-fan-control.json",
-        "docs/verification/deployment-console-r177.json"
+        "docs/verification/deployment-console-r177.json",
+        "docs/verification/cpu-ownership-backend-pkg7.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -2309,6 +2325,21 @@
         "fan_or_noise_acceptance": false,
         "complete_feature_family_resolved": false,
         "required_followup": "docs/CPU-POLICY-OWNERSHIP.md"
+      },
+      "cpu_ownership_backend_source": {
+        "status": "source_offline_backend_candidate_not_production_built_or_installed",
+        "evidence_ref": "docs/verification/cpu-ownership-backend-pkg7.json",
+        "evidence_sha256": "de42e26a0f042e41e4d4adf6fb637e3f178d0586f48361222bb0b43350d203ae",
+        "tcc_patch7_sha256": "4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f",
+        "unified_tcc_tests_passed": 78,
+        "cpu_ownership_tests": 18,
+        "full_service_e_app_typechecks_passed": true,
+        "root_authenticated_rpc_verified": false,
+        "helper_cli_gui_integrated": false,
+        "runtime_cpu_policy_persistence_verified": false,
+        "production_package_built": false,
+        "installed": false,
+        "complete_feature_family_resolved": false
       }
     },
     {

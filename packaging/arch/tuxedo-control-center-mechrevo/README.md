@@ -1,5 +1,7 @@
 # TCC fan I/O error contract
 
+The current recipe is pkgrel7 with a CPU ownership backend. It has source/offline qualification only and has not been production-built, installed or activated. Earlier pkgrel3–6 build and package receipts below remain historical evidence for those exact candidates.
+
 This local Arch recipe rebuilds the C++ API/NAPI module, TypeScript service, packaged daemon and Electron app from TCC 3.0.10 GPL source. It does not patch only app.asar.
 
 Source archive SHA256: `d192391c559789c8f62af0e614e37e1222c9aa9753c61a30e3149b35d1969532` (upstream tag v3.0.10). Use Node **24.22.0**, npm **11.19.1**, and system Electron **42.11.11** at `/usr/lib/electron42`. The unchanged npm lock SHA256 is `e52393cc472aa58d376e204867e9fb7a42a14ca0e588be69c4509720229a56a1`. The locked pkg tool downloads its separate Node **24.18.0** packaging runtime. Electron-builder requires a local node_modules directory: a top-level dependency symlink produced missing dependency paths despite exit zero in validation. If reusing an already qualified dependency tree, use a filesystem CoW copy and verify critical hashes and the packaged dependency inventory; reject missing-path warnings. Keep Node and npm isolated from the global installation; set private npm/pkg/Electron/node-gyp caches. `npm ci` verifies locked registry integrity; Git dependencies are pinned by lockfile commit and do not have registry SRI.
@@ -11,10 +13,12 @@ export TCC_NODE=/path/to/node-v24.22.0-linux-x64/bin/node
 export TCC_NODE_INCLUDE=/path/to/node-v24.22.0-linux-x64/include/node
 export TCC_NODE_ADDON_API=/path/to/patched-source/node_modules/node-addon-api
 export TCC_TYPESCRIPT_MODULE=/path/to/patched-source/node_modules/typescript
+export TCC_DBUS_MODULE=/path/to/patched-source/node_modules/dbus-next
 export MECHREVO_TEST_TMPDIR=/path/to/private/test-tmp
 python -B -m unittest discover -s tests -p test_tcc_fan_error_contract.py -v
 python -B -m unittest discover -s tests -p test_tcc_resource_paths.py -v
 python -B -m unittest discover -s tests -p test_tcc_settings_contract.py -v
+python -B -m unittest discover -s tests -p test_tcc_cpu_ownership.py -v
 ```
 
 The GPL fixtures retain upstream notices and file hashes in `tests/fixtures/tcc_3_0_10/provenance.json`. The first package explicitly validated **4 tests, no skips**, with the original source and old-worker negative controls rejected. The pkgrel2 gate ran **8 test methods, no skips**: 88 behavior invocations comprised 55 successful paths and 33 expected negative controls, plus four native compile steps and an independent six-class JavaScript emission. It exercises lifecycle, cleanup-stage errors and actual daemon/profile callers against legacy and targeted mutation controls. These are mocked source contracts, not live daemon or hardware tests. In an ordinary suite invocation, native/TypeScript tests can skip unless those environment variables are provided; a green default suite alone does not establish this contract.
@@ -91,3 +95,11 @@ Actual packaged JavaScript passed 36 fan/native/lifecycle groups, seven resource
 The recovery archive `~/Backups/projects/mechrevo-drivers/light/tcc-pkg6-production-20261017/` contains 147 payload files / 37,055,602 bytes; author and root independently read back every hash, size, mode and owner. Large dependency inventories remain at their recorded local paths and hashes instead of being duplicated. Preparation tracking retains one event-loss-risk gap; packaging retains one transient pkgdir permission gap. Both commands succeeded, and separate production and final root review tracking were complete. Later readback does not repair those original gaps.
 
 This is a built and verified private candidate, not installation, AUR publication or runtime activation. No compressed daemon, GUI or hardware control was executed. Stock TCC remains 3.0.10-1; the complete replacement transaction, startup side effects and physical acceptance still require verification. No cooling improvement is claimed.
+
+## pkgrel7 CPU ownership source candidate
+
+Patch7 adds fixed-location protected CPU ownership persistence and a CPU-only D-Bus adapter. Startup, work, profile application and exit consult the same gate; ownership release never reloads global settings or resets other workers. Requests bind the daemon instance, ownership revision/file identity, configuration generation, disk file identity, settings digests and CPU profile. Write/rename/sync/readback errors retain submitted/unknown and persistence outcomes. Returning ownership runs only the CPU worker and reports its existing validator separately; it is not complete per-write acknowledgement or full CPU hardware acceptance.
+
+The exact full recipe prepare passed, followed by whole service/e-app TypeScript checks under the pinned toolchain. The unified TCC runner passed 78 methods without failures or skips, including 18 CPU ownership methods. Original CPU paths and the old bus policy fail the expected negative controls. A real private Unix D-Bus broker verifies ordinary-user denial through well-known/unique destination names and omitted/wrong interface headers; it is reaped after each test. The actual daemon main method is executed with fake hardware/process/other-worker boundaries to check first-start wiring and a same-value settings-file replacement. No production TCC daemon is started.
+
+All 437 prepared regular-file byte hashes remained equal. Existing dependencies were referenced read-only solely for noEmit typechecks/tests; this is not a production build or packaging reuse method. The production artifact, actual root-authenticated setter, root helper, native CLI/GUI transaction and installed hardware persistence/recovery remain pending. Stock TCC 3.0.10-1 and console r177 remain active. See [the ownership contract](../../../docs/CPU-POLICY-OWNERSHIP.md) and [qualification receipt](../../../docs/verification/cpu-ownership-backend-pkg7.json).

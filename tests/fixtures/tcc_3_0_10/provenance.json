@@ -98,15 +98,32 @@
     "src/service-app/classes/TccDBusInterface.ts": {
       "size": 18945,
       "sha256": "c3f88ec98bb61dfa864e50b474dcc0e6cf4049f25c6e3fd1820d4e5541b23771"
+    },
+    "src/service-app/classes/CpuWorker.ts": {
+      "size": 19311,
+      "sha256": "cad8797ad4766c29a91eb9a094bb7c5f7fdc2ac4b31554cb073898cff0032b2c"
+    },
+    "src/service-app/classes/TccDBusService.ts": {
+      "size": 3375,
+      "sha256": "1be048220bc2ff45a2fbcdf154eb25b401417a7f2c44a9e5c5610b93ec3e1b9a"
+    },
+    "src/dist-data/com.tuxedocomputers.tccd.conf": {
+      "size": 635,
+      "sha256": "522958d8f9aee30f412deecc0e55449ec4326cfadc8f53c7a8d31bedc4ac0c82"
     }
   },
   "patch_sha256": "93bd68eabf831385ce1fe1881d1a218f051a78729a29452be959c3ebf788110c",
   "patched_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
     "src/service-app/classes/FanControlWorker.ts": "cc0e72e32ea5f99ff2c5b3420cf0c96bdb61dcbfa5dda30a8bf84f8a0ac7a3a2",
-    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "535a8b61e8161a8059c6a557aab8a438aaa6357ce201051b71f378e678ce4314",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "e9c2a4076b9f20532abdeb2202053b39efb27c345acbe6eeddddc0ad4127f4b3",
     "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
-    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
+    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726",
+    "src/service-app/classes/CpuControlOwnership.ts": "e0492187d8a2d019b70dc2a07764374d3017662c9145cc44b49debb2dcb5e901",
+    "src/service-app/classes/CpuWorker.ts": "d1ce76fbfb3b9163c1929cae956f3f8eb5d3db246830d294fb2359a8f6d2f791",
+    "src/service-app/classes/TccDBusInterface.ts": "bdf61dc9ae8f0941eb8193ed7485d83861afa32220a04ec77e97e9a6bc50dc71",
+    "src/service-app/classes/TccDBusService.ts": "f1a825420766b1927c5d3f7083207d9b17bfbc3a56734a8f652a9a3c4b6983f5",
+    "src/dist-data/com.tuxedocomputers.tccd.conf": "cd6bdb97b69efcfa43a2b05e35c33b5d69b237e45cca263c75c02a2b6ae18a96"
   },
   "patch2_sha256": "fafffae6ed9923c6dcc2bb5faa90938fa68dcb1f72fff6e8060cc229403de285",
   "harness_sha256": {
@@ -115,7 +132,8 @@
     "stage_errors_test.cjs": "7208b1a00644118cd70e811cc83be224343c4262f65e65b6665920291661cb76",
     "readback_errors_test.cjs": "7492f97feb610c8ff51b68afd369ad1cb5f028a97c31edb6b96acb345a727d4d",
     "settings_contract_test.cjs": "f425fac7692c72b7d6faaaf04142494d67ad083d50793330f9e4406d0609dcc0",
-    "temperature_exception_test.cjs": "abe5d018b90302e7af4f4846c1f57714d5f4090469d1ea052d8755b314d0c1f7"
+    "temperature_exception_test.cjs": "abe5d018b90302e7af4f4846c1f57714d5f4090469d1ea052d8755b314d0c1f7",
+    "cpu_ownership_test.cjs": "4ed6c099162c5cf98fa06410f0e6f818a61c4fa4483406fcade80381f76516c1"
   },
   "patch12_files_sha256": {
     "src/service-app/classes/FanControlTuxedoIO.ts": "5fa5eb9da49c2008e2c02aaa40188b2c8f384758804cd5a5adb5f5664f6f6435",
@@ -149,5 +167,14 @@
     "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
   },
   "patch6_sha256": "35935c2198aacaf9d1ac22c662355f80e637637a67dbed5176a4f253f9abff28",
-  "patch6_scope": "Temperature read exceptions settle all reads, invalidate every fan in the aborted round before any calculated speed write, retain original causes followed by invalidation failures. Does not alter normal control or add a hardware acceptance claim."
+  "patch6_scope": "Temperature read exceptions settle all reads, invalidate every fan in the aborted round before any calculated speed write, retain original causes followed by invalidation failures. Does not alter normal control or add a hardware acceptance claim.",
+  "patch6_files_sha256": {
+    "src/service-app/classes/FanControlTuxedoIO.ts": "d91a1a7d1328ac925ec1862209ae27581b2be382c368f635347ecce28a5a5dbc",
+    "src/service-app/classes/FanControlWorker.ts": "cc0e72e32ea5f99ff2c5b3420cf0c96bdb61dcbfa5dda30a8bf84f8a0ac7a3a2",
+    "src/service-app/classes/TuxedoControlCenterDaemon.ts": "535a8b61e8161a8059c6a557aab8a438aaa6357ce201051b71f378e678ce4314",
+    "src/service-app/classes/StateSwitcherWorker.ts": "ddba55e642e0c7a1a901a218f1be255a8b5b735fd1a3da198c062a30587bed0f",
+    "src/common/classes/ConfigHandler.ts": "61f9b61d25c7952b5a0aa3d697890073bcf6f6858fc3f33f8b27864c533e6726"
+  },
+  "patch7_sha256": "4c0f0167197aad9a381850545fbd8e35c8e70a2f2fe3286508c3c9e52f1bdf0f",
+  "patch7_scope": "CPU-only persistent ownership gate and root-only DBus member; source/offline qualification only, no daemon activation or physical CPU persistence claim."
 }

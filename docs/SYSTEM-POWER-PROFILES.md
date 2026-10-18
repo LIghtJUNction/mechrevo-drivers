@@ -2,6 +2,8 @@
 
 Linux r177 已安装，普通用户 CLI 已完成两轮真实的平衡→节能→平衡，并核对同档位零 setter 和错误基线拒绝。同步观察确认 CPU sysfs 写入，同时发现 TCC 随后覆盖 CPU 能效偏好，**持续生效的 CPU 控制权仍未解决**。[实测记录](verification/linux-profile-control-r177.json)、[控制权交接要求](CPU-POLICY-OWNERSHIP.md)
 
+TCC pkgrel7 的 CPU 控制权后端现已完成源码与离线验证：统一 TCC 回归 78 项通过，完整 service／e-app 类型检查通过。它尚未生产打包或安装，控制台的交接 helper、CLI／GUI 事务和持续硬件效果仍待完成，不能把这批源码当作运行中竞争已消除。[后端记录](verification/cpu-ownership-backend-pkg7.json)
+
 签名提交 `d48692a` 已推送，95 份冻结输入通过 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 目标编译。当前安装为 `mechrevo-console 0.1.0.r177.gd48692a-1`，原有功耗工具、驱动和已加载模块不变。[历史候选收据](verification/os-profile-fan-control.json)、[安装记录](verification/deployment-console-r177.json)
 
 ## 服务与回退

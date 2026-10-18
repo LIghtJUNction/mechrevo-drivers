@@ -17,6 +17,7 @@ PATCH3=PATCH.with_name('0003-fan-readback-diagnostics.patch')
 PATCH4=PATCH.with_name('0004-installed-resource-paths.patch')
 PATCH5=PATCH.with_name('0005-settings-read-failclosed.patch')
 PATCH6=PATCH.with_name('0006-temperature-exception-invalidates-feedback.patch')
+PATCH7=PATCH.with_name('0007-cpu-control-ownership.patch')
 
 class TccFanContract(unittest.TestCase):
     @classmethod
@@ -52,6 +53,8 @@ class TccFanContract(unittest.TestCase):
             assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
         subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH6)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         assert hashlib.sha256(PATCH6.read_bytes()).hexdigest()==cls.manifest['patch6_sha256']
+        subprocess.run(['patch','-p1','--fuzz=0','--batch','--forward','-i',str(PATCH7)],cwd=cls.patched,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert hashlib.sha256(PATCH7.read_bytes()).hexdigest()==cls.manifest['patch7_sha256']
         for name,digest in cls.manifest['patched_files_sha256'].items():
             assert hashlib.sha256((cls.patched/name).read_bytes()).hexdigest()==digest
         cls.generated=None
