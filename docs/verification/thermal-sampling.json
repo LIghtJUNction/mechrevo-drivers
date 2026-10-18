@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "checked_at_utc": "2026-10-18T07:31:09.057131+00:00",
+  "outcome": "passed_local_contracts_and_candidate_read_only_cli_smoke",
+  "scope": "Linux dedicated hwmon temperature/fan collection, GUI worker contracts and bounded CLI JSONL; not an installation, real fan lease or physical cooling/noise acceptance",
+  "source": {
+    "base_commit": "3081d5595f0f65461cc63b29fb8633fe50949bc0",
+    "source_snapshot_sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
+    "input_files": 44,
+    "source_unchanged_during_final_verification": true,
+    "all_44_input_hashes_rechecked_for_this_receipt": true,
+    "key_files": {
+      "console/crates/core/src/lib.rs": "d717bccc6d5ad388495e0a01557bd8d3576d69ced8e58bc6b386ac70fe779af2",
+      "console/crates/core/src/linux.rs": "9baba5134d47a044a375fd43f8e5fdf0d28551ec2c115c29fd370244751b2699",
+      "console/crates/core/src/thermal_tests.rs": "082a8c42b41882672277db8eab4b3f6de2fe959d85a0279f3a05517b5478376f",
+      "console/crates/cli/src/main.rs": "e52d0a15422a52835779062a3a8e18eb7699c914b29543429c819cad77d6a9dd",
+      "console/crates/gui/src/lib.rs": "8f54ee96d5072571e89ee6c313604564f6719677b7b48cb1f5f68a2183f494cd",
+      "console/crates/gui/src/desktop.rs": "f892065f58465ab6ea658be20a865a30ee3f57243bcc8af5012829197fa24e32",
+      "console/crates/gui/tests/thermal_ui.rs": "c2947248af7dd80aeab4e283db95c7a0db040f9eb4fef569f219d5068c5f71ae",
+      "console/crates/gui/tests/thermal_worker.rs": "8c4c6123b3eb1691b77e55821986a4bab464dfe3b65ecf1e394c2c183670c868"
+    }
+  },
+  "implemented": [
+    "Service::sample_thermal shares the existing hwmon collector; it does not discover OEM controls, brightness, power profiles or catalogue entries and launches no external commands",
+    "Canonical input identities and class-alias deduplication remain; missing/invalid/removed readings stay unknown rather than becoming zero or a prior sample",
+    "suspended/suspending/resuming/error pre-read runtime PM observations skip input and label opens; active/unsupported/absent attributes retain reads; the observation is not a PM lock or a firmware freshness guarantee",
+    "ThermalSample uses process-local Instant read bounds; bounded CLI JSONL adds UTC frame bounds and collection duration without claiming atomic or firmware-fresh samples",
+    "Clean GUI refresh can update battery/AC; Linux pending previews and fan sessions keep only temperature/RPM sampling, preserving confirmation; Windows pending previews pause automatic sampling",
+    "Immutable catalogue parsing and normalized search index are cached through OnceLock<Result>; invalid data retains a real error rather than an Ok empty cache",
+    "RGB keyboard arrow steps use exactly one complete byte; three isolated regressions detect restored old input/sampling/error-loss behavior"
+  ],
+  "verification": {
+    "rust": {
+      "checks_expected": 4,
+      "checks_executed": 4,
+      "checks": {
+        "fmt": "passed",
+        "test": "passed",
+        "clippy": "passed",
+        "windows": "passed"
+      },
+      "whole_workspace_tests_passed": 273,
+      "failed": 0,
+      "ignored": 0,
+      "test_count_scope": "One complete workspace total, not a thermal-only count or a per-feature count",
+      "windows": "x86_64-pc-windows-gnu compile check only; dedicated Windows thermal backend remains unavailable"
+    },
+    "isolated_regressions": {
+      "mutations": 3,
+      "working_source_unchanged": true,
+      "scope": "Only isolated copies; each selected production regression executed and failed its assertion, not a compiler/format failure",
+      "cases": [
+        {
+          "name": "lost_collection_error",
+          "exit_code": 101,
+          "selected_test": "thermal_tests::failed_error_frame_keeps_collection_error_and_its_original_details",
+          "tests_executed": 1,
+          "expected_assertion_failure": true,
+          "log_sha256": "f748ab747b40bbbaff7177625004341ae4b64e2455b14fc37a628dacabce568a"
+        },
+        {
+          "name": "rgb_fractional_keyboard_step",
+          "exit_code": 101,
+          "selected_test": "keyboard_rgb_increments_each_selected_byte_by_exactly_one_without_a_preview",
+          "tests_executed": 1,
+          "expected_assertion_failure": true,
+          "log_sha256": "1cbee9a79716b18a652e9f8fa1e0e1a4c8efb8e3d3b88ce647997efa34350b2f"
+        },
+        {
+          "name": "preview_stops_lease_sampling",
+          "exit_code": 101,
+          "selected_test": "active_fan_preview_keeps_automatic_thermal_sampling_and_preserves_confirmation",
+          "tests_executed": 1,
+          "expected_assertion_failure": true,
+          "log_sha256": "762b8fa67ddac660c58d4a35fcb7e6142253ea8d199ac73ffe4b15138e0ef332"
+        }
+      ]
+    },
+    "actual_cli": {
+      "binary_sha256": "7d7ddc01b13a333239ed740f2c875757b64ea0c6940fc1d22e36abb561171ec5",
+      "candidate_not_installed_package": true,
+      "sample_count": 3,
+      "readings_per_sample": [
+        33,
+        33,
+        33
+      ],
+      "unavailable_per_sample": [
+        0,
+        0,
+        0
+      ],
+      "collection_elapsed_seconds": [
+        0.33196893,
+        0.260668696,
+        0.48981023
+      ],
+      "wall_time_seconds": 3.122560534000513,
+      "traced_child_user_seconds": 0.016985999999999998,
+      "traced_child_system_seconds": 0.078027,
+      "cpu_scope": "CLI and strace overhead, not GUI/whole-host utilization",
+      "execve_count": 1,
+      "ioctl_count": 0,
+      "writable_open_count": 0,
+      "forbidden_discovery_open_count": 0,
+      "invalid_options_rejected": true
+    },
+    "native_gui_qa": {
+      "status": "candidate_isolated_linux_startup_and_read_only_navigation_verified",
+      "source_snapshot_sha256": "6dbb5d3559ea2d3991d9f8a4a62a741c329c883b82d77c979fd7efd207f9d581",
+      "binary_sha256": "9aaf80349699fb976a18eb990d86eb0a2568001b253c1ce29e159f77725f0ec8",
+      "screenshots": {
+        "overview.png": {
+          "sha256": "7510fed5528527511020af6d4dd21d3fc7ad31c4378931189993d06efcb274e2",
+          "width": 1280,
+          "height": 720
+        },
+        "fans.png": {
+          "sha256": "b9337776fd016434395eff6467430c9e81499aa9e1a1e8859cfa3372421c03f5",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "input_event_count": 5,
+      "app_reaped": true,
+      "app_exit_code": -15,
+      "termination_scope": "SIGTERM and process reaping only; not native graceful-close evidence",
+      "startup_error_lines": [],
+      "visual_review": {
+        "method": "Both original 1280x720 PNGs inspected with view_image.",
+        "overview": "Device heading, compact thermal card, collection-start age/duration, actual CPU/GPU temperature, fan RPM, trend endpoints/time range, separate device-info timestamp and spaced lower controls are visible without overlap. Lower dashboard content continues below the viewport.",
+        "fans": "Four separate Tab events and Return visibly selected Fans. Initial unprobed interface, import affordance and absent-draft explanation are visible. No invented curve or applied state. Further actions continue below viewport.",
+        "startup": "gui-app.log is empty; app stayed alive for both captures.",
+        "compositor_notes": "Headless cage logged an INFO-level unavailable DRM lease manager and a bus-connection message during teardown; no application startup error or panic was logged."
+      },
+      "limitations": [
+        "Native Linux headless compositor with software rendering; this is not the actual user desktop or Windows runtime.",
+        "Only startup and read-only keyboard navigation were performed. No fan interface probe, lease acquisition, Apply, Restore, actuator write or service change was requested.",
+        "SIGTERM termination after capture proves process reaping, not graceful native close behavior.",
+        "No fan acoustics, cooling effect, hardware parity or DPI beyond the captured 1280x720 scene is claimed."
+      ],
+      "tracking": {
+        "build": {
+          "session": "4c81a799-3aaa-4ac0-9bcb-6d5fc37d1e54",
+          "command_exit_code": 0,
+          "tracking_status": "complete",
+          "gap_count": 0,
+          "unresolved_event_count": 0
+        },
+        "capture": {
+          "session": "c976d135-a970-48c2-ae63-661870db281f",
+          "command_exit_code": 0,
+          "tracking_status": "partial",
+          "gap_count": 0,
+          "unresolved_event_count": 3,
+          "observed_unresolved_path": "xdg-runtime/wayland-0.lock"
+        }
+      }
+    },
+    "python_console": {
+      "outcome": "passed",
+      "exit_code": 0,
+      "scope": "local offline unittest contracts; no hardware acceptance",
+      "discovered": 131,
+      "ran": 131,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "tracking": {
+        "session_prefix": "1045019f",
+        "command_status": "succeeded",
+        "tracking_status": "complete",
+        "gap_count": 0,
+        "unresolved_event_count": 0,
+        "scope": "Root-reported wrapper status; JSON unittest result independently read"
+      }
+    },
+    "markref": {
+      "marks": 30,
+      "files": 250,
+      "errors": 0,
+      "warnings": 0,
+      "evidence_scope": "Successful root-reported check; not independently rerun for documentation"
+    }
+  },
+  "earlier_failures_retained": {
+    "initial_layout": {
+      "test": "overview_gives_compact_space_to_real_device_readings",
+      "status": "failed_then_fixed",
+      "observed_card_height": 291.4,
+      "maximum_allowed_height": 290.0,
+      "units": "logical UI units",
+      "log_sha256": "9229c48ce0b495a9d824fcafe2ea2947b25ee6780d730d2cd06ef7960cb9f613",
+      "scope": "Original two-fan overview exceeded the existing compactness bound; final complete workspace checks pass after the layout fix, without declaring the initial run passed"
+    }
+  },
+  "deployment": {
+    "this_candidate_installed": false,
+    "new_driver_activation_verified": false,
+    "real_fan_lease_used": false,
+    "fan_curve_write_executed": false,
+    "physical_fan_response_verified": false,
+    "physical_noise_acceptance": false,
+    "windows_runtime_verified": false,
+    "latest_recorded_deployment_ref": "docs/verification/deployment-fan-r162-r163.json",
+    "latest_recorded_deployment_scope": "Historical r162 driver/r163 console baseline only; its installed checks do not cover this candidate"
+  },
+  "tracking": {
+    "source_watcher_session": "7c3e2cbb-bbd3-4828-b70c-dc354c9c593f",
+    "source_watcher_home": "/tmp/agcc-mechrevo-fan-gui",
+    "source_tracking_status": "partial_history",
+    "reported_gap_count": 7,
+    "reported_retained_unresolved_event_count": 34,
+    "count_scope": "Session cumulative gaps and retained unresolved events reported at documentation handoff; mainly short-lived fixtures. Successful checks do not prove complete write history. Parent owns final watcher reconciliation.",
+    "cleanup_performed": false
+  },
+  "evidence_sha256": {
+    ".local-tests/rust-target/thermal-iteration/rust-verification-2.json": "af3d777f58ffa133b2d56238c9c65a9940de3f152cfbf0fe20b3731abf09d0ea",
+    ".local-tests/rust-target/thermal-iteration/rust-verification-1.json": "86702c2c267f39c21d0c4692851609083ff0c2bbec3c278e0ba49a6d040ef1ef",
+    ".local-tests/rust-target/thermal-iteration/isolated-regressions/receipt.json": "4820c92e86eb1bb8c851c814f44f8f19662688297566db56220cd48550047908",
+    ".local-tests/rust-target/thermal-iteration/actual-cli-smoke-1/receipt.json": "67cdf4d840b0bd3edf1dc8192258b545ad0e6e9e44d8a084dba7f34c81f45cfb",
+    ".local-tests/rust-target/thermal-iteration/console-python.json": "5a7aac26d417540dc27b123eb2f8ce9c2af092486ac608652a57adb65885fc94",
+    ".local-tests/rust-target/thermal-iteration/native-gui-qa/build.json": "5b67013d9856985be3f377a4c944b6ab6c1db3c4b05c58ff7b4526c2ff5503ba",
+    ".local-tests/rust-target/thermal-iteration/native-gui-qa/gui-capture.json": "31127bc463058831e8c13477a37be8de988fcfd1f1b5d86e9e5cccbb7afc1c16",
+    ".local-tests/rust-target/thermal-iteration/native-gui-qa/review.json": "ad92ef919c0409f0c04925bc55b80aded314beacbf0976cad6fa6ab032bed617"
+  },
+  "remaining": [
+    "Any new candidate installation and installed-path verification need separate actual receipts; isolated native GUI QA does not cover the real desktop, authorization or fan transactions",
+    "Real ACQUIRE/APPLY/RESTORE, RPM response, thermal/noise effects and suspend/resume remain unaccepted",
+    "No complete Windows OEM/thermal runtime, other-model compatibility or firmware freshness guarantee",
+    "All 28 complete feature families and 77 upstream issues remain open requirements"
+  ]
+}

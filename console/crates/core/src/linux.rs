@@ -19,17 +19,19 @@ pub(crate) fn read(path: &Path) -> Option<String> {
     let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\0');
     (!value.is_empty()).then(|| value.to_owned())
 }
-fn paths(root: &Path) -> Vec<PathBuf> {
-    let mut paths = fs::read_dir(root)
-        .into_iter()
-        .flatten()
+fn try_paths(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut paths = fs::read_dir(root)?
         .filter_map(Result::ok)
         .take(256)
         .map(|x| x.path())
         .collect::<Vec<_>>();
     paths.sort();
-    paths
+    Ok(paths)
 }
+fn paths(root: &Path) -> Vec<PathBuf> {
+    try_paths(root).unwrap_or_default()
+}
+
 fn source(path: &Path, device: &str) -> EvidenceSource {
     EvidenceSource {
         backend: "linux_sysfs".into(),
@@ -87,45 +89,27 @@ fn reading(
             .then(|| "Missing, unreadable or invalid sensor value; not reported as zero".into()),
     }
 }
-pub(crate) fn policy(root: &Path) -> PowerPolicy {
-    let path = root.join("firmware/acpi/platform_profile");
-    let choices = root.join("firmware/acpi/platform_profile_choices");
-    let options = read(&choices)
-        .map(|v| v.split_whitespace().map(str::to_owned).collect())
-        .unwrap_or_default();
-    PowerPolicy {
-        scope: "Linux ACPI platform profile (not OEM preset or GPU tuning)".into(),
-        current: read(&path),
-        options,
-        source: Some(source(&path, "acpi_platform_profile")),
-    }
-}
-// @mark mechrevo.telemetry role=implementation
-pub(crate) fn snapshot(root: &Path) -> Snapshot {
-    let dmi = root.join("class/dmi/id");
-    let mut identity = Identity {
-        manufacturer: read(&dmi.join("sys_vendor")),
-        product_name: read(&dmi.join("product_name")),
-        product_version: read(&dmi.join("product_version")),
-        board_name: read(&dmi.join("board_name")),
-        bios_version: read(&dmi.join("bios_version")),
-        ..Default::default()
-    };
-    identity.qualify();
-    let mut telemetry = Vec::new();
-    let mut diagnostics = Vec::new();
+/// Only hwmon temperature/fan inputs; no model, policy, OEM or helper discovery.
+fn collect_hwmon(
+    root: &Path,
+    telemetry: &mut Vec<SensorReading>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), ControlError> {
     let mut sensor_sources = HashSet::new();
-    if identity.product_name.is_none() {
-        diagnostics.push(Diagnostic {
-            code: "identity_unavailable".into(),
-            message: "DMI product identity is missing or unreadable; no model match assumed".into(),
-        });
-    }
-    for hwmon in paths(&root.join("class/hwmon")) {
+    for hwmon in try_paths(&root.join("class/hwmon")).map_err(|error| {
+        ControlError::new(
+            "thermal_sampling_unavailable",
+            format!("Cannot enumerate hwmon sensors: {error}"),
+        )
+    })? {
         let chip = read(&hwmon.join("name")).unwrap_or_else(|| "unknown hwmon".into());
         let device = device_id(&hwmon);
-        let suspended =
-            read(&hwmon.join("device/power/runtime_status")).as_deref() == Some("suspended");
+        // This is a pre-read observation, not a runtime-PM lock: the device
+        // may change state after it. Never request a PM transition here.
+        let runtime_status = read(&hwmon.join("device/power/runtime_status"));
+        let skip_state = runtime_status
+            .as_deref()
+            .filter(|state| matches!(*state, "suspended" | "suspending" | "resuming" | "error"));
         for input in paths(&hwmon) {
             let filename = input.file_name().unwrap_or_default().to_string_lossy();
             let (prefix, kind, unit, scale, min, max) =
@@ -156,7 +140,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
                 });
                 continue;
             }
-            if suspended {
+            if let Some(state) = skip_state {
                 telemetry.push(SensorReading {
                     id,
                     label: format!("{chip}: {stem}"),
@@ -166,10 +150,9 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
                     unit: unit.into(),
                     source: source(&input, &device),
                     status: CapabilityStatus::Unavailable,
-                    reason: Some(
-                        "Device is runtime-suspended; sensor was not read to avoid waking it"
-                            .into(),
-                    ),
+                    reason: Some(format!(
+                        "Device runtime PM state is {state}; sensor was not read during this state"
+                    )),
                 });
                 continue;
             }
@@ -184,6 +167,57 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
             ));
         }
     }
+    Ok(())
+}
+
+pub(crate) fn sample_thermal(root: &Path) -> Result<ThermalSample, ControlError> {
+    let started_at = std::time::Instant::now();
+    let mut readings = Vec::new();
+    let mut diagnostics = Vec::new();
+    collect_hwmon(root, &mut readings, &mut diagnostics)?;
+    Ok(ThermalSample {
+        readings,
+        diagnostics,
+        started_at,
+        finished_at: std::time::Instant::now(),
+    })
+}
+
+pub(crate) fn policy(root: &Path) -> PowerPolicy {
+    let path = root.join("firmware/acpi/platform_profile");
+    let choices = root.join("firmware/acpi/platform_profile_choices");
+    let options = read(&choices)
+        .map(|v| v.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default();
+    PowerPolicy {
+        scope: "Linux ACPI platform profile (not OEM preset or GPU tuning)".into(),
+        current: read(&path),
+        options,
+        source: Some(source(&path, "acpi_platform_profile")),
+    }
+}
+// @mark mechrevo.telemetry role=implementation
+pub(crate) fn snapshot(root: &Path) -> Snapshot {
+    let dmi = root.join("class/dmi/id");
+    let mut identity = Identity {
+        manufacturer: read(&dmi.join("sys_vendor")),
+        product_name: read(&dmi.join("product_name")),
+        product_version: read(&dmi.join("product_version")),
+        board_name: read(&dmi.join("board_name")),
+        bios_version: read(&dmi.join("bios_version")),
+        ..Default::default()
+    };
+    identity.qualify();
+    let mut telemetry = Vec::new();
+    let mut diagnostics = Vec::new();
+    if identity.product_name.is_none() {
+        diagnostics.push(Diagnostic {
+            code: "identity_unavailable".into(),
+            message: "DMI product identity is missing or unreadable; no model match assumed".into(),
+        });
+    }
+    // Keep snapshot fallback/diagnostic behavior when hwmon is unavailable.
+    let _ = collect_hwmon(root, &mut telemetry, &mut diagnostics);
     let mut batteries = 0;
     for supply in paths(&root.join("class/power_supply")) {
         let device = device_id(&supply);

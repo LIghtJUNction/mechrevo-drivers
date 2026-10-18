@@ -1,7 +1,7 @@
 use mechrevo_console_core::{
     fan_curve::{ValidatedFanCurve, OWNED_TABLE_BYTES},
     registry, ControlError, OemControl, OemControlKind, OemDomain, OemValue, PowerProfile, Service,
-    Snapshot,
+    Snapshot, ThermalSample,
 };
 use serde_json::{json, Value};
 #[cfg(any(target_os = "linux", test))]
@@ -14,12 +14,13 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console thermal [--samples COUNT] [--interval-ms MS]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console fan validate --input PATH\n  mechrevo-console fan hold --input PATH\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nFan validation checks a curve file; it does not apply or qualify it on hardware.\nFan hold is a foreground Linux session requiring a terminal and a qualified\ndriver. It retains exclusive control until Enter/exit, with explicit restore\non Enter. It does not save a startup setting or elevate automatically.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nThermal emits bounded JSONL observations from Linux hwmon only (default 1 sample;\n1..3600 samples, 250..60000 ms interval, default 1000 ms). It does not authenticate\nor acquire fan control. Collection or output failure stops the stream.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
     Help,
     Version,
     Status(bool),
+    Thermal { samples: u16, interval_ms: u32 },
     Capabilities,
     Models(String),
     Profile(PowerProfile, bool),
@@ -48,6 +49,33 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
         "--version" | "-V" if rest.is_empty() => Ok(Action::Version),
         "status" if rest.is_empty() => Ok(Action::Status(false)),
         "status" if rest.len() == 1 && rest[0] == "--json" => Ok(Action::Status(true)),
+        "thermal" => {
+            let (mut samples, mut interval_ms) = (None, None);
+            let mut values = rest.chunks_exact(2);
+            for pair in &mut values {
+                let value = text(&pair[1])?;
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(usage("Thermal counts and intervals must be unsigned decimal integers"));
+                }
+                match text(&pair[0])? {
+                    "--samples" if samples.is_none() => {
+                        let count = value.parse::<u16>().ok().filter(|n| (1..=3600).contains(n))
+                            .ok_or_else(|| usage("--samples must be 1 through 3600"))?;
+                        samples = Some(count);
+                    }
+                    "--interval-ms" if interval_ms.is_none() => {
+                        let interval = value.parse::<u32>().ok().filter(|n| (250..=60_000).contains(n))
+                            .ok_or_else(|| usage("--interval-ms must be 250 through 60000"))?;
+                        interval_ms = Some(interval);
+                    }
+                    _ => return Err(usage("Unknown or repeated thermal option")),
+                }
+            }
+            if !values.remainder().is_empty() {
+                return Err(usage("Each thermal option requires a value"));
+            }
+            Ok(Action::Thermal { samples: samples.unwrap_or(1), interval_ms: interval_ms.unwrap_or(1000) })
+        }
         "capabilities" if rest.is_empty() => Ok(Action::Capabilities),
         "models" if rest.len() <= 1 => Ok(Action::Models(
             rest.first().map(text).transpose()?.unwrap_or("").into(),
@@ -535,6 +563,101 @@ fn write_json(writer: &mut impl Write, value: &Value) -> Result<(), ControlError
         .map_err(|e| ControlError::new("output_failed", e.to_string()))?;
     writeln!(writer).map_err(|e| ControlError::new("output_failed", e.to_string()))
 }
+
+/// Each compact JSON line is a separate observation. A failed sample produces
+/// an error frame, stops collection and never carries forward an old reading.
+fn stream_thermal(
+    writer: &mut impl Write,
+    samples: u16,
+    interval_ms: u32,
+    mut collect: impl FnMut() -> Result<ThermalSample, ControlError>,
+    mut sleep: impl FnMut(Duration),
+    mut wall_clock: impl FnMut() -> SystemTime,
+) -> Result<(), ControlError> {
+    if !(1..=3600).contains(&samples) || !(250..=60_000).contains(&interval_ms) {
+        return Err(usage(
+            "Thermal sample count or interval is outside its supported range",
+        ));
+    }
+    for sequence in 1..=samples {
+        let started_at = wall_clock();
+        let observed = collect();
+        let finished_at = wall_clock();
+        let wall_clock_status = match (
+            started_at.duration_since(UNIX_EPOCH),
+            finished_at.duration_since(UNIX_EPOCH),
+        ) {
+            (Ok(start), Ok(finish)) if finish >= start => "ordered",
+            (Ok(_), Ok(_)) => "moved_backwards",
+            _ => "before_unix_epoch",
+        };
+        let mut frame = json!({
+            "schema_version": 1,
+            "type": "thermal_sample",
+            "sequence": sequence,
+            "requested_samples": samples,
+            "interval_ms": interval_ms,
+            "interval_policy": "Wait after each completed sample; no catch-up bursts",
+            "platform": std::env::consts::OS,
+            "started_at": epoch_json(started_at),
+            "finished_at": epoch_json(finished_at),
+            "wall_clock_status": wall_clock_status,
+            "scope": "Linux hwmon temperature and fan RPM only. Sequential read window, possibly cached source values; no OEM, brightness, power-policy or catalog collection. No fan lease acquisition or authentication.",
+            "readings": [],
+            "diagnostics": [],
+            "monotonic_elapsed": null,
+        });
+        let error = match observed {
+            Ok(sample) => {
+                let elapsed = sample.finished_at.checked_duration_since(sample.started_at);
+                if let Some(elapsed) = elapsed {
+                    frame["status"] = "sampled".into();
+                    frame["monotonic_elapsed"] = duration_json(elapsed);
+                    frame["readings"] = json!(sample.readings);
+                    frame["diagnostics"] = json!(sample.diagnostics);
+                    None
+                } else {
+                    Some(ControlError::new(
+                        "thermal_sample_time_invalid",
+                        "Thermal read window ends before it starts",
+                    ))
+                }
+            }
+            Err(error) => Some(error),
+        };
+        if let Some(error) = &error {
+            frame["status"] = "error".into();
+            frame["error"] = json!(error);
+        }
+        let write = serde_json::to_writer(&mut *writer, &frame)
+            .map_err(io::Error::other)
+            .and_then(|()| writer.write_all(b"\n"))
+            .and_then(|()| writer.flush());
+        if let Err(output_error) = write {
+            let mut failure = ControlError::new("output_failed", output_error.to_string());
+            failure.details.push(format!(
+                "Collection stopped during output of sample {sequence}; that line may be partial"
+            ));
+            if let Some(collection_error) = &error {
+                failure.details.push(format!(
+                    "thermal_collection_error: {}",
+                    json!(collection_error)
+                ));
+            }
+            return Err(failure);
+        }
+        if let Some(mut error) = error {
+            error.details.push(format!(
+                "Collection stopped at failed sample {sequence}; no old readings were reused"
+            ));
+            return Err(error);
+        }
+        if sequence < samples {
+            sleep(Duration::from_millis(u64::from(interval_ms)));
+        }
+    }
+    Ok(())
+}
 // @mark mechrevo.console_cli role=implementation
 fn export(path: &std::path::Path, value: &Value) -> Result<(), ControlError> {
     let mut file = OpenOptions::new()
@@ -557,6 +680,19 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         }
         Action::Version => json!({"version":env!("CARGO_PKG_VERSION")}),
         Action::Status(true) => status_json(service)?,
+        Action::Thermal {
+            samples,
+            interval_ms,
+        } => {
+            return stream_thermal(
+                &mut stdout,
+                samples,
+                interval_ms,
+                || service.sample_thermal(),
+                std::thread::sleep,
+                SystemTime::now,
+            );
+        }
         Action::Status(false) => {
             let s = service.snapshot();
             writeln!(stdout,"Platform: {}\nManufacturer: {}\nProduct: {}\nBoard: {}\nBIOS: {}\nSupport: {}\nPower policy: {}\nCurrent: {}",s.platform,s.identity.manufacturer.as_deref().unwrap_or("unknown"),s.identity.product_name.as_deref().unwrap_or("unknown"),s.identity.board_name.as_deref().unwrap_or("unknown"),s.identity.bios_version.as_deref().unwrap_or("unknown"),registry::identify(&s.identity).reason,s.power_policy.scope,s.power_policy.current.as_deref().unwrap_or("unknown")).map_err(|e|ControlError::new("output_failed",e.to_string()))?;
@@ -1405,5 +1541,325 @@ mod tests {
     fn status_rejects_silent_ignored_options() {
         assert!(parse(args(&["status", "--force"])).is_err());
         assert!(parse(args(&["models", "a", "b"])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod thermal_tests {
+    use super::*;
+    use mechrevo_console_core::{CapabilityStatus, EvidenceSource, SensorReading};
+    use std::cell::{Cell, RefCell};
+
+    fn arguments(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+    fn sample(value: Option<f64>) -> ThermalSample {
+        let start = Instant::now();
+        ThermalSample {
+            readings: vec![SensorReading {
+                id: "physical/temp1_input".into(),
+                label: "CPU temperature".into(),
+                device_id: "physical".into(),
+                kind: "temperature".into(),
+                value,
+                unit: "°C".into(),
+                source: EvidenceSource {
+                    backend: "linux_sysfs".into(),
+                    path: "class/hwmon/hwmon0/temp1_input".into(),
+                    device_id: Some("physical".into()),
+                },
+                status: if value.is_some() {
+                    CapabilityStatus::Available
+                } else {
+                    CapabilityStatus::Unavailable
+                },
+                reason: value
+                    .is_none()
+                    .then(|| "Runtime-suspended; input not read".into()),
+            }],
+            diagnostics: vec![],
+            started_at: start,
+            finished_at: start + Duration::from_millis(2),
+        }
+    }
+    fn frames(bytes: &[u8]) -> Vec<Value> {
+        std::str::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+    #[test]
+    fn thermal_options_are_bounded_and_never_accept_write_or_privilege_flags() {
+        assert_eq!(
+            parse(arguments(&["thermal"])).unwrap(),
+            Action::Thermal {
+                samples: 1,
+                interval_ms: 1000
+            }
+        );
+        assert_eq!(
+            parse(arguments(&[
+                "thermal",
+                "--samples",
+                "3600",
+                "--interval-ms",
+                "250"
+            ]))
+            .unwrap(),
+            Action::Thermal {
+                samples: 3600,
+                interval_ms: 250
+            }
+        );
+        for args in [
+            vec!["thermal", "--samples", "0"],
+            vec!["thermal", "--samples", "3601"],
+            vec!["thermal", "--samples", "65536"],
+            vec!["thermal", "--samples", "+2"],
+            vec!["thermal", "--samples", "1.5"],
+            vec!["thermal", "--samples", " 2"],
+            vec!["thermal", "--interval-ms", "249"],
+            vec!["thermal", "--interval-ms", "60001"],
+            vec!["thermal", "--interval-ms", "-1"],
+            vec!["thermal", "--samples"],
+            vec!["thermal", "--samples", "2", "--samples", "3"],
+            vec!["thermal", "--interval-ms", "1000", "--interval-ms", "2000"],
+            vec!["thermal", "--apply", "1"],
+            vec!["thermal", "--sudo", "1"],
+            vec!["thermal", "--output", "file.jsonl"],
+            vec!["thermal", "--json"],
+        ] {
+            assert!(
+                parse(arguments(&args)).is_err(),
+                "unexpected acceptance: {args:?}"
+            );
+        }
+    }
+    #[test]
+    fn jsonl_has_independent_values_times_and_no_sleep_after_final_sample() {
+        let mut output = vec![];
+        let calls = Cell::new(0);
+        let sleeps = RefCell::new(vec![]);
+        let clocks = Cell::new(100);
+        stream_thermal(
+            &mut output,
+            2,
+            250,
+            || {
+                calls.set(calls.get() + 1);
+                Ok(sample((calls.get() == 1).then_some(62.0)))
+            },
+            |duration| sleeps.borrow_mut().push(duration),
+            || {
+                let value = clocks.get();
+                clocks.set(value + 1);
+                UNIX_EPOCH + Duration::from_secs(value)
+            },
+        )
+        .unwrap();
+        let rows = frames(&output);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["sequence"], 1);
+        assert_eq!(rows[1]["sequence"], 2);
+        assert_eq!(rows[0]["started_at"]["unix_seconds"], 100);
+        assert_eq!(rows[1]["finished_at"]["unix_seconds"], 103);
+        assert_eq!(rows[0]["monotonic_elapsed"]["nanoseconds"], 2_000_000);
+        assert_eq!(rows[0]["readings"][0]["value"], 62.0);
+        assert!(rows[1]["readings"][0]["value"].is_null());
+        assert_eq!(rows[1]["readings"][0]["status"], "unavailable");
+        assert_eq!(rows[1]["readings"][0]["id"], rows[0]["readings"][0]["id"]);
+        assert_eq!(rows[1]["status"], "sampled");
+        assert_eq!(*sleeps.borrow(), [Duration::from_millis(250)]);
+        assert_eq!(calls.get(), 2);
+    }
+    #[test]
+    fn collection_error_emits_empty_error_frame_then_stops_without_reusing_sample() {
+        let mut output = vec![];
+        let calls = Cell::new(0);
+        let waits = Cell::new(0);
+        let error = stream_thermal(
+            &mut output,
+            3,
+            1000,
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    Ok(sample(Some(60.0)))
+                } else {
+                    Err(ControlError::new(
+                        "thermal_sampling_unavailable",
+                        "hwmon disappeared",
+                    ))
+                }
+            },
+            |_| waits.set(waits.get() + 1),
+            SystemTime::now,
+        )
+        .unwrap_err();
+        let rows = frames(&output);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1]["status"], "error");
+        assert_eq!(rows[1]["readings"], json!([]));
+        assert_eq!(rows[1]["error"]["code"], "thermal_sampling_unavailable");
+        assert!(rows[1]["monotonic_elapsed"].is_null());
+        assert_eq!(error.code, "thermal_sampling_unavailable");
+        assert_eq!((calls.get(), waits.get()), (2, 1));
+    }
+    #[test]
+    fn output_flush_failure_never_sleeps_or_collects_again() {
+        struct BrokenFlush;
+        impl Write for BrokenFlush {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "consumer gone"))
+            }
+        }
+        let calls = Cell::new(0);
+        let error = stream_thermal(
+            &mut BrokenFlush,
+            3,
+            1000,
+            || {
+                calls.set(calls.get() + 1);
+                Ok(sample(Some(60.0)))
+            },
+            |_| panic!("sleep after failed output"),
+            SystemTime::now,
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(error.code, "output_failed");
+        assert!(error.details[0].contains("sample 1"));
+    }
+    #[test]
+    fn partial_output_failure_stops_before_next_sample() {
+        struct Partial {
+            remaining: usize,
+        }
+        impl Write for Partial {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if self.remaining == 0 {
+                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"));
+                }
+                let len = bytes.len().min(self.remaining);
+                self.remaining -= len;
+                Ok(len)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let calls = Cell::new(0);
+        let error = stream_thermal(
+            &mut Partial { remaining: 17 },
+            3,
+            250,
+            || {
+                calls.set(calls.get() + 1);
+                Ok(sample(Some(61.0)))
+            },
+            |_| panic!("sleep after partial output"),
+            SystemTime::now,
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(error.code, "output_failed");
+        assert!(error.details[0].contains("partial"));
+    }
+    #[test]
+    fn failed_error_frame_keeps_collection_error_and_its_original_details() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"))
+            }
+        }
+        let calls = Cell::new(0);
+        let error = stream_thermal(
+            &mut Broken,
+            2,
+            1000,
+            || {
+                calls.set(calls.get() + 1);
+                let mut source = ControlError::new("sensor_removed", "hwmon disappeared");
+                source.details.push("provider evidence".into());
+                Err(source)
+            },
+            |_| panic!("failed output must stop"),
+            SystemTime::now,
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(error.code, "output_failed");
+        let cause = error
+            .details
+            .iter()
+            .find_map(|value| value.strip_prefix("thermal_collection_error: "))
+            .unwrap();
+        let source: ControlError = serde_json::from_str(cause).unwrap();
+        assert_eq!(source.code, "sensor_removed");
+        assert_eq!(source.message, "hwmon disappeared");
+        assert_eq!(source.details, ["provider evidence"]);
+    }
+    #[test]
+    fn wall_clock_rollback_and_invalid_monotonic_window_are_not_fresh_successes() {
+        let mut output = vec![];
+        let clocks = Cell::new(10);
+        let error = stream_thermal(
+            &mut output,
+            2,
+            1000,
+            || {
+                let mut sample = sample(Some(62.0));
+                sample.started_at = sample.finished_at + Duration::from_secs(1);
+                Ok(sample)
+            },
+            |_| panic!("invalid sample must stop"),
+            || {
+                let value = clocks.get();
+                clocks.set(value - 1);
+                UNIX_EPOCH + Duration::from_secs(value)
+            },
+        )
+        .unwrap_err();
+        let rows = frames(&output);
+        assert_eq!(rows[0]["wall_clock_status"], "moved_backwards");
+        assert_eq!(rows[0]["status"], "error");
+        assert!(rows[0]["monotonic_elapsed"].is_null());
+        assert_eq!(rows[0]["readings"], json!([]));
+        assert_eq!(error.code, "thermal_sample_time_invalid");
+    }
+    #[test]
+    fn before_epoch_clock_is_explicit_and_invalid_stream_options_never_collect() {
+        let mut output = vec![];
+        stream_thermal(
+            &mut output,
+            1,
+            1000,
+            || Ok(sample(None)),
+            |_| unreachable!(),
+            || UNIX_EPOCH - Duration::from_secs(1),
+        )
+        .unwrap();
+        let rows = frames(&output);
+        assert_eq!(rows[0]["wall_clock_status"], "before_unix_epoch");
+        assert!(rows[0]["started_at"].is_null());
+        for (samples, interval) in [(0, 1000), (3601, 1000), (1, 249), (1, 60001)] {
+            assert!(stream_thermal(
+                &mut output,
+                samples,
+                interval,
+                || panic!("invalid request collected"),
+                |_| panic!("invalid request slept"),
+                SystemTime::now
+            )
+            .is_err());
+        }
     }
 }

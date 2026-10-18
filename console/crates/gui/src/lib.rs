@@ -8,7 +8,7 @@ use mechrevo_console_core::fan_curve::{FanCurve, ValidatedFanCurve};
 use mechrevo_console_core::{
     ApplyResult, BrightnessApplyResult, BrightnessPlan, CapabilityStatus, CatalogModel,
     ControlError, OemApplyResult, OemControl, OemDomain, OemPlan, OemValue, PowerProfile,
-    ProfilePlan, SensorReading, Service, Snapshot,
+    ProfilePlan, SensorReading, Service, Snapshot, ThermalSample,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,6 +31,14 @@ pub mod fan_editor;
 
 pub trait Backend: Send + 'static {
     fn snapshot(&mut self) -> Snapshot;
+    /// Narrow read-only temperature/RPM provider. Never fall back to a full
+    /// snapshot: that can enumerate OEM controls while a fan lease is held.
+    fn sample_thermal(&mut self) -> Result<ThermalSample, ControlError> {
+        Err(ControlError::new(
+            "thermal_unavailable",
+            "此后端没有独立的温度与转速采样接口。",
+        ))
+    }
     fn catalog(&mut self) -> Vec<CatalogModel>;
     fn plan(&mut self, profile: PowerProfile) -> Result<ProfilePlan, ControlError>;
     fn apply(&mut self, plan: &ProfilePlan) -> Result<ApplyResult, ControlError>;
@@ -121,6 +129,9 @@ impl Backend for NativeBackend {
     fn snapshot(&mut self) -> Snapshot {
         Backend::snapshot(&mut self.service)
     }
+    fn sample_thermal(&mut self) -> Result<ThermalSample, ControlError> {
+        self.service.sample_thermal()
+    }
     fn catalog(&mut self) -> Vec<CatalogModel> {
         Backend::catalog(&mut self.service)
     }
@@ -172,6 +183,9 @@ impl Backend for NativeBackend {
 impl Backend for Service {
     fn snapshot(&mut self) -> Snapshot {
         Service::snapshot(self)
+    }
+    fn sample_thermal(&mut self) -> Result<ThermalSample, ControlError> {
+        Service::sample_thermal(self)
     }
     fn catalog(&mut self) -> Vec<CatalogModel> {
         Service::catalog(self, "")
@@ -268,6 +282,7 @@ pub enum FanOperation {
 #[derive(Debug)]
 enum Job {
     Refresh,
+    ThermalRefresh,
     Preview(PowerProfile),
     Apply(ProfilePlan),
     PreviewBrightness { percent: u8, device: String },
@@ -284,7 +299,9 @@ enum Job {
 impl Job {
     fn kind(&self) -> JobKind {
         match self {
-            Self::Refresh | Self::ProbeFan | Self::RefreshFan => JobKind::Refresh,
+            Self::Refresh | Self::ThermalRefresh | Self::ProbeFan | Self::RefreshFan => {
+                JobKind::Refresh
+            }
             Self::Preview(_) | Self::PreviewBrightness { .. } | Self::PreviewOem { .. } => {
                 JobKind::Preview
             }
@@ -314,13 +331,15 @@ struct Request {
 }
 
 enum Reply {
-    Snapshot(Snapshot, Vec<CatalogModel>),
+    Snapshot(Snapshot, Vec<CatalogModel>, ThermalSample),
+    ThermalSample(ThermalSample),
+    ThermalError(ControlError, Instant, Instant),
     Preview(ProfilePlan),
-    Applied(ApplyResult, Snapshot),
+    Applied(ApplyResult, Snapshot, ThermalSample),
     BrightnessPreview(BrightnessPlan),
-    BrightnessApplied(BrightnessApplyResult, Snapshot),
+    BrightnessApplied(BrightnessApplyResult, Snapshot, ThermalSample),
     OemPreview(OemPlan),
-    OemApplied(OemApplyResult, Snapshot),
+    OemApplied(OemApplyResult, Snapshot, ThermalSample),
     Fan {
         operation: FanOperation,
         curve: Option<ValidatedFanCurve>,
@@ -353,6 +372,7 @@ struct InFlight {
     started: Instant,
     selection_revision: u64,
     fan_operation: Option<FanOperation>,
+    thermal_refresh: bool,
 }
 
 pub struct Controller {
@@ -394,7 +414,42 @@ pub struct Controller {
     oem_write_uncertain: bool,
     pub error: Option<ControlError>,
     pub last_refresh: Option<Instant>,
+    /// Full-device discovery and thermal samples retain separate clocks.
+    pub thermal_sample: Option<ThermalSample>,
+    pub thermal_error: Option<ControlError>,
+    pub thermal_last_attempt: Option<Instant>,
+    pub thermal_last_finished: Option<Instant>,
     pub worker_available: bool,
+}
+
+pub const THERMAL_SAMPLE_INTERVAL: Duration = Duration::from_secs(3);
+pub const THERMAL_STALE_AFTER: Duration = Duration::from_secs(6);
+
+fn is_thermal_reading(reading: &SensorReading) -> bool {
+    matches!(
+        reading.kind.as_str(),
+        "temperature" | "temp" | "fan_speed" | "fan"
+    )
+}
+
+fn observed_snapshot(backend: &mut impl Backend) -> (Snapshot, ThermalSample) {
+    let started_at = Instant::now();
+    let snapshot = backend.snapshot();
+    let finished_at = Instant::now();
+    // This is the envelope of the actual full read, not an additional read or
+    // a fallback for the dedicated thermal provider.
+    let thermal = ThermalSample {
+        readings: snapshot
+            .telemetry
+            .iter()
+            .filter(|reading| is_thermal_reading(reading))
+            .cloned()
+            .collect(),
+        diagnostics: vec![],
+        started_at,
+        finished_at,
+    };
+    (snapshot, thermal)
 }
 
 fn fan_clean(update: &FanClientUpdate) -> bool {
@@ -425,13 +480,26 @@ fn reconcile_fan_update(update: &mut FanClientUpdate) {
 
 fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
     match job {
-        Job::Refresh => Reply::Snapshot(backend.snapshot(), backend.catalog()),
+        Job::Refresh => {
+            let (snapshot, thermal) = observed_snapshot(backend);
+            Reply::Snapshot(snapshot, backend.catalog(), thermal)
+        }
+        Job::ThermalRefresh => {
+            let started_at = Instant::now();
+            match backend.sample_thermal() {
+                Ok(sample) => Reply::ThermalSample(sample),
+                Err(error) => Reply::ThermalError(error, started_at, Instant::now()),
+            }
+        }
         Job::Preview(profile) => match backend.plan(profile) {
             Ok(plan) => Reply::Preview(plan),
             Err(error) => Reply::Error(error),
         },
         Job::Apply(plan) => match backend.apply(&plan) {
-            Ok(result) => Reply::Applied(result, backend.snapshot()),
+            Ok(result) => {
+                let (snapshot, thermal) = observed_snapshot(backend);
+                Reply::Applied(result, snapshot, thermal)
+            }
             Err(error) => Reply::Error(error),
         },
         Job::PreviewBrightness { percent, device } => {
@@ -441,7 +509,10 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
             }
         }
         Job::ApplyBrightness(plan) => match backend.apply_brightness(&plan) {
-            Ok(result) => Reply::BrightnessApplied(result, backend.snapshot()),
+            Ok(result) => {
+                let (snapshot, thermal) = observed_snapshot(backend);
+                Reply::BrightnessApplied(result, snapshot, thermal)
+            }
             Err(error) => Reply::Error(error),
         },
         Job::PreviewOem { control, target } => match backend.plan_oem(&control, target) {
@@ -449,7 +520,10 @@ fn execute_job(backend: &mut impl Backend, job: Job) -> Reply {
             Err(error) => Reply::Error(error),
         },
         Job::ApplyOem(plan) => match backend.apply_oem(&plan) {
-            Ok(result) => Reply::OemApplied(result, backend.snapshot()),
+            Ok(result) => {
+                let (snapshot, thermal) = observed_snapshot(backend);
+                Reply::OemApplied(result, snapshot, thermal)
+            }
             Err(error) => Reply::Error(error),
         },
 
@@ -531,14 +605,22 @@ impl Controller {
                         break;
                     }
                     let fan_operation = request.job.fan_operation();
+                    let thermal_refresh = matches!(&request.job, Job::ThermalRefresh);
+                    let thermal_started_at = Instant::now();
                     let preserve_backend = fan_may_live || fan_operation.is_some();
                     let result = catch_unwind(AssertUnwindSafe(|| execute_job(&mut backend, request.job)));
                     let panicked = result.is_err();
                     let mut reply = result.unwrap_or_else(|_| {
                         let error = ControlError::new(
-                            "worker_panicked", "后台控制发生异常；恢复完成前不能关闭会话。",
+                            "worker_panicked", if thermal_refresh {
+                                "温度与转速采样异常，自动采样已暂停；请点击刷新重试。"
+                            } else { "后台控制发生异常；恢复完成前不能关闭会话。" },
                         );
-                        if preserve_backend {
+                        if thermal_refresh {
+                            // A failed read-only provider does not revoke or
+                            // fabricate a fan ownership/recovery receipt.
+                            Reply::ThermalError(error, thermal_started_at, Instant::now())
+                        } else if preserve_backend {
                             // Keep the client and worker for an explicit recovery attempt.
                             // A panic is never evidence that a privileged child stopped.
                             Reply::Fan {
@@ -558,7 +640,7 @@ impl Controller {
                     sequence = sequence.wrapping_add(1);
                     if !worker_alive.load(Ordering::Acquire)
                         || outgoing.send(Response { id:request.id, sequence, reply }).is_err()
-                        || (panicked && !preserve_backend) || shutdown_complete
+                        || (panicked && !preserve_backend && !thermal_refresh) || shutdown_complete
                     { break; }
                 }
                 if fan_may_live {
@@ -605,6 +687,10 @@ impl Controller {
             oem_write_uncertain: false,
             error: None,
             last_refresh: None,
+            thermal_sample: None,
+            thermal_error: None,
+            thermal_last_attempt: None,
+            thermal_last_finished: None,
             worker_available: true,
         })
     }
@@ -761,6 +847,56 @@ impl Controller {
         self.submit(Job::Refresh)?;
         self.invalidate_previews();
         Ok(())
+    }
+
+    /// This is deliberately allowed while a fan lease or recovery is pending.
+    /// It never runs snapshot, OEM discovery, catalog or an authentication path.
+    pub fn refresh_thermal(&mut self) -> Result<(), SubmitError> {
+        if self.close_requested {
+            return Err(SubmitError::Busy);
+        }
+        self.enqueue(Job::ThermalRefresh)?;
+        self.thermal_last_attempt = self.in_flight.as_ref().map(|job| job.started);
+        Ok(())
+    }
+
+    pub fn thermal_sampling(&self) -> bool {
+        self.in_flight
+            .as_ref()
+            .is_some_and(|job| job.thermal_refresh)
+    }
+
+    pub fn thermal_refresh_due(&self) -> bool {
+        self.thermal_last_finished
+            .or(self.thermal_last_attempt)
+            .or(self.last_refresh)
+            .is_some_and(|last| last.elapsed() >= THERMAL_SAMPLE_INTERVAL)
+    }
+
+    pub fn requires_thermal_refresh(&self) -> bool {
+        self.fan_session_held || !self.fan_cleanup_complete || !self.fan_helper_reaped
+    }
+
+    pub fn uses_periodic_thermal_refresh(&self) -> bool {
+        self.requires_thermal_refresh()
+            || (self.has_pending_preview()
+                && self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.platform == "linux"))
+    }
+
+    fn accept_thermal_sample(&mut self, sample: ThermalSample) {
+        self.thermal_last_attempt = Some(sample.started_at);
+        self.thermal_last_finished = Some(sample.finished_at);
+        self.thermal_error = None;
+        if let Some(snapshot) = &mut self.snapshot {
+            snapshot
+                .telemetry
+                .retain(|reading| !is_thermal_reading(reading));
+            snapshot.telemetry.extend(sample.readings.iter().cloned());
+        }
+        self.thermal_sample = Some(sample);
     }
 
     pub fn has_pending_preview(&self) -> bool {
@@ -1116,6 +1252,7 @@ impl Controller {
         let id = self.next_id;
         let kind = job.kind();
         let fan_operation = job.fan_operation();
+        let thermal_refresh = matches!(&job, Job::ThermalRefresh);
         let result = self
             .requests
             .as_ref()
@@ -1130,11 +1267,12 @@ impl Controller {
                     started: Instant::now(),
                     selection_revision: self.selection_revision,
                     fan_operation,
+                    thermal_refresh,
                 });
                 // Fan lifecycle housekeeping has its own error channel. In
                 // particular, closing must retain an earlier write/rollback
                 // failure instead of erasing it while queuing ShutdownFan.
-                if fan_operation.is_none() {
+                if fan_operation.is_none() && !thermal_refresh {
                     self.error = None;
                 }
                 Ok(())
@@ -1176,10 +1314,19 @@ impl Controller {
                     .is_some_and(|job| job.selection_revision == self.selection_revision);
                 self.in_flight = None;
                 match response.reply {
-                    Reply::Snapshot(snapshot, catalog) => {
+                    Reply::Snapshot(snapshot, catalog, thermal) => {
                         self.snapshot = Some(snapshot);
                         self.catalog = catalog;
-                        self.last_refresh = Some(Instant::now());
+                        self.last_refresh = Some(thermal.finished_at);
+                        self.accept_thermal_sample(thermal);
+                    }
+                    Reply::ThermalSample(sample) => {
+                        self.accept_thermal_sample(sample);
+                    }
+                    Reply::ThermalError(error, started_at, finished_at) => {
+                        self.thermal_error = Some(error);
+                        self.thermal_last_attempt = Some(started_at);
+                        self.thermal_last_finished = Some(finished_at);
                     }
                     Reply::Preview(plan) => {
                         // A selection made while a request ran must invalidate its late result.
@@ -1196,15 +1343,17 @@ impl Controller {
                             self.brightness_preview = Some(plan);
                         }
                     }
-                    Reply::Applied(result, snapshot) => {
+                    Reply::Applied(result, snapshot, thermal) => {
                         self.applied = Some(result);
                         self.snapshot = Some(snapshot);
-                        self.last_refresh = Some(Instant::now());
+                        self.last_refresh = Some(thermal.finished_at);
+                        self.accept_thermal_sample(thermal);
                     }
-                    Reply::BrightnessApplied(result, snapshot) => {
+                    Reply::BrightnessApplied(result, snapshot, thermal) => {
                         self.brightness_applied = Some(result);
                         self.snapshot = Some(snapshot);
-                        self.last_refresh = Some(Instant::now());
+                        self.last_refresh = Some(thermal.finished_at);
+                        self.accept_thermal_sample(thermal);
                     }
                     Reply::OemPreview(plan) => {
                         if current_selection {
@@ -1218,10 +1367,11 @@ impl Controller {
                             }
                         }
                     }
-                    Reply::OemApplied(result, snapshot) => {
+                    Reply::OemApplied(result, snapshot, thermal) => {
                         self.oem_applied = Some(result);
                         self.snapshot = Some(snapshot);
-                        self.last_refresh = Some(Instant::now());
+                        self.last_refresh = Some(thermal.finished_at);
+                        self.accept_thermal_sample(thermal);
                     }
                     Reply::Fan {
                         operation,

@@ -25,7 +25,7 @@ SOURCE_FILES = (
     "console/resources/org.mechrevo.console.fan.policy",
     "console/crates/gui/assets/fonts/Cormorant-OFL.txt",
     "console/crates/gui/assets/fonts/Manrope-OFL.txt",
-    "docs/MECHREVO-CONSOLE.md", "LICENSE",
+    "docs/MECHREVO-CONSOLE-USER-GUIDE.md", "LICENSE",
 )
 BINARIES = ("mechrevo-console", "mechrevo-console-gui",
             "mechrevo-console-oem-helper", "mechrevo-console-fan-helper")
@@ -52,10 +52,12 @@ class ConsoleFanPackagingTests(unittest.TestCase):
         for relative in SOURCE_FILES:
             path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            if path.suffix == ".policy":
+            if path.suffix == ".policy" or relative == "docs/MECHREVO-CONSOLE-USER-GUIDE.md":
                 shutil.copyfile(ROOT / relative, path)
             else:
                 path.write_text("inert source fixture\n")
+        (self.source / "docs/MECHREVO-CONSOLE.md").write_text(
+            "Development history, old deployment versions and source-relative links.\n")
         shutil.copyfile(RECIPE / "best.lmm.mechrevo-console.desktop",
                         self.src / "best.lmm.mechrevo-console.desktop")
         for name in BINARIES:
@@ -128,6 +130,43 @@ class ConsoleFanPackagingTests(unittest.TestCase):
         self.assertFalse((self.pkg / "usr/bin/mechrevo-console-fan-helper").exists())
         self.assertFalse((self.pkg / "usr/lib/systemd").exists())
         self.assertFalse((self.pkg / ".INSTALL").exists())
+
+    def test_package_installs_standalone_user_guide_at_existing_document_path(self):
+        result = self.invoke("package")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.pkg / "usr/share/doc/mechrevo-console"
+        installed = directory / "MECHREVO-CONSOLE.md"
+        expected = (ROOT / "docs/MECHREVO-CONSOLE-USER-GUIDE.md").read_bytes()
+        self.assertEqual(installed.read_bytes(), expected)
+        self.assertNotEqual(installed.read_bytes(), (self.source / "docs/MECHREVO-CONSOLE.md").read_bytes())
+        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o644)
+        self.assertFalse(installed.is_symlink())
+        self.assertEqual({path.name for path in directory.iterdir()}, {"MECHREVO-CONSOLE.md"})
+
+    def test_each_phase_rejects_missing_user_guide(self):
+        (self.source / "docs/MECHREVO-CONSOLE-USER-GUIDE.md").unlink()
+        self.commit()
+        for function in ("prepare", "check", "package"):
+            with self.subTest(function=function):
+                self.assert_rejected(function, "docs/MECHREVO-CONSOLE-USER-GUIDE.md")
+
+    def test_each_phase_rejects_untracked_user_guide(self):
+        self.git("rm", "--cached", "docs/MECHREVO-CONSOLE-USER-GUIDE.md")
+        self.git("commit", "--quiet", "-m", "untrack user guide")
+        self.commit_id = self.git("rev-parse", "HEAD")
+        for function in ("prepare", "check", "package"):
+            with self.subTest(function=function):
+                self.assert_rejected(function, "Required tracked regular source file missing")
+
+    def test_each_phase_rejects_symlinked_user_guide(self):
+        guide = self.source / "docs/MECHREVO-CONSOLE-USER-GUIDE.md"
+        original = self.base / "real-user-guide.md"
+        guide.rename(original)
+        guide.symlink_to(original)
+        self.commit()
+        for function in ("prepare", "check", "package"):
+            with self.subTest(function=function):
+                self.assert_rejected(function, "Required tracked regular source file missing")
 
     def test_each_phase_rejects_untracked_fan_source(self):
         self.git("rm", "--cached", "console/crates/cli/src/fan_helper.rs")

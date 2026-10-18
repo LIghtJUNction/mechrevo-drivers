@@ -62,6 +62,17 @@ pub struct SensorReading {
     pub status: CapabilityStatus,
     pub reason: Option<String>,
 }
+/// One read-only temperature/fan collection interval on this process's monotonic
+/// clock. The interval bounds our reads; it does not establish firmware freshness
+/// or mean that sensors were read atomically.
+#[derive(Debug, Clone)]
+pub struct ThermalSample {
+    pub readings: Vec<SensorReading>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub started_at: std::time::Instant,
+    pub finished_at: std::time::Instant,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Capability {
     pub id: String,
@@ -244,18 +255,55 @@ fn parse_catalog(input: &str) -> Result<BundledCatalog, ControlError> {
     }
     Ok(data)
 }
+#[derive(Debug)]
+struct CatalogSearchEntry {
+    model: CatalogModel,
+    search_text: String,
+}
+static BUNDLED_CATALOG: std::sync::OnceLock<Result<Vec<CatalogSearchEntry>, ControlError>> =
+    std::sync::OnceLock::new();
+
+fn catalog_index(input: &str) -> Result<Vec<CatalogSearchEntry>, ControlError> {
+    let data = parse_catalog(input)?;
+    Ok(data.entries.into_iter().map(|v| {
+        let search_text = format!("{} {} {} {} {}", v.id, v.name, v.slug,
+            v.series.as_deref().unwrap_or(""), v.category.as_deref().unwrap_or("")).to_lowercase();
+        CatalogSearchEntry {
+            search_text,
+            model: CatalogModel {id:v.id,name:v.name,slug:v.slug,category:v.category,series:v.series,
+                entry_kind:v.entry_kind,evidence:vec![v.url.clone(),data.source.url.clone()],url:v.url,
+                support_note:"Official product listing only; Windows/Linux hardware compatibility is not established by this entry.".into()},
+        }
+    }).collect())
+}
+
+fn cached_catalog<'a>(
+    cache: &'a std::sync::OnceLock<Result<Vec<CatalogSearchEntry>, ControlError>>,
+    input: &str,
+) -> Result<&'a [CatalogSearchEntry], &'a ControlError> {
+    cache
+        .get_or_init(|| catalog_index(input))
+        .as_ref()
+        .map(Vec::as_slice)
+}
+
 /// Marketing inventory is intentionally separate from tested support.
 // @mark mechrevo.model_catalog role=implementation
 pub fn catalog_search(query: &str) -> Vec<CatalogModel> {
-    // Embedded immutable evidence is validated by tests; malformed evidence fails closed.
-    let Ok(data) = parse_catalog(include_str!("../../../../data/mechrevo-catalog.json")) else {
+    // Cache the immutable parse result, including a real failure. Preserve the
+    // existing fail-closed Vec API without turning invalid data into an Ok cache.
+    let Ok(index) = cached_catalog(
+        &BUNDLED_CATALOG,
+        include_str!("../../../../data/mechrevo-catalog.json"),
+    ) else {
         return vec![];
     };
     let query = query.to_lowercase();
-    data.entries.into_iter().filter_map(|v| {
-        let haystack=format!("{} {} {} {} {}",v.id,v.name,v.slug,v.series.as_deref().unwrap_or(""),v.category.as_deref().unwrap_or(""));
-        haystack.to_lowercase().contains(&query).then(||CatalogModel {id:v.id,name:v.name,slug:v.slug,category:v.category,series:v.series,entry_kind:v.entry_kind,evidence:vec![v.url.clone(),data.source.url.clone()],url:v.url,support_note:"Official product listing only; Windows/Linux hardware compatibility is not established by this entry.".into()})
-    }).collect()
+    index
+        .iter()
+        .filter(|entry| entry.search_text.contains(&query))
+        .map(|entry| entry.model.clone())
+        .collect()
 }
 
 /// Blocking backend: call from a GUI worker, never its event/render thread.
@@ -283,6 +331,22 @@ impl Service {
     }
     pub fn catalog(&self, query: &str) -> Vec<CatalogModel> {
         catalog_search(query)
+    }
+    /// Read only hwmon temperatures and fan speeds. This blocking call belongs
+    /// on a sampling worker, including while a fan-control lease is held.
+    /// It never discovers controls or launches an external command/helper.
+    pub fn sample_thermal(&self) -> Result<ThermalSample, ControlError> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::sample_thermal(&self.linux_root)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(ControlError::new(
+                "thermal_sampling_unavailable",
+                "Dedicated thermal sampling is only implemented for Linux hwmon",
+            ))
+        }
     }
     pub fn snapshot(&self) -> Snapshot {
         #[cfg(target_os = "linux")]
@@ -473,6 +537,33 @@ mod tests {
         assert!(parse_catalog(&wrong_total.to_string()).is_err());
     }
     #[test]
+    fn immutable_catalog_cache_reuses_the_validated_index() {
+        let cache = std::sync::OnceLock::new();
+        let first = cached_catalog(
+            &cache,
+            include_str!("../../../../data/mechrevo-catalog.json"),
+        )
+        .unwrap();
+        assert!(!first.is_empty());
+        let address = first.as_ptr();
+        let second = cached_catalog(&cache, "not another parse").unwrap();
+        assert_eq!(address, second.as_ptr());
+        assert_eq!(first.len(), second.len());
+    }
+    #[test]
+    fn invalid_catalog_cache_retains_the_error_instead_of_a_successful_empty_list() {
+        let cache = std::sync::OnceLock::new();
+        let first = cached_catalog(&cache, "{}").unwrap_err();
+        assert_eq!(first.code, "catalog_invalid");
+        let second = cached_catalog(
+            &cache,
+            include_str!("../../../../data/mechrevo-catalog.json"),
+        )
+        .unwrap_err();
+        assert!(std::ptr::eq(first, second));
+        assert!(cache.get().unwrap().is_err());
+    }
+    #[test]
     fn profile_readback_failure_restores_and_reports_unknown_restore() {
         use std::cell::RefCell;
         let state = RefCell::new("balanced".to_string());
@@ -542,6 +633,14 @@ mod tests {
         snapshot.power_policy.current = None;
         assert!(!profile_available(&snapshot, PowerProfile::PowerSaver));
     }
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn dedicated_thermal_sampling_is_explicitly_unavailable_off_linux() {
+        assert_eq!(
+            Service::new().sample_thermal().unwrap_err().code,
+            "thermal_sampling_unavailable"
+        );
+    }
     #[test]
     fn profiles_are_explicit() {
         assert!("silent".parse::<PowerProfile>().is_err());
@@ -582,3 +681,6 @@ mod tests {
         assert!(!value.contains("uuid"));
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod thermal_tests;

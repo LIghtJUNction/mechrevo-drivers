@@ -66,17 +66,59 @@ impl TemperatureHistory {
         snapshot: Option<&mechrevo_console_core::Snapshot>,
         refreshed: Option<Instant>,
     ) {
-        let Some(snapshot) = snapshot else {
-            return;
-        };
-        let machine = format!(
-            "{:?}|{:?}|{:?}|{:?}|{}",
-            snapshot.identity.manufacturer,
-            snapshot.identity.product_name,
-            snapshot.identity.board_name,
-            snapshot.identity.bios_version,
-            snapshot.platform
+        self.observe_readings(
+            snapshot,
+            snapshot
+                .map(|snapshot| snapshot.telemetry.as_slice())
+                .unwrap_or(&[]),
+            refreshed,
         );
+    }
+
+    fn observe_controller(&mut self, controller: &Controller) {
+        if let Some(sample) = &controller.thermal_sample {
+            if controller.thermal_error.is_some() {
+                self.observe_readings(
+                    controller.snapshot.as_ref(),
+                    &[],
+                    controller.thermal_last_attempt,
+                );
+            } else {
+                self.observe_readings(
+                    controller.snapshot.as_ref(),
+                    &sample.readings,
+                    Some(sample.started_at),
+                );
+            }
+        } else if controller.thermal_error.is_some() {
+            self.observe_readings(
+                controller.snapshot.as_ref(),
+                &[],
+                controller.thermal_last_attempt,
+            );
+        } else {
+            self.observe(controller.snapshot.as_ref(), controller.last_refresh);
+        }
+    }
+
+    fn observe_readings(
+        &mut self,
+        snapshot: Option<&mechrevo_console_core::Snapshot>,
+        readings: &[SensorReading],
+        refreshed: Option<Instant>,
+    ) {
+        let machine = snapshot
+            .map(|snapshot| {
+                format!(
+                    "{:?}|{:?}|{:?}|{:?}|{}",
+                    snapshot.identity.manufacturer,
+                    snapshot.identity.product_name,
+                    snapshot.identity.board_name,
+                    snapshot.identity.bios_version,
+                    snapshot.platform
+                )
+            })
+            .unwrap_or_else(|| "unidentified".into());
         if self.machine != machine {
             self.machine = machine;
             self.series.clear();
@@ -87,11 +129,19 @@ impl TemperatureHistory {
             return;
         }
         let time = refreshed.unwrap_or_else(Instant::now);
+        if let Some(previous) = self.last_refresh {
+            if time.saturating_duration_since(previous) > crate::THERMAL_STALE_AFTER {
+                let gap = previous + crate::THERMAL_STALE_AFTER;
+                for samples in self.series.values_mut() {
+                    samples.push_back((gap, None));
+                }
+            }
+        }
         // Missing or unavailable sensors make an explicit gap, never a zero.
         for samples in self.series.values_mut() {
             samples.push_back((time, None));
         }
-        for reading in snapshot.telemetry.iter().filter(|r| is_temperature(r)) {
+        for reading in readings.iter().filter(|r| is_temperature(r)) {
             let samples = self.series.entry(sensor_key(reading)).or_default();
             if samples.back().is_some_and(|sample| sample.0 == time) {
                 samples.pop_back();
@@ -301,20 +351,22 @@ impl DesktopApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+        let narrow_refresh = self.controller.uses_periodic_thermal_refresh();
         if self.preferences.auto_refresh
             && !self.controller.busy()
-            && !self.controller.has_pending_preview()
-            && !self.controller.fan_session_held
-            && self.controller.fan_helper_reaped
-            && self.controller.fan_cleanup_complete
+            && (narrow_refresh || !self.controller.has_pending_preview())
+            && self.controller.thermal_error.is_none()
             && self.controller.worker_available
             && !self.pending_close
-            && self
-                .controller
-                .last_refresh
-                .is_some_and(|time| time.elapsed() >= Duration::from_secs(3))
+            && self.controller.thermal_refresh_due()
         {
-            let _ = self.controller.refresh();
+            if narrow_refresh {
+                let _ = self.controller.refresh_thermal();
+            } else {
+                // With no fan session or pending preview, retain complete
+                // battery/AC/policy updates on both native platforms.
+                let _ = self.controller.refresh();
+            }
         }
         if self.controller.busy() {
             if !self.controller.oem_write_state_unknown() {
@@ -331,6 +383,14 @@ impl DesktopApp {
             ctx.request_repaint_after(Duration::from_millis(200));
         } else if self.preferences.auto_refresh {
             ctx.request_repaint_after(Duration::from_secs(1));
+        } else if let Some(sample) = &self.controller.thermal_sample {
+            // One deadline marks a manual sample stale; no repeated sampling
+            // or continuous idle animation is introduced.
+            if let Some(remaining) =
+                crate::THERMAL_STALE_AFTER.checked_sub(sample.started_at.elapsed())
+            {
+                ctx.request_repaint_after(remaining);
+            }
         }
     }
 
@@ -339,10 +399,7 @@ impl DesktopApp {
         appearance::install_fonts(root.ctx());
         self.configure(root.ctx());
         self.tick(root.ctx());
-        self.history.observe(
-            self.controller.snapshot.as_ref(),
-            self.controller.last_refresh,
-        );
+        self.history.observe_controller(&self.controller);
         if std::mem::take(&mut self.display_settings_requested) {
             self.display_settings_open = true;
         }
@@ -493,7 +550,7 @@ impl DesktopApp {
     fn header_actions(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 10.0;
         let response = ui.add_enabled(
-            !self.controller.busy() && self.controller.worker_available,
+            !self.controller.busy() && self.controller.worker_available && !self.pending_close,
             egui::Button::new(RichText::new("刷新").size(13.0))
                 .min_size(Vec2::new(80.0, 34.0))
                 .frame(false),
@@ -508,11 +565,29 @@ impl DesktopApp {
             0.0
         };
         refresh_icon(ui.painter(), rect, secondary(ui), rotation);
+        let narrow =
+            self.controller.requires_thermal_refresh() || self.controller.thermal_error.is_some();
         if response.clicked() {
-            let _ = self.controller.refresh();
+            let result = if narrow {
+                self.controller.refresh_thermal()
+            } else {
+                self.controller.refresh()
+            };
+            if let Err(error) = result {
+                self.controller.error = Some(mechrevo_console_core::ControlError::new(
+                    "refresh_not_started",
+                    format!("刷新未启动：{error:?}。请等待当前操作结束。"),
+                ));
+            }
         }
-        sampling_switch(ui, &mut self.preferences.auto_refresh, self.motion_enabled)
-            .on_hover_text("每 3 秒只读采集；预览操作期间暂停");
+        response.on_hover_text(if narrow {
+            "只读更新温度与转速；设备控制信息保持上次完整采集的时间。"
+        } else {
+            "重新采集完整设备信息、控制状态与传感器。"
+        });
+        sampling_switch(ui, &mut self.preferences.auto_refresh, self.motion_enabled).on_hover_text(
+            "每 3 秒只读采集；预览期间暂停完整采集，Linux 温度与转速仍更新。采样失败后点刷新重试。",
+        );
         if ui
             .add(egui::Button::new(RichText::new("显示设置").size(13.0)).frame(false))
             .clicked()
@@ -572,7 +647,10 @@ impl DesktopApp {
             egui::Label::new(RichText::new(product).size(14.0).color(label_color(ui))).truncate(),
         )
         .on_hover_text(format!("{product}\n{platform} · {board}"));
-        let status = if self.controller.busy() {
+        let status = if matches!(self.controller.activity(), Some((JobKind::Refresh, _)))
+            && !self.controller.thermal_sampling()
+            && self.controller.fan_activity().is_none()
+        {
             "正在采集".to_owned()
         } else if let Some(last) = self.controller.last_refresh {
             if !self.preferences.auto_refresh {
@@ -590,7 +668,7 @@ impl DesktopApp {
         };
         ui.add(
             egui::Label::new(
-                RichText::new(format!("{platform}  ·  {status}"))
+                RichText::new(format!("{platform}  ·  设备信息 {status}"))
                     .size(13.0)
                     .color(secondary(ui)),
             )
@@ -680,9 +758,15 @@ impl DesktopApp {
     fn thermal_panel(&self, ui: &mut egui::Ui) -> Rect {
         let readings = self
             .controller
-            .snapshot
+            .thermal_sample
             .as_ref()
-            .map(|s| s.telemetry.as_slice())
+            .map(|sample| sample.readings.as_slice())
+            .or_else(|| {
+                self.controller
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.telemetry.as_slice())
+            })
             .unwrap_or(&[]);
         let cpu = primary_temperature(readings, "CPU");
         let gpu = primary_temperature(readings, "GPU");
@@ -710,10 +794,19 @@ impl DesktopApp {
                 if ui.available_width() >= 720.0 {
                     ui.set_min_height(222.0);
                 }
-                ui.label(
-                    RichText::new("温度与散热")
-                        .size(14.0)
-                        .color(label_color(ui)),
+                // A text row does not need horizontal_wrapped's button height.
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), 0.0),
+                    egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 16.0;
+                        ui.label(
+                            RichText::new("温度与散热")
+                                .size(14.0)
+                                .color(label_color(ui)),
+                        );
+                        self.thermal_status(ui);
+                    },
                 );
                 ui.add_space(8.0);
                 let width = ui.available_width();
@@ -820,10 +913,118 @@ impl DesktopApp {
                             .color(secondary(ui)),
                     );
                 }
+                if self.controller.thermal_error.is_some()
+                    || self
+                        .controller
+                        .thermal_sample
+                        .as_ref()
+                        .is_some_and(|sample| !sample.diagnostics.is_empty())
+                {
+                    egui::CollapsingHeader::new("采样详情").show(ui, |ui| {
+                        if let Some(error) = &self.controller.thermal_error {
+                            ui.add(
+                                egui::Label::new(format!("{} · {}", error.code, error.message))
+                                    .wrap(),
+                            );
+                            for detail in &error.details {
+                                ui.add(egui::Label::new(detail).wrap());
+                            }
+                            if let Some((started, finished)) = self
+                                .controller
+                                .thermal_last_attempt
+                                .zip(self.controller.thermal_last_finished)
+                            {
+                                ui.label(format!(
+                                    "失败采集耗时 {} ms",
+                                    finished.saturating_duration_since(started).as_millis()
+                                ));
+                            }
+                            ui.label("保留上次成功读数；点击刷新可显式重试。");
+                        }
+                        if let Some(sample) = &self.controller.thermal_sample {
+                            for diagnostic in &sample.diagnostics {
+                                ui.add(
+                                    egui::Label::new(format!(
+                                        "{} · {}",
+                                        diagnostic.code, diagnostic.message
+                                    ))
+                                    .wrap(),
+                                );
+                            }
+                        }
+                    });
+                }
             })
         })
         .response
         .rect
+    }
+
+    fn thermal_status(&self, ui: &mut egui::Ui) {
+        let sample = self.controller.thermal_sample.as_ref();
+        let stale =
+            sample.is_some_and(|sample| sample.started_at.elapsed() > crate::THERMAL_STALE_AFTER);
+        let failed = self.controller.thermal_error.is_some();
+        let state = if self.controller.thermal_sampling() {
+            if failed {
+                "正在重试温度与转速采样"
+            } else {
+                "正在采集温度与转速"
+            }
+        } else if failed {
+            if self.preferences.auto_refresh {
+                "采样失败 · 自动采样已暂停"
+            } else {
+                "采样失败 · 手动采样"
+            }
+        } else if self.preferences.auto_refresh
+            && self.controller.has_pending_preview()
+            && !self.controller.uses_periodic_thermal_refresh()
+        {
+            "自动采样已暂停"
+        } else if !self.preferences.auto_refresh {
+            "手动采样"
+        } else if sample.is_none() && self.controller.last_refresh.is_none() {
+            "等待采样"
+        } else {
+            "自动采样"
+        };
+        let mut text = state.to_owned();
+        if stale {
+            text.push_str(" · 读数已陈旧");
+        }
+        if self.controller.thermal_sampling()
+            && self
+                .controller
+                .thermal_last_attempt
+                .is_some_and(|started| started.elapsed() > crate::THERMAL_STALE_AFTER)
+        {
+            text.push_str(" · 本次采集已超过 6 秒");
+        }
+        if let Some(sample) = sample {
+            // Manual mode does not repaint a ticking counter. A stable age
+            // band remains truthful when the window is idle; one deadline
+            // invalidates the fresh band without starting another read.
+            let age = if self.preferences.auto_refresh {
+                format!("{} 秒前", sample.started_at.elapsed().as_secs())
+            } else if stale {
+                "≥6 秒前".into()
+            } else {
+                "6 秒内".into()
+            };
+            text.push_str(&format!(
+                " · 采集起点 {age} · 采集耗时 {} ms",
+                sample
+                    .finished_at
+                    .saturating_duration_since(sample.started_at)
+                    .as_millis()
+            ));
+        }
+        ui.label(RichText::new(text).size(13.0).color(if failed || stale {
+            amber(ui)
+        } else {
+            secondary(ui)
+        }));
     }
 
     fn temperature_chart(
@@ -963,6 +1164,16 @@ impl DesktopApp {
                 .size(13.0)
                 .color(secondary(ui)),
             );
+            if data
+                .iter()
+                .any(|(samples, _)| samples.iter().any(|(_, value)| value.is_none()))
+            {
+                ui.label(
+                    RichText::new("存在采样间隔，空窗不连线")
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            }
         });
     }
 
@@ -1143,7 +1354,7 @@ impl DesktopApp {
                                     ["红", "绿", "蓝"].into_iter().zip(rgb.iter_mut())
                                 {
                                     let label = ui.label(label);
-                                    ui.add(egui::DragValue::new(channel).range(0..=255))
+                                    ui.add(egui::DragValue::new(channel).range(0..=255).speed(1.0))
                                         .labelled_by(label.id);
                                 }
                                 let (rect, _) = ui.allocate_exact_size(
@@ -1850,11 +2061,23 @@ impl DesktopApp {
     }
 
     fn sensors(&mut self, ui: &mut egui::Ui) {
-        let Some(s) = &self.controller.snapshot else {
+        let readings = self
+            .controller
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.telemetry.as_slice())
+            .or_else(|| {
+                self.controller
+                    .thermal_sample
+                    .as_ref()
+                    .map(|sample| sample.readings.as_slice())
+            });
+        let Some(readings) = readings else {
             empty_state(ui, "还没有设备读数", "点击刷新，开始读取系统公开的传感器。");
             return;
         };
-        if s.telemetry.is_empty() {
+        self.thermal_status(ui);
+        if readings.is_empty() {
             empty_state(
                 ui,
                 "没有可用的传感器",
@@ -1870,7 +2093,7 @@ impl DesktopApp {
         {
             self.source_details_expanded = !self.source_details_expanded;
         }
-        for reading in &s.telemetry {
+        for reading in readings {
             ui.push_id((&reading.device_id, &reading.id), |ui| {
                 ui.add_space(8.0);
                 ui.add(egui::Label::new(RichText::new(&reading.label).strong()).wrap());
@@ -1894,12 +2117,29 @@ impl DesktopApp {
                 ui.separator();
             });
         }
-        if !s.diagnostics.is_empty() {
+        let diagnostics = self
+            .controller
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.diagnostics.as_slice())
+            .unwrap_or(&[]);
+        if !diagnostics.is_empty() {
             ui.add_space(20.0);
             ui.label(RichText::new("检测信息").strong());
-            for d in &s.diagnostics {
+            for d in diagnostics {
                 ui.label(format!("{} · {}", d.code, d.message));
             }
+        }
+        if let Some(sample) = &self.controller.thermal_sample {
+            for diagnostic in &sample.diagnostics {
+                ui.add(
+                    egui::Label::new(format!("{} · {}", diagnostic.code, diagnostic.message))
+                        .wrap(),
+                );
+            }
+        }
+        if let Some(error) = &self.controller.thermal_error {
+            ui.add(egui::Label::new(format!("采样失败：{}", error.message)).wrap());
         }
     }
 

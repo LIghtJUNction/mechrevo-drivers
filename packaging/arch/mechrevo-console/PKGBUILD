@@ -48,7 +48,7 @@ _validate_source_tree() {
         console/resources/org.mechrevo.console.fan.policy \
         console/crates/gui/assets/fonts/Cormorant-OFL.txt \
         console/crates/gui/assets/fonts/Manrope-OFL.txt \
-        docs/MECHREVO-CONSOLE.md LICENSE; do
+        docs/MECHREVO-CONSOLE-USER-GUIDE.md LICENSE; do
         if [[ ! -f $file || -L $file ]] ||
             ! git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
             printf 'Required tracked regular source file missing: %s\n' "$file" >&2
@@ -128,6 +128,6 @@ package() {
         "${pkgdir}/usr/share/licenses/${pkgname}/Cormorant-OFL.txt" || return 1
     install -Dm644 console/crates/gui/assets/fonts/Manrope-OFL.txt \
         "${pkgdir}/usr/share/licenses/${pkgname}/Manrope-OFL.txt" || return 1
-    install -Dm644 docs/MECHREVO-CONSOLE.md \
+    install -Dm644 docs/MECHREVO-CONSOLE-USER-GUIDE.md \
         "${pkgdir}/usr/share/doc/${pkgname}/MECHREVO-CONSOLE.md" || return 1
 }

@@ -1,6 +1,6 @@
 # Mechrevo Console
 
-独立的 Rust 工作区，包含共用核心、命令行和 Windows / Linux 原生界面。系统电源策略与屏幕亮度已有双端后端；本轮源码新增 Linux 驱动提供的 Fn 锁、充电档位与键盘背光控制。Windows OEM 后端、风扇、MUX 与水冷等继续按[完整功能清单](../docs/OPENREVO-PARITY.md)推进，型号目录不授予硬件写入权限。
+独立的 Rust 工作区，包含共用核心、命令行和 Windows / Linux 原生界面。系统电源策略与屏幕亮度已有双端后端；Linux 已接入驱动提供的 Fn 锁、充电档位、键盘背光及独立风扇曲线会话。Windows OEM 后端、MUX、水冷和完整实机验收继续按[完整功能清单](../docs/OPENREVO-PARITY.md)推进，型号目录不授予硬件写入权限。
 
 本轮源码通过 146 项 Rust 测试、95 项 Python 检查、Clippy 与 Windows 编译检查；本机四项 OEM 控制完成 11 次可逆写入及 7 次写前拒绝验收，全部恢复原值。范围见 [OEM 验收收据](../docs/verification/oem-controls.json)，安装版本另以[部署记录](../docs/MECHREVO-CONSOLE.md)为准。驱动回读不等于实体按键、停充或灯光测量。
 

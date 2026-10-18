@@ -2,7 +2,11 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
-## r160 已安装（2026-10-18）
+## r162／r163 历史部署基线（2026-10-18）
+
+该次部署收据记录控制台 `0.1.0.r163.g58e8d9c-1` 和驱动 `4.24.0.r162.ge4bfb3f-1` 已安装，签名启动镜像已更新，旧版恢复入口保留。r163 包含原生风扇曲线编辑器和受限会话 helper；该次验收时新驱动尚未加载，真实曲线与噪声效果未验收。[部署收据](verification/deployment-fan-r162-r163.json)、[风扇接口](FAN-CURVE-CONTROL.md)。后续源码进展与该安装基线分开记录；新的采样候选尚未由本收据证明已安装，后续实际部署另有收据。
+
+## r160 历史安装验收（2026-10-18）
 
 `mechrevo-console 0.1.0.r160.g5542b9d-1` 已从固定提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60` 构建并通过 pacman 安装。CLI、GUI、受限 OEM helper 与授权策略已落盘；21 个包文件零改动，9 个正规载荷的字节、权限及 root 归属逐项一致。release 的 31 份输入与通过 146 项 Rust、95 项 Python 检查的快照相同；release 与早期 debug 候选的二进制摘要分别保留。
 
@@ -60,7 +64,7 @@ Linux 普通用户对真实 `/sys` 的 OEM 写入由 `pkexec` 调用固定 `/usr
 
 特权 helper 必须等待真实退出，不以超时杀进程宣称写入已取消。输出失败但进程已退出时报告 `outcome_unknown`；若进程存活状态也未知，继续阻止后续写入和关窗。写入原始错误、恢复写入、恢复回读分别保留；检测到第三方修改或状态未知时不覆盖他人的值。RGB 恢复写入失败，即使 LED 缓存仍显示旧值，也按状态未知处理。这些流程不等于已完成实体恢复验收。
 
-Windows OEM 后端尚未实现，已有 Windows 系统亮度与电源策略后端继续保留。当前实现不接入风扇曲线或功耗模式，不代表风扇异响已解决；充电、按键、灯光及持久化都需在对应驱动加载版本上分别验证。
+Windows OEM 后端尚未实现，已有 Windows 系统亮度与电源策略后端继续保留。上述 OEM 控件不包含功耗模式；风扇曲线使用独立的会话接口，见[风扇控制](FAN-CURVE-CONTROL.md)。充电、按键、灯光、风扇与持久化均需分别验证，接口实现不能证明异响已解决。
 
 ## 型号与证据
 
@@ -85,11 +89,22 @@ Rust 身份识别使用独立的精确规则。品牌命中仅是身份线索；
 
 Linux hwmon 的传感器 `id` 使用解析符号链接后的完整输入路径，例如 `/sys/devices/…/hwmon/hwmon7/temp1_input`。旧版使用物理设备路径加通道名；同一设备的多个 hwmon 接口都含 `temp1_input` 时会发生 ID 冲突。新版把这些接口分别保留，即使读数相同也不会合并。多个 class 路径若指向同一输入，只保留排序后的第一个来源，并记录 `sensor_source_alias` 诊断。`device_id` 仍表示物理设备归属，`source.path` 仍保留实际枚举到的原始路径。
 
+开发源码还会在设备报告 `suspending`、`resuming` 或 `error` 时跳过输入和标签；`active`、运行时电源管理未启用的 `unsupported` 和没有此属性的设备继续按原方式读取。状态含义以[内核 ABI](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-devices-power)为依据。读取前检查不能锁住后续电源转换，不代表消除了竞态，也不把休眠／错误读数当作零值。
+
 依赖旧 `id` 的消费者需要迁移已有索引；此变化仅涉及 Linux hwmon，电池等其他 ID 不变。新 ID 不保证跨重启或 hwmon 重新编号稳定。输入在枚举后消失时，优先使用解析后的父目录加文件名，仍无法解析才保留原路径。设备被报告为 runtime-suspended 时，控制台解析路径但不打开传感器输入，保留 ID 与来源，将读数标为不可用；它不会以旧读数或零值代替本次采样。
 
 Windows 标准接口依据：[电源策略](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/powercfg-command-line-options)、[亮度类](https://learn.microsoft.com/en-us/windows/win32/wmicoreprov/wmimonitorbrightness)、[亮度方法](https://learn.microsoft.com/en-us/windows/win32/wmicoreprov/wmisetbrightness-method-in-class-wmimonitorbrightnessmethods)。Linux 接口依据：[backlight](https://docs.kernel.org/gpu/backlight.html)。
 
 ## CLI JSON 与采集时间
+
+开发源码另提供仅查询 Linux hwmon 温度和转速的命令：
+
+```sh
+mechrevo-console thermal
+mechrevo-console thermal --samples 30 --interval-ms 1000
+```
+
+输出为每次一行的 JSONL。默认采一次；次数为 `1..3600`，间隔为 `250..60000` 毫秒，默认 1000 毫秒。首帧立即采集，后续在上一帧采集和输出完成后等待，不追赶错过的间隔。每帧有序号、UTC 起止时间、单调读区间耗时、传感器来源与状态，可用于关联录音；读区间不是固件新鲜度或同时采样的保证。采集失败会输出不含旧读数的错误帧并退出；断管或输出失败立即停止，若同时发生采集错误则保留两者。命令不枚举 OEM 控件、亮度、电源方案或型号目录，不提权、不接管风扇。Windows 目前明确返回此专用采样不可用，原有完整状态命令继续保留。此命令不属于 r163 安装包。 新增采样候选的 273 项工作区 Rust 测试、三项隔离负例及三帧真实 CLI 只读追踪见[采样收据](verification/thermal-sampling.json)；该收据另含隔离 Linux 1280×720 启动及未探测风扇页只读导航、131 项 Python 检查；不包含实际桌面、正常关窗、GUI 写入或新版本安装。
 
 `status --json` 和 `export --output PATH` 使用相同的状态文档结构，保留 `schema_version: 1`、原有快照字段及 `identity_evidence`，新增 `collection` 对象。导出命令另外返回导出路径等确认信息；文件内保存完整状态文档。导出使用显式路径，不覆盖已有文件或符号链接，也不自动创建父目录。
 
@@ -124,7 +139,7 @@ python -B scripts/verify_console.py --output .local-tests/console-result.json
 
 原生界面已替换旧 Cyber-HUD，采用石墨背景、暖白文字与有限的低饱和绿／琥珀曲线，不以蓝色作为视觉方向，也不复制 OpenRevo 内嵌资产。默认主窗为 1120×760 逻辑单位，使用可换行的顶部导航，概览按内容宽度转为单列。首页产品长名省略显示，完整名称可在悬停或设备详情中查看；传感器页可展开全部来源。视觉与交互约定见 [界面设计](../console/DESIGN.md)。
 
-首页 CPU / GPU 分别显示同类当前最高读数，曲线只显示当前选定实际来源的真实温度历史，不推断物理热管拓扑。历史按机器与传感器身份隔离，每来源最多 120 点；未知读数保留断点，不补零、不补齐历史。实时采样默认开启、可关闭，距上次快照至少 3 秒且空闲时只读刷新，待确认的操作预览期间暂停；开启时空闲界面每 1 秒重绘。选中导航与常规控件的过渡为 180 ms，后台忙碌时刷新图标旋转，动画可关闭且偏好会保存。界面读取仍放在单个后台任务中，重复刷新不堆积，主线程不等待硬件调用。
+首页 CPU / GPU 分别显示同类当前最高读数，曲线只显示当前选定实际来源的真实温度历史，不推断物理热管拓扑。历史按机器与传感器身份隔离，每来源最多 120 点；未知读数保留断点，不补零、不补齐历史。实时采样默认开启、可关闭，干净状态距上次完整快照至少 3 秒且空闲时只读刷新电池／AC 等信息；Linux 有待确认预览或风扇会话时改为仅采温度／RPM，保留预览确认，Windows 预览期间暂停自动采集；开启时空闲界面每 1 秒重绘。选中导航与常规控件的过渡为 180 ms，后台忙碌时刷新图标旋转，动画可关闭且偏好会保存。界面读取仍放在单个后台任务中，重复刷新不堆积，主线程不等待硬件调用。
 
 电源与亮度保留预览、应用、回读、必要恢复及写事务结束后关窗的流程。r160 OEM 实现在相同事务框架内接入有限驱动控制，范围与验证状态见前文；OEM 性能模式、风扇曲线、MUX、水冷及 Windows OEM 控制仍待完成。已有界面验收记录不覆盖这些新硬件控制，也不增加 Windows 实机写入结论。
 
