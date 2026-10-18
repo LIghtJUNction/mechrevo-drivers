@@ -1,0 +1,2787 @@
+{
+  "schema_version": 1,
+  "document_kind": "persistent_requirements_index_not_completion_receipt",
+  "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
+  "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
+  "current_work": {
+    "status": "implementation_in_progress",
+    "scope": "OEM backend wiring, CLI/GUI controls and a restricted privilege helper are under development after the baseline. No new OEM control is claimed complete by this index.",
+    "completion_requires": "Each feature and platform must acquire separate implementation, test, installation/loading and physical-effect evidence."
+  },
+  "upstream": {
+    "repository": "https://github.com/faintonce/open-revo",
+    "public_release": {
+      "tag": "0.8.5",
+      "prerelease": true,
+      "published_at": "2026-09-25T07:44:57Z",
+      "url": "https://github.com/faintonce/open-revo/releases/tag/0.8.5",
+      "release_list_url": "https://github.com/faintonce/open-revo/releases",
+      "asset_name": "open-revo-v0.8.5.7z",
+      "asset_size_bytes": 2384189,
+      "version_note": ".7z is the archive suffix, not version 0.8.5.7. Later versions mentioned by issue authors were not obtained or verified in this check."
+    },
+    "issues_check": {
+      "checked_at_utc": "2026-10-18T03:48:05Z",
+      "http_date": "Sun, 18 Oct 2026 03:48:05 GMT",
+      "api_url": "https://api.github.com/repos/faintonce/open-revo/issues?state=open&per_page=100&sort=updated&direction=desc",
+      "pages": 1,
+      "next_page": null,
+      "open_issue_count": 77,
+      "excluded_pull_requests": 0,
+      "number_and_title_comparison": "identical_to_local_snapshot",
+      "new_numbers": [],
+      "removed_numbers": [],
+      "title_changes": [],
+      "scope": "Read-only public API list and selected official issue bodies/comments; not every comment, attachment, private release, upstream defect or hardware root cause was verified."
+    },
+    "local_issue_snapshot": {
+      "path": "data/openrevo-issues.json",
+      "fetched_at": "2026-10-17T21:31:49Z",
+      "sha256": "54d559a2824d3ce735a49426bda40b1d8913480ed9d4baf64d258481767afe84"
+    },
+    "feature_sources": [
+      "https://github.com/faintonce/open-revo",
+      "https://github.com/faintonce/open-revo/blob/main/docs/models_customization_guide.md",
+      "docs/OPENREVO-085-ANALYSIS.md",
+      "docs/OEM-FEATURE-COVERAGE.md"
+    ]
+  },
+  "state_dimensions": {
+    "read": "Feature state through the tracked Rust console product backend; independent driver evidence is recorded separately in baseline_notes. A UI label or metadata alone does not prove hardware state.",
+    "write": "Authorized feature-specific mutation, separately from an OS power policy or unrelated control.",
+    "readback": "Post-write observation; an echoed request does not prove physical effect.",
+    "recovery": "Conditional restoration of verified prior state, preserving later external changes and reporting partial failure.",
+    "automated_tests": "Success, failure, boundary, cancellation and recovery cases; offline tests do not prove hardware.",
+    "installation": "Exact package and payload identity installed on the target.",
+    "loading": "Exact active driver/helper/service identity; disk installation is insufficient.",
+    "physical_acceptance": "Observed device effect on a qualified model/BIOS/EC/OS, including unrelated-state preservation and required lifecycle cases."
+  },
+  "baseline_receipts": {
+    "linux": "docs/verification/deployment-r158.json",
+    "source_tests": "docs/verification/driver-console-hardening.json",
+    "hardware_scope": "GM6PX0X / i9-12900HX / N.1.09MRO07 only for the historical receipts that explicitly qualify it.",
+    "linux_state": "r158 driver and console packages installed; core kernel modules still r106 and new code pending reboot acceptance according to baseline receipt. Not re-read by this documentation task.",
+    "windows_state": "Build/link evidence only; no Windows installation, active driver or physical-control acceptance."
+  },
+  "features": [
+    {
+      "id": "F01",
+      "name": "驱动、EC与设备传输",
+      "coverage_family_numbers": [
+        1
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G11",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "Linux传输与错误传播源码已有；Rust OEM后端在基线未接入。",
+        "启动、解绑、权限、完整ABI及恢复待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F02",
+      "name": "风扇manager选择",
+      "coverage_family_numbers": [
+        2
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G03"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "本机RamFan1p5分支有静态依据；不能推广其他模具。",
+        "继续取得逐型号/固件分支与能力证据。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F03",
+      "name": "风扇档位、全速、安静",
+      "coverage_family_numbers": [
+        3
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G03",
+        "G05"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "Linux内核控制源码已有，Rust基线未接入。",
+        "双扇真实升降速、自动恢复、噪声、负载与所有权待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F04",
+      "name": "CPU/GPU自定义风扇曲线",
+      "coverage_family_numbers": [
+        4
+      ],
+      "issue_group_ids": [
+        "G03",
+        "G05"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "16项表和失败回归已有依据，不等于任意用户曲线接口已实现。",
+        "真实曲线、恢复、卸载及睡眠效果待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F05",
+      "name": "风扇RPM",
+      "coverage_family_numbers": [
+        5
+      ],
+      "issue_group_ids": [
+        "G03",
+        "G10"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "Linux hwmon及只读运行记录已有。",
+        "机械校准、刷新与双通道负载响应待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_real_telemetry_recorded",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F06",
+      "name": "EC、CPU、GPU温度",
+      "coverage_family_numbers": [
+        6
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G10"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "Linux读取真实来源并保留未知状态。",
+        "来源精度、缓存新鲜度、热尖峰及持续热响应待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_real_telemetry_recorded",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F07",
+      "name": "CPU PL1、PL2、PL4、Tau",
+      "coverage_family_numbers": [
+        7
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G05"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "独立55W PL1有本机限定记录，不是完整Rust OEM调节。",
+        "编码、范围、其他限值、所有权及恢复待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F08",
+      "name": "硬件TCC offset",
+      "coverage_family_numbers": [
+        8
+      ],
+      "issue_group_ids": [
+        "G02"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "原厂编码有静态依据。",
+        "合法范围、硬件回读与恢复待验；软件温度目标不是替代。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F09",
+      "name": "GPU功耗、Boost、Whisper、DState、超频",
+      "coverage_family_numbers": [
+        9
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G08",
+        "G10",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "部分原厂和固件研究已有；Rust基线未接入。",
+        "原生API、模式预算、AC/DC、第三方共存及长期稳定性待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F10",
+      "name": "MUX、核显、混合、独显直连",
+      "coverage_family_numbers": [
+        10
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G08",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "Rust基线未接入；部分省电诊断不是MUX资格证明。",
+        "拓扑、重启条件、内外屏与可执行恢复方案待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F11",
+      "name": "Fn锁与实体热键",
+      "coverage_family_numbers": [
+        11
+      ],
+      "issue_group_ids": [
+        "G07",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "Linux接口及事务修复已有；Rust基线未接入。",
+        "全部实体组合键、OSD、重复事件及睡眠恢复待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F12",
+      "name": "RGB、单色、多区、逐键、灯条",
+      "coverage_family_numbers": [
+        12
+      ],
+      "issue_group_ids": [
+        "G06",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "本机单区RGB能力与Linux接口有依据；不能扩为逐键资格。",
+        "控制器、亮度、效果、闲置、交接和实体状态待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F13",
+      "name": "电池充电档位与阈值",
+      "coverage_family_numbers": [
+        13
+      ],
+      "issue_group_ids": [
+        "G04",
+        "G05",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "Linux有充电档位接口；Rust基线未接入。",
+        "真实停充/恢复、阈值、持久化与事件恢复待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F14",
+      "name": "充电优先级",
+      "coverage_family_numbers": [
+        14
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G04"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "OEM 51对应支持函数固定返回false，不能与充电档位混淆。",
+        "保留其他OEM版本支持调查，不作为删除整个功能族的依据。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "pending_other_oem_scope_qualification",
+          "write": "pending_other_oem_scope_qualification",
+          "readback": "pending_other_oem_scope_qualification",
+          "recovery": "pending_other_oem_scope_qualification",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "pending_other_oem_scope_qualification",
+          "write": "pending_other_oem_scope_qualification",
+          "readback": "pending_other_oem_scope_qualification",
+          "recovery": "pending_other_oem_scope_qualification",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F15",
+      "name": "USB关机供电、接电开机",
+      "coverage_family_numbers": [
+        15
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "Linux源码有接口，不证明本机已暴露或获支持。",
+        "完整支持判定、关机供电、冷接电、保持及恢复待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F16",
+      "name": "电池健康、报告、校准",
+      "coverage_family_numbers": [
+        16
+      ],
+      "issue_group_ids": [
+        "G04",
+        "G10",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "通用电池遥测已有，不等于原厂完整流程。",
+        "循环次数、报告、异常告警、校准适用性和用户流程待补。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_real_telemetry_recorded",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "partial_os_battery_telemetry_implemented_not_runtime_verified",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json",
+        "console/crates/core/src/windows.rs"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F17",
+      "name": "睡眠、唤醒、合盖、AC事件",
+      "coverage_family_numbers": [
+        17
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G04",
+        "G05",
+        "G06"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "Linux恢复隔离与离线回归已有。",
+        "Rust事件策略、重探测及实体长期验收待完成。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "r158_kernel_changes_pending_activation_at_baseline",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F18",
+      "name": "亮度、刷新率、色彩、MiniLED、外屏",
+      "coverage_family_numbers": [
+        18
+      ],
+      "issue_group_ids": [
+        "G12",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "双端系统亮度后端已有，不代表刷新率/色彩已实现。",
+        "逐屏能力、面板/native、回读、恢复及实体显示待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_read_only_runtime_recorded",
+          "write": "partial_os_controls_implemented_not_complete_feature",
+          "readback": "partial_os_controls_implemented_not_complete_feature",
+          "recovery": "partial_os_controls_implemented_not_complete_feature",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "partial_os_controls_implemented_not_complete_feature",
+          "write": "partial_os_controls_implemented_not_complete_feature",
+          "readback": "partial_os_controls_implemented_not_complete_feature",
+          "recovery": "partial_os_controls_implemented_not_complete_feature",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F19",
+      "name": "触控板、Win键、小键盘、摄像头",
+      "coverage_family_numbers": [
+        19
+      ],
+      "issue_group_ids": [
+        "G07",
+        "G14",
+        "G13"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "摄像头独立源码WIP未纳入基线部署，其余仍缺完整控制链。",
+        "实际设备选择、关闭后的恢复和无关设备不受影响待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "camera_wip_excluded_from_baseline_deployment",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F20",
+      "name": "飞行模式、Wi-Fi、蓝牙",
+      "coverage_family_numbers": [
+        20
+      ],
+      "issue_group_ids": [
+        "G07",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "原厂入口与OS接口仅为线索。",
+        "实际射频状态、虚拟HID/事件链与Rust控制待完成。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F21",
+      "name": "BLE水冷、水泵、风扇、灯、配件超频",
+      "coverage_family_numbers": [
+        21
+      ],
+      "issue_group_ids": [
+        "G16"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "尚未接入；缺少合格配件不能删除该范围。",
+        "协议、支持判定、失联/重连与实体效果待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F22",
+      "name": "BIOS菜单、OTA、EFI、内存超频",
+      "coverage_family_numbers": [
+        22
+      ],
+      "issue_group_ids": [
+        "G01",
+        "G13",
+        "G15"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "目前只有入口与文件线索，无完整Linux等价实现。",
+        "来源、兼容、恢复和交付待补；不在本索引中授权刷写。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F23",
+      "name": "应用自动绑定方案",
+      "coverage_family_numbers": [
+        23
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "原厂入口与独立TCC功能已有，Rust尚未接入。",
+        "schema、应用匹配、优先级、AC/DC及持久化待实现。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F24",
+      "name": "GUI、CLI、托盘、OSD、IPC、服务安装",
+      "coverage_family_numbers": [
+        24
+      ],
+      "issue_group_ids": [
+        "G11",
+        "G13",
+        "G14",
+        "G15"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "implementation_in_progress",
+      "baseline_notes": [
+        "Linux原生概览与CLI已安装并有只读记录。",
+        "托盘、OSD、完整服务、权限、升级和双端OEM控制待完成。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_read_only_runtime_recorded",
+          "write": "partial_os_controls_implemented_not_complete_feature",
+          "readback": "partial_os_controls_implemented_not_complete_feature",
+          "recovery": "partial_os_controls_implemented_not_complete_feature",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "partial_os_controls_implemented_not_complete_feature",
+          "write": "partial_os_controls_implemented_not_complete_feature",
+          "readback": "partial_os_controls_implemented_not_complete_feature",
+          "recovery": "partial_os_controls_implemented_not_complete_feature",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F25",
+      "name": "仪表盘、磁盘、网络、进程工具",
+      "coverage_family_numbers": [
+        25
+      ],
+      "issue_group_ids": [
+        "G10",
+        "G11",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "当前只有部分真实传感器。",
+        "完整指标、成本与原厂对应应用流程待补，不能默默缩减范围。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "partial_real_telemetry_recorded",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "partial_os_battery_telemetry_implemented_not_runtime_verified",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "partial_offline_coverage",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json",
+        "console/crates/core/src/windows.rs"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F26",
+      "name": "音频响应RGB、音量、静音",
+      "coverage_family_numbers": [
+        26
+      ],
+      "issue_group_ids": [
+        "G06",
+        "G07"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "原厂入口与Linux基础设施是研究线索，不是完整效果。",
+        "音频协议、采集权限、实体灯光与静音事件待验。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F27",
+      "name": "键盘重映射、宏",
+      "coverage_family_numbers": [
+        27
+      ],
+      "issue_group_ids": [
+        "G07",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "内核键事件不等于应用宏。",
+        "配置、应用匹配、快捷键优先级、权限、回滚和UI待实现。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "F28",
+      "name": "AI、OpenVINO、游戏监控",
+      "coverage_family_numbers": [
+        28
+      ],
+      "issue_group_ids": [
+        "G02",
+        "G10",
+        "G14"
+      ],
+      "baseline_status": "incomplete",
+      "current_work_status": "open_not_claimed_complete",
+      "baseline_notes": [
+        "原厂类型/入口存在；不能推定算法已经使用或不适用。",
+        "实际模型、数据、native依赖、策略和效果待调查。"
+      ],
+      "platforms": {
+        "linux": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "baseline_packages_installed_not_feature_acceptance",
+          "loading": "feature_activation_not_verified",
+          "physical_acceptance": "not_accepted_for_complete_feature"
+        },
+        "windows": {
+          "read": "not_integrated_at_baseline",
+          "write": "not_integrated_at_baseline",
+          "readback": "not_integrated_at_baseline",
+          "recovery": "not_integrated_at_baseline",
+          "automated_tests": "feature_complete_suite_pending",
+          "installation": "not_verified",
+          "loading": "not_verified",
+          "physical_acceptance": "not_verified"
+        }
+      },
+      "required_evidence": [
+        "exact_model_bios_ec_and_os",
+        "backend_and_capability_basis",
+        "successful_read_write_and_readback_where_applicable",
+        "failure_boundary_and_conditional_recovery",
+        "automated_regression",
+        "installed_and_loaded_identity",
+        "physical_effect_and_unrelated_state_preservation"
+      ],
+      "evidence_refs": [
+        "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
+        "docs/MECHREVO-CONSOLE.md",
+        "docs/verification/deployment-r158.json"
+      ],
+      "resolved_in_this_project": false
+    }
+  ],
+  "issue_groups": [
+    {
+      "id": "G01",
+      "slug": "identity-capabilities",
+      "name": "身份与能力",
+      "issue_numbers": [
+        7,
+        34,
+        36,
+        39,
+        56,
+        86,
+        104
+      ],
+      "acceptance": [
+        "身份、固件与后端独立判定；未知和冲突不串配。",
+        "缺驱动、权限不足与不支持分开；不静默提供模拟硬件数据。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G02",
+      "slug": "cpu-profiles",
+      "name": "CPU与性能模式",
+      "issue_numbers": [
+        5,
+        19,
+        58,
+        66,
+        73,
+        75,
+        93,
+        105,
+        115
+      ],
+      "acceptance": [
+        "OS电源方案、OEM模式与实际硬件限制分别表达。",
+        "AC/DC、空闲、负载与其他写入者冲突有实际回读；部分失败可恢复。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G03",
+      "slug": "dual-fan-control",
+      "name": "双风扇",
+      "issue_numbers": [
+        88,
+        108
+      ],
+      "acceptance": [
+        "自动、手动、全速和曲线所有权明确。",
+        "独立/同步、升/降速、部分失败与恢复核对真实RPM及固件约束。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G04",
+      "slug": "battery-charge-control",
+      "name": "电池限充",
+      "issue_numbers": [
+        49,
+        62,
+        92,
+        111
+      ],
+      "acceptance": [
+        "档位、阈值和主动放电分开，实际停止/恢复充电。",
+        "重启、AC变化、睡眠保持；不修改性能灯及其他字段。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G05",
+      "slug": "resume-replay",
+      "name": "睡眠恢复",
+      "issue_numbers": [
+        106
+      ],
+      "acceptance": [
+        "唤醒后重探测实际设备和状态，按依赖恢复。",
+        "单项失败不阻断其余功能；重复睡眠后核对负载和风扇。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G06",
+      "slug": "lighting",
+      "name": "灯光",
+      "issue_numbers": [
+        29,
+        69,
+        76,
+        78,
+        82,
+        91,
+        99,
+        103,
+        110
+      ],
+      "acceptance": [
+        "逐控制器验证能力、关灯、亮度、效果与欢迎模式。",
+        "闲置、合盖、AC/DC和退出交接均验证实体状态。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G07",
+      "slug": "fn-keys-indicators",
+      "name": "Fn与状态灯",
+      "issue_numbers": [
+        81,
+        102
+      ],
+      "acceptance": [
+        "逐键映射、指示灯、重复事件及睡眠回归。",
+        "保留上游历史版本及已恢复反馈，不算本项目修复。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G08",
+      "slug": "gpu-mode-overclock",
+      "name": "GPU模式与超频",
+      "issue_numbers": [
+        28,
+        30
+      ],
+      "acceptance": [
+        "拓扑和固件支持明确；禁用功能零写入。",
+        "内屏、HDMI、USB-C、重启和可执行恢复方案均验收。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G09",
+      "slug": "firmware-system-switches",
+      "name": "固件与系统开关",
+      "issue_numbers": [
+        85,
+        94
+      ],
+      "acceptance": [
+        "接电开机通过真实冷接电验收。",
+        "睡眠策略针对当前活动方案正确AC/DC项，写后回读、恢复。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G10",
+      "slug": "telemetry",
+      "name": "遥测",
+      "issue_numbers": [
+        8,
+        52,
+        96,
+        112
+      ],
+      "acceptance": [
+        "每个设备绑定ID、单位、来源、时间和有效性。",
+        "陈旧、无效、休眠与计数器重置不伪造零；外电和充放电分开。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G11",
+      "slug": "background-lifecycle",
+      "name": "后台与生命周期",
+      "issue_numbers": [
+        6,
+        12,
+        68,
+        71,
+        77,
+        98
+      ],
+      "acceptance": [
+        "UI不等待硬件；单查询、超时、退避、取消与退出回收。",
+        "实际测量CPU、内存、子进程、界面延迟与GPU唤醒。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G12",
+      "slug": "display-color",
+      "name": "显示与色彩",
+      "issue_numbers": [
+        44,
+        46,
+        61,
+        79,
+        84,
+        100
+      ],
+      "acceptance": [
+        "逐屏能力、ICC关联、实际校准和增强状态分别表示。",
+        "刷新率不触碰色彩；方案管理、重启/睡眠恢复均可验。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G13",
+      "slug": "recovery-side-effects",
+      "name": "恢复与副作用",
+      "issue_numbers": [
+        35,
+        60,
+        64,
+        67,
+        80
+      ],
+      "acceptance": [
+        "保存原值及所有权，保护用户后续修改与第三方GPU设置。",
+        "配置迁移、官方软件接回和部分恢复失败报告真实结果。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G14",
+      "slug": "ui-shortcuts",
+      "name": "界面与快捷操作",
+      "issue_numbers": [
+        3,
+        20,
+        22,
+        24,
+        45,
+        48,
+        51,
+        57,
+        63,
+        97,
+        107,
+        109,
+        113
+      ],
+      "acceptance": [
+        "多方案、可选模式循环、快捷键、窗口记忆及自定义亮度可持久化。",
+        "字体/不透明选项可读；DPI、小窗、底边场景所有操作可达。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G15",
+      "slug": "distribution-export",
+      "name": "分发与导出",
+      "issue_numbers": [
+        18,
+        27,
+        70,
+        72
+      ],
+      "acceptance": [
+        "Windows/Linux构建可复现；启动、更新和失败恢复状态真实。",
+        "导出处理中文、空格、缺目录、权限与既有目标，返回真实路径。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    },
+    {
+      "id": "G16",
+      "slug": "ble-water-cooler",
+      "name": "BLE水冷",
+      "issue_numbers": [
+        114
+      ],
+      "acceptance": [
+        "水泵和排风扇独立控制，固定水泵策略有明确支持依据。",
+        "阈值附近不反复启停；失联、重连与实体泵状态验收，不猜最低PWM。"
+      ],
+      "project_status": "open",
+      "resolved_in_this_project": false
+    }
+  ],
+  "issues": [
+    {
+      "number": 3,
+      "title": "[Feature]: 多个自定义方案，可以在托盘右键切换",
+      "url": "https://github.com/faintonce/open-revo/issues/3",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义方案可在快捷入口直接切换并隐藏不用的默认方案；持久化且验证切换后的实际状态。"
+    },
+    {
+      "number": 5,
+      "title": "[Bug]: 自定义方案CPU始终跑满限制的功耗",
+      "url": "https://github.com/faintonce/open-revo/issues/5",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义模式的功耗上限不变成强制最低负载；空闲和负载分别核验电源策略，不凭报告猜根因。"
+    },
+    {
+      "number": 6,
+      "title": "[Bug]: 前端页面渲染丢失",
+      "url": "https://github.com/faintonce/open-revo/issues/6",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "快速重复开关托盘窗口不丢失渲染；硬件探测失败时窗口仍可操作并显示错误。"
+    },
+    {
+      "number": 7,
+      "title": "[Bug]: 24年蛟龙16pro 7745 4070 无法使用",
+      "url": "https://github.com/faintonce/open-revo/issues/7",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "正确辨别宝龙达蛟龙16Pro及后端能力；不把其无法使用直接归为与缺驱动死锁相同根因。"
+    },
+    {
+      "number": 8,
+      "title": "[Bug]: 控制台CPU负载和频率与实际数据差异巨大",
+      "url": "https://github.com/faintonce/open-revo/issues/8",
+      "group_id": "G10",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "CPU负载与频率明确采样来源、时间和单位；计数器重置或缺失不产生伪数据。"
+    },
+    {
+      "number": 12,
+      "title": "[Bug/RFC]: 卸载官方控制台后 \\.\\ACPIDriver 缺失导致 UI 主线程死锁（托盘无响应根因分析与纯净自愈方案）",
+      "url": "https://github.com/faintonce/open-revo/issues/12",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "缺失ACPI驱动快速报告不可用，探测不阻塞UI，无无限同步重试；安装驱动不是普通探测的隐式副作用。"
+    },
+    {
+      "number": 18,
+      "title": "[Bug]: 使用机型数据收集专用版一键导出至桌面失败",
+      "url": "https://github.com/faintonce/open-revo/issues/18",
+      "group_id": "G15",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "报告导出支持显式路径及系统桌面位置，覆盖重定向目录、中文空格和权限失败，不伪报成功。"
+    },
+    {
+      "number": 19,
+      "title": "[Bug]:数据采集问题PL4功耗低很多导致CPU性能释放低",
+      "url": "https://github.com/faintonce/open-revo/issues/19",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "PL1/PL2/PL4的单位及范围各有型号证据，回读不混淆字段；不直接采纳报告中的420W为通用值。"
+    },
+    {
+      "number": 20,
+      "title": "[Feature]: 记住窗口显示模式",
+      "url": "https://github.com/faintonce/open-revo/issues/20",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "显示模式持久化并在重新启动后恢复；损坏配置有明确回退且不影响硬件设置。"
+    },
+    {
+      "number": 22,
+      "title": "[Feature]: 换个更好看的图标",
+      "url": "https://github.com/faintonce/open-revo/issues/22",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "图标在托盘、高DPI及深浅背景下可辨认，透明背景与尺寸资源正确。"
+    },
+    {
+      "number": 24,
+      "title": "[Feature]: 性能模式的更多快捷按钮",
+      "url": "https://github.com/faintonce/open-revo/issues/24",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "用户自定义方案可直接选择并保持顺序；无效或不支持方案显示原因而非假成功。"
+    },
+    {
+      "number": 27,
+      "title": "[Bug]: README.md 开发版本部署 ISSUE",
+      "url": "https://github.com/faintonce/open-revo/issues/27",
+      "group_id": "G15",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "文档使用真实仓库和存在的目录；Windows/Linux从干净检出按记录命令构建并验证。"
+    },
+    {
+      "number": 28,
+      "title": "[Feature]: 为40系机型增加狂暴模式显卡OC开关",
+      "url": "https://github.com/faintonce/open-revo/issues/28",
+      "group_id": "G08",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "GPU超频能力及范围按具体型号验证；未启用时零写入，退出模式按已记录原值恢复。"
+    },
+    {
+      "number": 29,
+      "title": "[Bug]: 电源重新断开后重新插入键盘灯光自动切换",
+      "url": "https://github.com/faintonce/open-revo/issues/29",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "电源状态变化保留明确选择的灯效；只在策略显式要求时切换，并回读实际效果。"
+    },
+    {
+      "number": 30,
+      "title": "[Bug]: 30系机械革命切换核显模式黑屏，无法进入Windows/bios",
+      "url": "https://github.com/faintonce/open-revo/issues/30",
+      "group_id": "G08",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "未验证的GPU/MUX切换在精确型号能力校验前拒绝；保留恢复依据，不能以模拟测试证明黑屏根因已修复。"
+    },
+    {
+      "number": 34,
+      "title": "[Bug]: 无界15X 8845HS 只能切换办公/均衡模式，Fn等功能映射异常",
+      "url": "https://github.com/faintonce/open-revo/issues/34",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "无界15XA的背光档位、灯区、Fn及温度字段按独立证据建模；PD模式限制明确来源，不猜字段单位。"
+    },
+    {
+      "number": 35,
+      "title": "[Bug]: 无法恢复官方控制台",
+      "url": "https://github.com/faintonce/open-revo/issues/35",
+      "group_id": "G13",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "保存接管前服务及配置状态；恢复官方控制台逐步验证，失败保留恢复材料和准确原因。"
+    },
+    {
+      "number": 36,
+      "title": "[Docs]: 文档中明确可支持的型号和功能边界",
+      "url": "https://github.com/faintonce/open-revo/issues/36",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "支持清单按型号、功能、操作系统及验证级别记录，未验证或不支持功能可见且不可误操作。"
+    },
+    {
+      "number": 39,
+      "title": "[Bug]: 无界14X 8845HS 功能异常",
+      "url": "https://github.com/faintonce/open-revo/issues/39",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "无界14XA按准确型号提供能力；CPU/GPU读数、风扇通道、功耗支持与界面型号分别验证。"
+    },
+    {
+      "number": 44,
+      "title": "[Bug]: miniled控光算法导致的大面积光晕",
+      "url": "https://github.com/faintonce/open-revo/issues/44",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "MiniLED算法与面板能力分开验证，以相同测试图对比实际光晕；未验证面板不写控制参数。"
+    },
+    {
+      "number": 45,
+      "title": "[Feature]: 选择性禁用 自定义 调度模式",
+      "url": "https://github.com/faintonce/open-revo/issues/45",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "可从模式循环排除不支持或未启用的自定义方案；按键循环不重新启用已排除方案。"
+    },
+    {
+      "number": 46,
+      "title": "[Bug] 校色状态“未校准”的判断与 Windows 系统色彩管理不明确",
+      "url": "https://github.com/faintonce/open-revo/issues/46",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "分别显示配置文件安装、显示器关联、曲线加载和本项目开关状态，提供由系统管理及恢复路径。"
+    },
+    {
+      "number": 48,
+      "title": "[Feature]: 全屏模式CUP信息显示不完整+缺少快捷开关+海岸灯条不工作",
+      "url": "https://github.com/faintonce/open-revo/issues/48",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "长CPU名称不截断；触摸板切换键与触摸板状态独立，海岸灯条先确认硬件连接与能力。"
+    },
+    {
+      "number": 49,
+      "title": "[Feature]: 锁定充电上限数额回退",
+      "url": "https://github.com/faintonce/open-revo/issues/49",
+      "group_id": "G04",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "充电上限与主动放电能力分开；不支持主动放电时明确说明，不将阈值设置伪装成放电功能。"
+    },
+    {
+      "number": 51,
+      "title": "[Feature]: 性能监控 悬浮面板",
+      "url": "https://github.com/faintonce/open-revo/issues/51",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "性能面板快捷键可配置并处理冲突；指标绑定对应设备且采样不可用时明确显示。"
+    },
+    {
+      "number": 52,
+      "title": "[Bug]: 显卡功耗读取异常",
+      "url": "https://github.com/faintonce/open-revo/issues/52",
+      "group_id": "G10",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "按设备与来源验证GPU功耗单位、可用性和有效边界；异常值不冒充真实功耗，NVAPI/NVML不串来源。"
+    },
+    {
+      "number": 56,
+      "title": "[Bug]: 翼龙15Pro2024是双显三模被识别为双显双模",
+      "url": "https://github.com/faintonce/open-revo/issues/56",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "显卡模式列表来自精确型号的已验证能力；未验证iGPU模式不开放危险切换。"
+    },
+    {
+      "number": 57,
+      "title": "[Feature]: 监控悬浮窗 和 快捷键",
+      "url": "https://github.com/faintonce/open-revo/issues/57",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "面板显示带单位的CPU/GPU即时功耗，快捷键可配置；不可用读数不显示零。"
+    },
+    {
+      "number": 58,
+      "title": "[bug]: 狂暴模式与官方狂暴模式性能释放差异",
+      "url": "https://github.com/faintonce/open-revo/issues/58",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "对应极光Pro在相同供电、散热与负载下比较官方和本项目模式；记录实际限制与回读，不猜功耗值。"
+    },
+    {
+      "number": 60,
+      "title": "[feature]: 显卡设置默认覆盖msi afterbunner。能否默认不开启显卡设置，尤其是在应用未开启任何显卡设置的条件下",
+      "url": "https://github.com/faintonce/open-revo/issues/60",
+      "group_id": "G13",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "关闭GPU调节时启动及模式切换均不写GPU参数；第三方调节保持不变，以后端命令记录核验。"
+    },
+    {
+      "number": 61,
+      "title": "[Feature]: 屏幕色彩增强的管理功能",
+      "url": "https://github.com/faintonce/open-revo/issues/61",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "色彩方案支持导入导出、删除和重命名，非法文件和同名冲突安全失败且保留现有方案。"
+    },
+    {
+      "number": 62,
+      "title": "[Bug]: 更新open-revo-v0.8.6.2后充电上限功能失效与存在文字显示bug",
+      "url": "https://github.com/faintonce/open-revo/issues/62",
+      "group_id": "G04",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "重启后重新验证实际充电阈值，配置迁移与失败恢复可测试；乱码和充电问题分别跟踪历史反馈。"
+    },
+    {
+      "number": 63,
+      "title": "[Feature]: 电池循环次数.电源推荐方案及非透明UI",
+      "url": "https://github.com/faintonce/open-revo/issues/63",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "循环次数缺失显示不可用，支持可读非透明外观；离电策略与Windows电源模式关系明确。"
+    },
+    {
+      "number": 64,
+      "title": "[Bug]: 24款翼龙15pro官方控制台无法重新接管屏幕校色和电池充电上限",
+      "url": "https://github.com/faintonce/open-revo/issues/64",
+      "group_id": "G13",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "接管前保留颜色关联和充电设置；恢复后由官方控制台接管，并验证关联及充电状态。"
+    },
+    {
+      "number": 66,
+      "title": "[Bug]: 高性能电源模式切换异常",
+      "url": "https://github.com/faintonce/open-revo/issues/66",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "自定义模式的Windows电源策略与用户选择和提示一致；逐模式测试，关闭功能时不改电源方案。"
+    },
+    {
+      "number": 67,
+      "title": "[Bug]: 锁充电上限、屏幕色彩切换、A面logo灯关闭均失效",
+      "url": "https://github.com/faintonce/open-revo/issues/67",
+      "group_id": "G13",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "分别核验PD在线、充电阈值、校色及Logo能力；逐项回读，不用一个成功标志覆盖多项失败。"
+    },
+    {
+      "number": 68,
+      "title": "[Feature]: 后台webview占用资源太多了，希望后台时能自动杀掉webview进程",
+      "url": "https://github.com/faintonce/open-revo/issues/68",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "隐藏界面降低渲染和采样开销；恢复窗口仍能获取最新状态，测量后台内存与CPU。"
+    },
+    {
+      "number": 69,
+      "title": "[BUG]：灯光问题",
+      "url": "https://github.com/faintonce/open-revo/issues/69",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "欢迎模式、Logo颜色及海岸灯带效果分通道验证，保存与实际回读一致，不假定灯区通用。"
+    },
+    {
+      "number": 70,
+      "title": "[Feature]: 增加更新功能",
+      "url": "https://github.com/faintonce/open-revo/issues/70",
+      "group_id": "G15",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "更新检查区分网络错误、无更新和新版本；下载校验与原子替换可恢复，版本比较不混淆压缩包扩展名。"
+    },
+    {
+      "number": 71,
+      "title": "[Bug]: 托盘退出后无可见主进程，但替换新版文件后双击无法直接启动",
+      "url": "https://github.com/faintonce/open-revo/issues/71",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "退出取消后台任务并释放句柄及单实例锁；替换文件后可直接启动，不残留阻塞子进程。"
+    },
+    {
+      "number": 72,
+      "title": "[Bug]: 无法开机自启",
+      "url": "https://github.com/faintonce/open-revo/issues/72",
+      "group_id": "G15",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "自启动设置后读取真实注册状态，重启登录核验；权限或任务创建失败明确显示。"
+    },
+    {
+      "number": 73,
+      "title": "[Bug]: 调整为均衡/狂暴/自定义后，CPU异常高温高频",
+      "url": "https://github.com/faintonce/open-revo/issues/73",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "空闲与负载分别验证各性能模式的系统电源策略及频率；不将报告中未复现的根因当结论。"
+    },
+    {
+      "number": 75,
+      "title": "[Bug]: Intel 平台 PPM 开启时，混合显卡模式最高睿频被限制为小核频率",
+      "url": "https://github.com/faintonce/open-revo/issues/75",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "Intel大小核睿频上限分别读取并明确单位；PPM在混合和独显模式下不误用小核上限。"
+    },
+    {
+      "number": 76,
+      "title": "[Bug]: RGB灯光欢迎模式设置不了",
+      "url": "https://github.com/faintonce/open-revo/issues/76",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "欢迎灯效保存、预览与重启后的实际效果一致；保存失败不得保留成功状态。"
+    },
+    {
+      "number": 77,
+      "title": "[Feature]: 重构后台查询机制并尽快开放源码",
+      "url": "https://github.com/faintonce/open-revo/issues/77",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "后台查询使用适合常驻的API，单提供者最多一个查询，失败退避并可取消，避免高频外部进程。"
+    },
+    {
+      "number": 78,
+      "title": "[Bug]: 高负载时键盘灯光闪烁",
+      "url": "https://github.com/faintonce/open-revo/issues/78",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "高负载下灯光更新不竞争硬件访问且不意外熄灭；以压力下命令时序与实机录像核验。"
+    },
+    {
+      "number": 79,
+      "title": "[Bug]: 切换屏幕刷新率会自动打开屏幕色彩校正",
+      "url": "https://github.com/faintonce/open-revo/issues/79",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "刷新率修改不触发未启用的校色操作；校色开关与实际状态一致，单项变更可回归。"
+    },
+    {
+      "number": 80,
+      "title": "[Feature]: 使用软件后出现异常问题，如何退回？",
+      "url": "https://github.com/faintonce/open-revo/issues/80",
+      "group_id": "G13",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "提供变更记录与可恢复原值；恢复结果逐项回读，未知或恢复失败不得声称完全退回。"
+    },
+    {
+      "number": 81,
+      "title": "[Bug]: 状态灯不对，Fn+F5无法切换触控板",
+      "url": "https://github.com/faintonce/open-revo/issues/81",
+      "group_id": "G07",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "26款蛟龙16Pro的性能灯及Fn触摸板映射按型号验证，操作失败有可见状态。"
+    },
+    {
+      "number": 82,
+      "title": "[Bug]: 键盘关闭背光闪烁情况",
+      "url": "https://github.com/faintonce/open-revo/issues/82",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "关闭背光后不被后台刷新意外重开；记录命令序列并在耀世16Pro反复观察。"
+    },
+    {
+      "number": 84,
+      "title": "[Bug]:重启或者休眠回来后屏幕色彩校正就会失效，但是app里开关还是处于打开状态",
+      "url": "https://github.com/faintonce/open-revo/issues/84",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "重启和睡眠后区分用户意图与实际校色状态；恢复失败明确显示而非只保留打开开关。"
+    },
+    {
+      "number": 85,
+      "title": "[Bug]: 来电自动开机失效",
+      "url": "https://github.com/faintonce/open-revo/issues/85",
+      "group_id": "G09",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "AC自动开机写前保留可恢复原值并回读；恢复官方控制后状态可核验，不猜测EC位。"
+    },
+    {
+      "number": 86,
+      "title": "[Bug]: 无界14Pro会被辨识成蛟龙16Pro",
+      "url": "https://github.com/faintonce/open-revo/issues/86",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "无界14Pro7840HS不匹配蛟龙16Pro；歧义匹配拒绝写入，展示识别依据与能力。"
+    },
+    {
+      "number": 88,
+      "title": "[Feature]: 添加风扇转速同步功能",
+      "url": "https://github.com/faintonce/open-revo/issues/88",
+      "group_id": "G03",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "风扇同步模式有明确曲线选择及双通道输出；独立与同步切换不遗留旧目标。"
+    },
+    {
+      "number": 91,
+      "title": "[Bug]: 键盘灯光不熄灭",
+      "url": "https://github.com/faintonce/open-revo/issues/91",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "闲置超时后背光真实熄灭且活动后恢复；在耀世16Pro与Windows10实机验证。"
+    },
+    {
+      "number": 92,
+      "title": "[Bug]:蛟龙16pro 锁定充电上限导致性能模式灯效错乱",
+      "url": "https://github.com/faintonce/open-revo/issues/92",
+      "group_id": "G04",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "充电阈值操作不生成性能指示灯写入；对应蛟龙16Pro核对模式与灯色映射。"
+    },
+    {
+      "number": 93,
+      "title": "[Bug]: 24款翼龙15pro性能模式切换无效",
+      "url": "https://github.com/faintonce/open-revo/issues/93",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "模式切换后读取实际硬件状态；对应翼龙15Pro验证各档负载表现，不以UI标签代替生效。"
+    },
+    {
+      "number": 94,
+      "title": "[Bug]: 睡眠守护中忽略系统所需策略的开关貌似无效",
+      "url": "https://github.com/faintonce/open-revo/issues/94",
+      "group_id": "G09",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "对当前电源计划的AC/DC目标项进行读改回读，开关语义一致，失败不显示已生效。"
+    },
+    {
+      "number": 96,
+      "title": "[Bug]: 用100W PD充电时电源管理界面显示正在使用电池供电",
+      "url": "https://github.com/faintonce/open-revo/issues/96",
+      "group_id": "G10",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "外部电源在线与电池充放电分开报告；100W PD证据冲突显示未知，不直接误报仅电池供电。"
+    },
+    {
+      "number": 97,
+      "title": "[Feature]: 希望添加快捷键",
+      "url": "https://github.com/faintonce/open-revo/issues/97",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "可绑定模式及面板快捷键，冲突和注册失败明确显示；重启后配置保留。"
+    },
+    {
+      "number": 98,
+      "title": "[Bug]: cpu占用率异常",
+      "url": "https://github.com/faintonce/open-revo/issues/98",
+      "group_id": "G11",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "后台降低采样，避免无必要唤醒独显；记录CPU/内存和GPU活动并验证界面切换响应。"
+    },
+    {
+      "number": 99,
+      "title": "键盘灯光控制问题",
+      "url": "https://github.com/faintonce/open-revo/issues/99",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "灯效设置立即生效且亮度调整不是必要条件；拔插电源不意外重置用户灯效，逐效果实机验收。"
+    },
+    {
+      "number": 100,
+      "title": "[Bug]: 校色文件异常",
+      "url": "https://github.com/faintonce/open-revo/issues/100",
+      "group_id": "G12",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "校色变更可恢复，视频及桌面显示分别核对；没有对应屏幕证据不提供假定校色文件。"
+    },
+    {
+      "number": 102,
+      "title": "[Bug]: Fn 功能键错位（v0.9.1 功能已正常）",
+      "url": "https://github.com/faintonce/open-revo/issues/102",
+      "group_id": "G07",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "保留无界14XA逐项Fn键映射回归；区分0.8.8/0.8.9历史报告与上游0.9.1已恢复反馈。"
+    },
+    {
+      "number": 103,
+      "title": "[Bug]: 耀世16pro没有A面灯效设置",
+      "url": "https://github.com/faintonce/open-revo/issues/103",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "耀世16Pro2024的A面灯能力来自独立证据；有支持则可设置并回读，无支持明确说明。"
+    },
+    {
+      "number": 104,
+      "title": "[Bug]: MECHREVO 深海泰坦 X3-S (GK7MR0R, 20系/RTX2060) 无法匹配任何机型清单，永久落入 MockHAL (SAFE MOCK)",
+      "url": "https://github.com/faintonce/open-revo/issues/104",
+      "group_id": "G01",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "明确GK7MR0R的匹配和后端探测原因；没有通路时显示不可用而非真实模拟值，不按前缀推断写协议。"
+    },
+    {
+      "number": 105,
+      "title": "[Feature]:解除离电限制开启下拔电后可自定义模式切换的建议",
+      "url": "https://github.com/faintonce/open-revo/issues/105",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "允许显式配置离电后的性能模式；AC断开和恢复按策略切换，未知供电状态不盲目提高功耗。"
+    },
+    {
+      "number": 106,
+      "title": "[Bug]: 耀世15pro i9-13900hx4060睡眠唤醒后cpu/gpu功率异常",
+      "url": "https://github.com/faintonce/open-revo/issues/106",
+      "group_id": "G05",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "睡眠唤醒后重新探测能力和真实功耗状态；恢复失败可见，在对应耀世15Pro重复睡眠负载验收。"
+    },
+    {
+      "number": 107,
+      "title": "[Bug]: 迷你窗口布局有问题 下面的两个按钮显示不出来",
+      "url": "https://github.com/faintonce/open-revo/issues/107",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "小屏、DPI变化和屏幕底边场景下内容可滚动，底部按钮可见可操作；溢出依据实际视口。"
+    },
+    {
+      "number": 108,
+      "title": "[Bug]: 24蛟龙16pro风扇控制异常",
+      "url": "https://github.com/faintonce/open-revo/issues/108",
+      "group_id": "G03",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "风扇曲线及手动升降均有回读与状态依据；验证CPU/GPU双通道，明确固件保护下限。"
+    },
+    {
+      "number": 109,
+      "title": "[Feature]: UI字体有点显小了",
+      "url": "https://github.com/faintonce/open-revo/issues/109",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "支持可读字体缩放；在27寸2K与不同DPI下核对文字、按钮和布局。"
+    },
+    {
+      "number": 110,
+      "title": "[Bug]: 无法熄灯",
+      "url": "https://github.com/faintonce/open-revo/issues/110",
+      "group_id": "G06",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "闲置超时与合盖事件正确关闭背光，活动恢复遵循原设定；在耀世16Ultra实机验收。"
+    },
+    {
+      "number": 111,
+      "title": "[Bug]: 机械革命钛钽plus 11800h 3060 所有版本充电上限锁不住",
+      "url": "https://github.com/faintonce/open-revo/issues/111",
+      "group_id": "G04",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "钛钽PLUS对应型号明确充电阈值支持状态，写后回读并验证真实充电停止；不承诺修复非控制台掉电。"
+    },
+    {
+      "number": 112,
+      "title": "[Bug]: 翼龙15pro 8845hs+4070版本状态总览显示的gpu状态功耗不准",
+      "url": "https://github.com/faintonce/open-revo/issues/112",
+      "group_id": "G10",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "核显与独显以稳定设备ID分别展示功耗等指标；枚举顺序变化不串卡，不混合来源。"
+    },
+    {
+      "number": 113,
+      "title": "[Feature]: 屏幕亮度自定义预设",
+      "url": "https://github.com/faintonce/open-revo/issues/113",
+      "group_id": "G14",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "支持保存和重新应用自定义亮度；校验范围，保存失败不得显示成功。"
+    },
+    {
+      "number": 114,
+      "title": "[Feature]: 建议把水冷的智能控制调整为不关闭水泵",
+      "url": "https://github.com/faintonce/open-revo/issues/114",
+      "group_id": "G16",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "提供水泵固定、风扇独立调节策略；温度在阈值附近波动时不反复启停，实机核对水泵状态。"
+    },
+    {
+      "number": 115,
+      "title": "[Bug]: 机械革命17kscpu功耗锁不住80w只有65w",
+      "url": "https://github.com/faintonce/open-revo/issues/115",
+      "group_id": "G02",
+      "source_status": "upstream_report_unverified_in_this_project",
+      "project_status": "open",
+      "resolved_in_this_project": false,
+      "acceptance": "报告目标功耗、实际回读和限制原因；在17KS对应硬件验证80W请求的支持边界，不伪报已锁定。"
+    }
+  ],
+  "index_validation": {
+    "method": "Constructed group mapping from explicit requirements; asserted exact set equality with data/openrevo-issues.json, unique issue numbers, one group per issue, 28 contiguous feature IDs and valid feature group references.",
+    "source_issue_count": 77,
+    "group_count": 16,
+    "feature_family_count": 28,
+    "missing_issue_numbers": [],
+    "extra_issue_numbers": [],
+    "duplicate_issue_numbers": []
+  },
+  "implementation_order": [
+    {
+      "priority": 1,
+      "name": "Existing verified Linux driver interfaces",
+      "deliverables": [
+        "Discover actual capabilities and exposed nodes without adding model white-list guesses.",
+        "Wire charging profiles, supported lighting/Fn controls and qualified optional switches through shared CLI/GUI plans and restricted helper.",
+        "Verify writes, readback, permission failures, stale plans and conditional recovery."
+      ]
+    },
+    {
+      "priority": 2,
+      "name": "OEM power and fan transactions",
+      "deliverables": [
+        "Obtain model-specific range and ownership evidence.",
+        "Complete dual-channel, curve, partial-failure and event restoration tests.",
+        "Verify real RPM, noise, thermals and load on the exact active driver."
+      ]
+    },
+    {
+      "priority": 3,
+      "name": "Telemetry and resource behavior",
+      "deliverables": [
+        "Separate physical GPUs, cached/unknown states and power-supply evidence.",
+        "Measure idle/background CPU, memory, child processes, UI latency and GPU wake behavior."
+      ]
+    },
+    {
+      "priority": 4,
+      "name": "Daily control surface",
+      "deliverables": [
+        "Tray, OSD, shortcuts, AC/DC memory and application profiles.",
+        "Display and peripheral controls with per-device readback/recovery."
+      ]
+    },
+    {
+      "priority": 5,
+      "name": "Windows parity backend",
+      "deliverables": [
+        "Validate independent driver binding, ABI, permissions and real hardware read/write/recovery.",
+        "Reuse behavior contracts; do not substitute Linux acceptance or Windows compilation."
+      ]
+    },
+    {
+      "priority": 6,
+      "name": "Accessories and firmware",
+      "deliverables": [
+        "Qualify exact BLE/lighting/firmware protocols and compatible hardware.",
+        "Keep unqualified or unavailable accessories and research-only features open in the scope."
+      ]
+    }
+  ],
+  "verified_interpretation_limits": [
+    {
+      "issues": [
+        115
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/115",
+      "finding": "Reported 80W request versus 65W result; no established MSR periodic rewrite or EC timeout cause."
+    },
+    {
+      "issues": [
+        108
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/108",
+      "finding": "Reported ineffective fan curves/lowering; missing latch is not an independently confirmed cause."
+    },
+    {
+      "issues": [
+        106
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/106",
+      "finding": "Reported resume anomaly; all-register reset and a fixed 1.5-second replay delay are not established."
+    },
+    {
+      "issues": [
+        114
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/114",
+      "finding": "Fixed-pump policy is requested; no universally safe minimum PWM is provided."
+    },
+    {
+      "issues": [
+        102
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/102#issuecomment-6230788005",
+      "finding": "Author reports Fn mapping normal in upstream v0.9.1. This is upstream feedback, not a fix or physical acceptance by this project."
+    },
+    {
+      "issues": [
+        62
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/62#issuecomment-5964945722",
+      "finding": "Later feedback reports garbling solved and charge limits mostly working but possibly lost after reboot; split these acceptance items."
+    },
+    {
+      "issues": [
+        6,
+        7,
+        12
+      ],
+      "url": "https://github.com/faintonce/open-revo/issues/12#issuecomment-5827581187",
+      "finding": "Maintainer relates #6 to the startup issue but attributes #7 to Baolongda identification; do not collapse them into one confirmed cause."
+    },
+    {
+      "issues": [
+        30,
+        104
+      ],
+      "urls": [
+        "https://github.com/faintonce/open-revo/issues/30",
+        "https://github.com/faintonce/open-revo/issues/104"
+      ],
+      "finding": "User-reported black-screen and reverse-engineering hypotheses require independent qualification; not hardware protocol authorization."
+    }
+  ],
+  "update_policy": [
+    "Never infer a completion percentage from static analysis, test counts or installed packages.",
+    "Missing accessories or protocols remain open qualification tasks, not silently removed scope.",
+    "Record implementation, tests, installation, active loading and physical acceptance separately for each platform.",
+    "Do not mark an upstream issue resolved solely because this architecture avoids one failure class.",
+    "Attach immutable source and evidence references when changing state; retain historical receipts instead of rewriting them."
+  ]
+}

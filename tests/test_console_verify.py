@@ -38,6 +38,10 @@ class ConsoleVerificationTests(unittest.TestCase):
             font.write_bytes(b"fixture font: " + font.name.encode())
         self.font_license = self.fonts[0].parent / "OFL.txt"
         self.font_license.write_text("fixture font license\n")
+        self.resources = self.root / "console/resources"
+        self.resources.mkdir()
+        self.oem_policy = self.resources / "org.mechrevo.console.oem.policy"
+        self.oem_policy.write_text('<policyconfig><action id="org.mechrevo.console.oem"/></policyconfig>\n')
         self.calls = []
         self.windows_installed = True
         self.failure = None
@@ -86,8 +90,8 @@ class ConsoleVerificationTests(unittest.TestCase):
         self.assertEqual((result["exit_code"], result["outcome"], result["checks_executed"]), (0, "passed", 4))
         self.assertTrue(result["source_unchanged"])
         self.assertEqual(result["source_before"], result["source_after"])
-        self.assertEqual(len(result["source_before"]["files"]), 9)
-        for asset in (*self.fonts, self.font_license):
+        self.assertEqual(len(result["source_before"]["files"]), 10)
+        for asset in (*self.fonts, self.font_license, self.oem_policy):
             self.assertIn(str(asset.relative_to(self.root)), result["source_before"]["files"])
         self.assertEqual({row["name"] for row in result["commands"]}, {"fmt", "test", "clippy", "windows"})
         for row in result["commands"] + result["prerequisites"]:
@@ -234,6 +238,73 @@ class ConsoleVerificationTests(unittest.TestCase):
                     self.assertIn(relative, result["incomplete_reasons"][0])
                 finally:
                     font.write_bytes(original)
+
+    def test_packaged_policy_and_future_nested_resources_are_hashed(self):
+        nested = self.resources / "future/backend"
+        nested.mkdir(parents=True)
+        resource = nested / "protocol.conf"
+        resource.write_text("fixture protocol resource\n")
+        result = self.run_verifier()
+        self.assertEqual((result["exit_code"], result["checks_executed"]), (0, 4))
+        for path in (self.oem_policy, resource):
+            self.assertIn(str(path.relative_to(self.root)), result["source_before"]["files"])
+        self.assertEqual(result["source_before"], result["source_after"])
+
+    def test_resource_edits_additions_and_removals_make_run_incomplete(self):
+        extra = self.resources / "future-resource.txt"
+        changes = (lambda: self.oem_policy.write_text(self.oem_policy.read_text() + "<!-- changed -->\n"),
+                   lambda: extra.write_text("new packaged resource\n"),
+                   lambda: extra.unlink())
+        for mutate in changes:
+            with self.subTest(mutate=mutate):
+                self.mutate = mutate
+                result = self.run_verifier()
+                self.assertEqual(result["exit_code"], 2)
+                self.assertFalse(result["source_unchanged"])
+                self.assertNotEqual(result["source_before"]["sha256"], result["source_after"]["sha256"])
+                self.assertTrue(all(row["status"] == "passed" for row in result["commands"]))
+
+    def test_missing_required_oem_policy_is_named_and_blocks_checks(self):
+        self.oem_policy.unlink()
+        result = self.run_verifier()
+        relative = str(self.oem_policy.relative_to(self.root))
+        self.assertEqual((result["exit_code"], result["checks_executed"]), (2, 0))
+        self.assertIn(relative, result["source_before"]["missing"])
+        self.assertIn(relative, result["incomplete_reasons"][0])
+
+    def test_symlink_policy_is_rejected_without_running_checks(self):
+        original = self.directory / "actual.policy"
+        original.write_bytes(self.oem_policy.read_bytes())
+        self.oem_policy.unlink()
+        self.oem_policy.symlink_to(original)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source input", result["fatal_error"])
+        self.assertEqual(self.calls, [])
+
+    def test_symlink_nested_resource_directory_is_rejected(self):
+        (self.resources / "linked-resources").symlink_to(self.directory, target_is_directory=True)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source input", result["fatal_error"])
+        self.assertEqual(self.calls, [])
+
+    def test_symlink_resources_root_is_rejected(self):
+        original = self.directory / "actual-resources"
+        self.resources.rename(original)
+        self.resources.symlink_to(original, target_is_directory=True)
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("Symlink source directory", result["fatal_error"])
+        self.assertEqual(self.calls, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO source contract")
+    def test_nonregular_resource_is_rejected_before_opening(self):
+        os.mkfifo(self.resources / "blocked-input")
+        result = self.run_verifier()
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("not a regular file", result["fatal_error"])
+        self.assertEqual(self.calls, [])
 
     def test_symlink_gui_asset_and_asset_directory_are_rejected(self):
         original = self.directory / "actual-font.ttf"

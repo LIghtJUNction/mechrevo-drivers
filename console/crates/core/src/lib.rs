@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 pub mod brightness;
 pub mod command;
+pub mod oem;
+pub mod privilege;
 pub use brightness::{BrightnessApplyResult, BrightnessDevice, BrightnessPlan};
+pub use oem::{OemApplyResult, OemControl, OemControlKind, OemDomain, OemPlan, OemValue};
 #[cfg(any(target_os = "linux", test))]
 mod linux;
 pub mod registry;
@@ -43,7 +46,7 @@ impl Identity {
                 let v = v.to_lowercase();
                 v.contains("mechrevo") || v.contains("机械革命")
             });
-        self.support_note = "DMI brand detection is identity only, not OEM hardware support. GM6PX0X BIOS evidence is partial; no proprietary control is enabled.".into();
+        self.support_note = "DMI brand detection is identity only, not OEM hardware support. Individual controls require an exposed, bound driver interface; model-wide compatibility is not inferred.".into();
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +91,8 @@ pub struct Snapshot {
     pub power_policy: PowerPolicy,
     pub diagnostics: Vec<Diagnostic>,
     pub brightness: Vec<BrightnessDevice>,
+    #[serde(default)]
+    pub oem_controls: Vec<OemControl>,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -286,6 +291,24 @@ impl Service {
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let mut snapshot = unsupported_snapshot();
         snapshot.brightness = self.brightness_devices();
+        snapshot.oem_controls = self.oem_controls();
+        for control in &snapshot.oem_controls {
+            snapshot.capabilities.push(Capability {
+                id: control.id.clone(),
+                label: control.label.clone(),
+                status: control.status.clone(),
+                reason: control
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| control.readback_scope.clone()),
+                source: Some(control.source.clone()),
+                options: match &control.domain {
+                    OemDomain::Boolean => vec!["off".into(), "on".into()],
+                    OemDomain::Choices(choices) => choices.clone(),
+                    _ => vec![],
+                },
+            });
+        }
         let available = snapshot
             .brightness
             .iter()
@@ -308,6 +331,18 @@ impl Service {
         plan: &BrightnessPlan,
     ) -> Result<BrightnessApplyResult, ControlError> {
         brightness::apply(&self.linux_root, plan)
+    }
+    /// Discover only controls actually exposed by the loaded platform driver.
+    pub fn oem_controls(&self) -> Vec<OemControl> {
+        oem::controls(&self.linux_root)
+    }
+    /// Read-only preview; a readable control can require separate authorization.
+    pub fn plan_oem(&self, id: &str, target: OemValue) -> Result<OemPlan, ControlError> {
+        oem::plan(&self.linux_root, id, target)
+    }
+    /// Direct backend operation. This method never launches a privileged helper.
+    pub fn apply_oem(&self, plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
+        oem::apply(&self.linux_root, plan)
     }
     pub fn capabilities(&self) -> Vec<Capability> {
         self.snapshot().capabilities
@@ -402,7 +437,7 @@ where
     }
 }
 fn proprietary_capabilities() -> Vec<Capability> {
-    [("oem_performance","OEM performance mode"),("fan_control","OEM fan control"),("gpu_control","GPU tuning"),("mux_control","Display MUX"),("battery_charge_limit","Battery charge limit")].into_iter().map(|(id,label)|Capability{id:id.into(),label:label.into(),status:CapabilityStatus::Unsupported,reason:"No verified model-specific hardware backend; no EC, GPU, fan or MUX writes are permitted.".into(),source:None,options:vec![]}).collect()
+    [("oem_performance","OEM performance mode"),("fan_control","OEM fan control"),("gpu_control","GPU tuning"),("mux_control","Display MUX"),("battery_charge_limit","Battery charge limit")].into_iter().map(|(id,label)|Capability{id:id.into(),label:label.into(),status:CapabilityStatus::Unsupported,reason:"No verified backend for this feature. Other driver-exposed controls, including charging mode rather than charge thresholds, are reported separately.".into(),source:None,options:vec![]}).collect()
 }
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn unsupported_snapshot() -> Snapshot {
@@ -413,6 +448,7 @@ fn unsupported_snapshot() -> Snapshot {
         capabilities: proprietary_capabilities(),
         power_policy: PowerPolicy::default(),
         brightness: vec![],
+        oem_controls: vec![],
         diagnostics: vec![Diagnostic {
             code: "unsupported_platform".into(),
             message: "Only Windows and Linux backends are implemented".into(),
@@ -490,6 +526,7 @@ mod tests {
             },
             diagnostics: vec![],
             brightness: vec![],
+            oem_controls: vec![],
         };
         assert!(profile_available(&snapshot, PowerProfile::Performance));
         assert!(!profile_available(&snapshot, PowerProfile::PowerSaver));

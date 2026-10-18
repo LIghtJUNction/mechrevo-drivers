@@ -1,4 +1,7 @@
-use mechrevo_console_core::{registry, ControlError, PowerProfile, Service, Snapshot};
+use mechrevo_console_core::{
+    registry, ControlError, OemControl, OemControlKind, OemDomain, OemValue, PowerProfile, Service,
+    Snapshot,
+};
 use serde_json::{json, Value};
 #[cfg(any(target_os = "linux", test))]
 use std::io::Read;
@@ -10,7 +13,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
+const HELP:&str="mechrevo-console 0.1.0 — Windows/Linux OS controls and evidence\n\nUsage:\n  mechrevo-console status [--json]\n  mechrevo-console capabilities\n  mechrevo-console models [query]\n  mechrevo-console profile <balanced|performance|power-saver> [--dry-run]\n  mechrevo-console brightness [percent] [--device ID] [--dry-run]\n  mechrevo-console oem list\n  mechrevo-console oem set ID VALUE [--dry-run]\n  mechrevo-console export --output PATH\n  mechrevo-console --help\n\nPower profiles use Linux ACPI platform_profile or installed Windows OS power\nschemes. They are separate from OEM presets and never tune GPU/MUX/EC registers.\nBrightness requires an enumerated OS device; multiple devices require --device.\nOEM controls use only enumerated, qualified driver interfaces. Use oem list\nfor exact IDs, choices, brightness levels and readback limits. Boolean values\nare on/off; colors use '#RRGGBB'. OEM --dry-run never writes or elevates.\nAn OEM write may request authentication through the installed limited helper.\nExport writes UTF-8 JSON, requires an explicit path and refuses overwrites.\nMissing telemetry is unknown, never a simulated zero. No automatic sudo.\n";
 #[derive(Debug, PartialEq)]
 enum Action {
     Help,
@@ -20,6 +23,8 @@ enum Action {
     Models(String),
     Profile(PowerProfile, bool),
     Brightness(Option<u8>, Option<String>, bool),
+    OemList,
+    OemSet(String, String, bool),
     Export(PathBuf),
 }
 fn text(arg: &OsString) -> Result<&str, ControlError> {
@@ -93,6 +98,21 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
             }
             Ok(Action::Brightness(percent, device, dry))
         }
+        "oem" if rest.len() == 1 && rest[0] == "list" => Ok(Action::OemList),
+        "oem" if (rest.len() == 3 || rest.len() == 4) && rest[0] == "set" => {
+            let id = text(&rest[1])?;
+            let value = text(&rest[2])?;
+            if id.is_empty() || value.is_empty() || id.starts_with("--") || value.starts_with("--")
+            {
+                return Err(usage("oem set requires a control ID and a value"));
+            }
+            let dry = rest.len() == 4;
+            if dry && rest[3] != "--dry-run" {
+                return Err(usage("Unknown OEM option; only --dry-run is accepted"));
+            }
+            Ok(Action::OemSet(id.into(), value.into(), dry))
+        }
+        "oem" => Err(usage("Use oem list or oem set ID VALUE [--dry-run]")),
         "export" if rest.len() == 2 && rest[0] == "--output" && !rest[1].is_empty() => {
             Ok(Action::Export(PathBuf::from(&rest[1])))
         }
@@ -101,6 +121,112 @@ fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
         )),
         _ => Err(usage("Unknown command or invalid options; use --help")),
     }
+}
+fn select_oem_control<'a>(
+    controls: &'a [OemControl],
+    id: &str,
+) -> Result<&'a OemControl, ControlError> {
+    let mut matching = controls.iter().filter(|control| control.id == id);
+    let selected = matching.next().ok_or_else(|| {
+        ControlError::new(
+            "oem_control_unavailable",
+            "Requested OEM control was not enumerated; use oem list for exact IDs",
+        )
+    })?;
+    if matching.next().is_some() {
+        return Err(ControlError::new(
+            "oem_control_ambiguous",
+            "Multiple OEM controls have this ID; no write was attempted",
+        ));
+    }
+    Ok(selected)
+}
+fn oem_value_error(message: impl Into<String>) -> ControlError {
+    ControlError::new("invalid_oem_value", message)
+}
+fn parse_oem_value(
+    kind: &OemControlKind,
+    domain: &OemDomain,
+    raw: &str,
+) -> Result<OemValue, ControlError> {
+    match (kind, domain) {
+        (
+            OemControlKind::FnLock | OemControlKind::AcAutoBoot | OemControlKind::UsbPowerShare,
+            OemDomain::Boolean,
+        ) => match raw {
+            "on" => Ok(OemValue::Boolean(true)),
+            "off" => Ok(OemValue::Boolean(false)),
+            _ => Err(oem_value_error("Boolean OEM controls require on or off")),
+        },
+        (OemControlKind::ChargingProfile, OemDomain::Choices(choices)) => {
+            if choices.iter().any(|choice| choice == raw) {
+                Ok(OemValue::Choice(raw.into()))
+            } else {
+                Err(oem_value_error(
+                    "Charging profile must be one of the exact choices returned by oem list",
+                ))
+            }
+        }
+        (OemControlKind::KeyboardBrightness, OemDomain::Level { max }) => {
+            if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(oem_value_error(
+                    "Keyboard brightness requires a nonnegative integer level",
+                ));
+            }
+            let level = raw.parse::<u32>().map_err(|_| {
+                oem_value_error("Keyboard brightness level exceeds the integer range")
+            })?;
+            if level > *max {
+                return Err(oem_value_error(format!(
+                    "Keyboard brightness must be between 0 and {max}"
+                )));
+            }
+            Ok(OemValue::Level(level))
+        }
+        (OemControlKind::KeyboardColor, OemDomain::Rgb) => {
+            if raw.len() != 7
+                || !raw.starts_with('#')
+                || !raw.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+            {
+                return Err(oem_value_error("Keyboard color requires #RRGGBB"));
+            }
+            let rgb = u32::from_str_radix(&raw[1..], 16)
+                .map_err(|_| oem_value_error("Keyboard color requires #RRGGBB"))?;
+            Ok(OemValue::Rgb([
+                (rgb >> 16) as u8,
+                (rgb >> 8) as u8,
+                rgb as u8,
+            ]))
+        }
+        _ => Err(ControlError::new(
+            "invalid_oem_domain",
+            "Enumerated OEM control kind and value domain do not agree; no write was attempted",
+        )),
+    }
+}
+fn oem_set_output(
+    dry_run: bool,
+    plan: Value,
+    apply: impl FnOnce() -> Result<Value, ControlError>,
+) -> Result<Value, ControlError> {
+    if dry_run {
+        Ok(json!({"dry_run":true,"plan":plan}))
+    } else {
+        apply()
+    }
+}
+fn set_oem(service: &Service, id: &str, raw: &str, dry_run: bool) -> Result<Value, ControlError> {
+    let controls = service.oem_controls();
+    let control = select_oem_control(&controls, id)?;
+    let target = parse_oem_value(&control.kind, &control.domain, raw)?;
+    let plan = service.plan_oem(id, target)?;
+    let plan_json = serde_json::to_value(&plan)
+        .map_err(|error| ControlError::new("serialization_failed", error.to_string()))?;
+    oem_set_output(dry_run, plan_json, || {
+        let applied = mechrevo_console_core::privilege::apply_oem(service, &plan)?;
+        serde_json::to_value(applied)
+            .map_err(|error| ControlError::new("serialization_failed", error.to_string()))
+    })
 }
 fn duration_json(duration: Duration) -> Value {
     json!({"seconds":duration.as_secs(),"nanoseconds":duration.subsec_nanos()})
@@ -180,7 +306,7 @@ fn collect_status_json(
         "monotonic_clock_status":if elapsed.is_some(){"ordered"}else{"moved_backwards"},
         "time_basis":"UTC Unix epoch; seconds and nanoseconds are exact integer components. A timestamp before the epoch is null. Wall-clock ordering does not prove clock synchronization.",
         "consistency":"non_atomic_sequential_reads",
-        "scope":"One complete Service::snapshot() call, including brightness enumeration. Start and finish wall-clock reads surround that call; monotonic elapsed also includes those clock reads. Excludes runtime metadata collection, model matching and JSON serialization. Values may come from different instants or cached OS readings; this is not a simultaneous hardware sample.",
+        "scope":"One complete Service::snapshot() call, including brightness enumeration and OEM controls. Start and finish wall-clock reads surround that call; monotonic elapsed also includes those clock reads. Excludes runtime metadata collection, model matching and JSON serialization. Values may come from different instants or cached OS readings; this is not a simultaneous hardware sample.",
         "tool":{"name":"mechrevo-console","package":env!("CARGO_PKG_NAME"),"version":env!("CARGO_PKG_VERSION")},
         "build_target":{"os":std::env::consts::OS,"arch":std::env::consts::ARCH},
         "runtime":runtime,
@@ -238,6 +364,19 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
                 )
                 .map_err(|e| ControlError::new("output_failed", e.to_string()))?;
             }
+            for control in s.oem_controls {
+                let current = control
+                    .current
+                    .as_ref()
+                    .map(|value| json!(value).to_string())
+                    .unwrap_or_else(|| "unknown".into());
+                writeln!(
+                    stdout,
+                    "OEM {} ({}): {} [{:?}]",
+                    control.id, control.label, current, control.status
+                )
+                .map_err(|error| ControlError::new("output_failed", error.to_string()))?;
+            }
             for d in s.diagnostics {
                 writeln!(stdout, "{}: {}", d.code, d.message)
                     .map_err(|e| ControlError::new("output_failed", e.to_string()))?;
@@ -246,6 +385,8 @@ fn run(action: Action, service: &Service) -> Result<(), ControlError> {
         }
         Action::Capabilities => json!(service.capabilities()),
         Action::Models(query) => json!(service.catalog(&query)),
+        Action::OemList => json!(service.oem_controls()),
+        Action::OemSet(id, value, dry_run) => set_oem(service, &id, &value, dry_run)?,
         Action::Profile(profile, dry) => {
             let plan = service.plan_profile(profile)?;
             if dry {
@@ -305,6 +446,274 @@ mod tests {
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
     }
+    #[test]
+    fn oem_commands_require_explicit_control_value_and_known_options() {
+        assert_eq!(parse(args(&["oem", "list"])).unwrap(), Action::OemList);
+        assert_eq!(
+            parse(args(&["oem", "set", "fn_lock", "on"])).unwrap(),
+            Action::OemSet("fn_lock".into(), "on".into(), false)
+        );
+        assert_eq!(
+            parse(args(&[
+                "oem",
+                "set",
+                "keyboard_color",
+                "#ab12CD",
+                "--dry-run"
+            ]))
+            .unwrap(),
+            Action::OemSet("keyboard_color".into(), "#ab12CD".into(), true)
+        );
+        for values in [
+            vec!["oem"],
+            vec!["oem", "list", "--dry-run"],
+            vec!["oem", "set"],
+            vec!["oem", "set", "fn_lock"],
+            vec!["oem", "set", "", "on"],
+            vec!["oem", "set", "fn_lock", ""],
+            vec!["oem", "set", "fn_lock", "--dry-run"],
+            vec!["oem", "set", "--dry-run", "on"],
+            vec!["oem", "set", "fn_lock", "on", "--force"],
+            vec!["oem", "set", "fn_lock", "on", "--dry-run", "--dry-run"],
+            vec!["oem", "apply", "fn_lock", "on"],
+        ] {
+            assert!(parse(args(&values)).is_err(), "Accepted {values:?}");
+        }
+    }
+    #[test]
+    fn oem_boolean_and_choice_values_follow_the_enumerated_domain() {
+        for kind in [
+            OemControlKind::FnLock,
+            OemControlKind::AcAutoBoot,
+            OemControlKind::UsbPowerShare,
+        ] {
+            assert_eq!(
+                json!(parse_oem_value(&kind, &OemDomain::Boolean, "on").unwrap()),
+                json!({"type":"boolean","value":true})
+            );
+            assert_eq!(
+                json!(parse_oem_value(&kind, &OemDomain::Boolean, "off").unwrap()),
+                json!({"type":"boolean","value":false})
+            );
+            for raw in ["1", "0", "true", "ON", "on ", "$(touch /tmp/invalid)"] {
+                assert!(parse_oem_value(&kind, &OemDomain::Boolean, raw).is_err());
+            }
+        }
+        let choices = OemDomain::Choices(vec!["high_capacity".into(), "balanced".into()]);
+        assert_eq!(
+            json!(parse_oem_value(&OemControlKind::ChargingProfile, &choices, "balanced").unwrap()),
+            json!({"type":"choice","value":"balanced"})
+        );
+        for raw in [
+            "80",
+            "stationary",
+            "BALANCED",
+            "balanced\n",
+            "../balanced",
+            "balanced; exit",
+        ] {
+            assert!(parse_oem_value(&OemControlKind::ChargingProfile, &choices, raw).is_err());
+        }
+        assert!(parse_oem_value(
+            &OemControlKind::ChargingProfile,
+            &OemDomain::Choices(Vec::new()),
+            "balanced"
+        )
+        .is_err());
+        assert!(parse_oem_value(&OemControlKind::FnLock, &choices, "balanced").is_err());
+        assert!(
+            parse_oem_value(&OemControlKind::ChargingProfile, &OemDomain::Boolean, "on").is_err()
+        );
+    }
+    #[test]
+    fn oem_brightness_uses_raw_levels_and_actual_maximum() {
+        let kind = OemControlKind::KeyboardBrightness;
+        let domain = OemDomain::Level { max: 4 };
+        for (raw, expected) in [("0", 0), ("4", 4), ("001", 1)] {
+            assert_eq!(
+                json!(parse_oem_value(&kind, &domain, raw).unwrap()),
+                json!({"type":"level","value":expected})
+            );
+        }
+        for raw in [
+            "5",
+            "100",
+            "-1",
+            "+1",
+            "1.0",
+            "nan",
+            " 1",
+            "1 ",
+            "１",
+            "",
+            "4294967296",
+        ] {
+            assert!(
+                parse_oem_value(&kind, &domain, raw).is_err(),
+                "Accepted {raw:?}"
+            );
+        }
+        assert_eq!(
+            json!(
+                parse_oem_value(&kind, &OemDomain::Level { max: u32::MAX }, "4294967295").unwrap()
+            ),
+            json!({"type":"level","value":u32::MAX})
+        );
+        assert!(parse_oem_value(&kind, &OemDomain::Boolean, "on").is_err());
+    }
+    #[test]
+    fn oem_colors_require_exact_rgb_hex_and_preserve_channel_order() {
+        for (raw, expected) in [
+            ("#000000", [0, 0, 0]),
+            ("#FFFFFF", [255, 255, 255]),
+            ("#ab12CD", [171, 18, 205]),
+        ] {
+            assert_eq!(
+                json!(
+                    parse_oem_value(&OemControlKind::KeyboardColor, &OemDomain::Rgb, raw).unwrap()
+                ),
+                json!({"type":"rgb","value":expected})
+            );
+        }
+        for raw in [
+            "000000",
+            "#fff",
+            "#ffffff00",
+            "#gg0000",
+            "#12 456",
+            "#12é45",
+            "#12345\n",
+            "#123456;exit",
+            "#12345",
+            "#123456 ",
+        ] {
+            assert!(
+                parse_oem_value(&OemControlKind::KeyboardColor, &OemDomain::Rgb, raw).is_err(),
+                "Accepted {raw:?}"
+            );
+        }
+        assert!(parse_oem_value(
+            &OemControlKind::KeyboardColor,
+            &OemDomain::Level { max: 255 },
+            "#123456"
+        )
+        .is_err());
+    }
+    #[test]
+    fn oem_dry_run_returns_plan_without_invoking_write_or_privilege_backend() {
+        let plan = json!({"control_id":"fn_lock","target":{"type":"boolean","value":true},"requires_privilege":true});
+        let value = oem_set_output(true, plan.clone(), || {
+            panic!("Dry-run invoked the write/privilege backend")
+        })
+        .unwrap();
+        assert_eq!(value, json!({"dry_run":true,"plan":plan}));
+        let writes = RefCell::new(0);
+        let applied = json!({"control_id":"fn_lock","confirmed":{"type":"boolean","value":true}});
+        let value = oem_set_output(false, plan.clone(), || {
+            *writes.borrow_mut() += 1;
+            Ok(applied.clone())
+        })
+        .unwrap();
+        assert_eq!(*writes.borrow(), 1);
+        assert_eq!(value, applied);
+        let error = oem_set_output(false, plan, || {
+            Err(ControlError::new("fixture_write_failed", "fixture failure"))
+        })
+        .unwrap_err();
+        assert_eq!(error.code, "fixture_write_failed");
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn qualified_fake_oem_control_dry_run_status_export_and_selection() {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let base = std::env::var_os("MECHREVO_TEST_TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let root = base.join(format!(
+            "mechrevo-cli-oem-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let module = root.join("module/tuxedo_keyboard");
+        let platform = root.join("devices/platform/tuxedo_keyboard");
+        std::fs::create_dir_all(&module).unwrap();
+        std::fs::create_dir_all(&platform).unwrap();
+        std::fs::write(module.join("srcversion"), "A1B2C3D4E5F6\n").unwrap();
+        let node = platform.join("fn_lock");
+        std::fs::write(&node, "0\n").unwrap();
+        let service = Service::with_linux_sysfs(&root);
+        let controls = service.oem_controls();
+        let selected = select_oem_control(&controls, "fn-lock").unwrap();
+        assert_eq!(selected.current, Some(OemValue::Boolean(false)));
+        assert_eq!(selected.kind, OemControlKind::FnLock);
+        assert!(!selected.binding.is_empty());
+        for id in ["fn", "FN-LOCK", "../fn_lock", "$(touch /tmp/invalid)"] {
+            assert_eq!(
+                select_oem_control(&controls, id).unwrap_err().code,
+                "oem_control_unavailable"
+            );
+        }
+        let duplicate = vec![selected.clone(), selected.clone()];
+        assert_eq!(
+            select_oem_control(&duplicate, "fn-lock").unwrap_err().code,
+            "oem_control_ambiguous"
+        );
+        let before = std::fs::read(&node).unwrap();
+        let before_modified = std::fs::metadata(&node).unwrap().modified().unwrap();
+        let dry = set_oem(&service, "fn-lock", "on", true).unwrap();
+        assert_eq!(dry["dry_run"], true);
+        assert_eq!(dry["plan"]["control_id"], "fn-lock");
+        assert_eq!(
+            dry["plan"]["previous"],
+            json!({"type":"boolean","value":false})
+        );
+        assert_eq!(
+            dry["plan"]["target"],
+            json!({"type":"boolean","value":true})
+        );
+        assert!(dry["plan"]["requires_privilege"].is_boolean());
+        assert_eq!(before, std::fs::read(&node).unwrap());
+        assert_eq!(
+            before_modified,
+            std::fs::metadata(&node).unwrap().modified().unwrap()
+        );
+        assert!(set_oem(&service, "fn-lock", "true", true).is_err());
+        assert_eq!(before, std::fs::read(&node).unwrap());
+        let instant = Instant::now();
+        let document = collect_status_json(
+            || {
+                let mut snapshot = fixture_snapshot();
+                snapshot.oem_controls = controls.clone();
+                snapshot
+            },
+            || UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+            || instant,
+            json!({}),
+        )
+        .unwrap();
+        assert_eq!(document["oem_controls"], json!(controls));
+        let exported_control = document["oem_controls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|control| control["id"] == "fn-lock")
+            .unwrap();
+        assert_eq!(
+            exported_control["current"],
+            json!({"type":"boolean","value":false})
+        );
+        assert!(exported_control["source"]["path"].is_string());
+        assert!(exported_control["readback_scope"].is_string());
+        let export_path = root.join("oem-status.json");
+        export(&export_path, &document).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&export_path).unwrap()).unwrap(),
+            document
+        );
+        assert_eq!(before, std::fs::read(&node).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     fn fixture_snapshot() -> Snapshot {
         Snapshot {
             platform: "fixture".into(),
@@ -313,6 +722,7 @@ mod tests {
             capabilities: Vec::new(),
             power_policy: Default::default(),
             diagnostics: Vec::new(),
+            oem_controls: Vec::new(),
             brightness: vec![BrightnessDevice {
                 id: "fixture-screen".into(),
                 label: "屏幕".into(),

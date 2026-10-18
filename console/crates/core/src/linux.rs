@@ -254,6 +254,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
         power_policy,
         diagnostics,
         brightness: vec![],
+        oem_controls: vec![],
     }
 }
 // @mark mechrevo.os_power_policy role=implementation

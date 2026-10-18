@@ -2,7 +2,8 @@
 //! A single worker and a one-item channel bound refresh requests and results.
 use mechrevo_console_core::{
     ApplyResult, BrightnessApplyResult, BrightnessPlan, CapabilityStatus, CatalogModel,
-    ControlError, PowerProfile, ProfilePlan, SensorReading, Service, Snapshot,
+    ControlError, OemApplyResult, OemControl, OemDomain, OemPlan, OemValue, PowerProfile,
+    ProfilePlan, SensorReading, Service, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,6 +46,18 @@ pub trait Backend: Send + 'static {
             "No brightness backend is available",
         ))
     }
+    fn plan_oem(&mut self, _control: &str, _target: OemValue) -> Result<OemPlan, ControlError> {
+        Err(ControlError::new(
+            "oem_unavailable",
+            "No OEM control backend is available",
+        ))
+    }
+    fn apply_oem(&mut self, _plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
+        Err(ControlError::new(
+            "oem_unavailable",
+            "No OEM control backend is available",
+        ))
+    }
 }
 
 impl Backend for Service {
@@ -72,6 +85,12 @@ impl Backend for Service {
         plan: &BrightnessPlan,
     ) -> Result<BrightnessApplyResult, ControlError> {
         Service::apply_brightness(self, plan)
+    }
+    fn plan_oem(&mut self, control: &str, target: OemValue) -> Result<OemPlan, ControlError> {
+        Service::plan_oem(self, control, target)
+    }
+    fn apply_oem(&mut self, plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
+        mechrevo_console_core::privilege::apply_oem(self, plan)
     }
 }
 
@@ -135,14 +154,18 @@ enum Job {
     Apply(ProfilePlan),
     PreviewBrightness { percent: u8, device: String },
     ApplyBrightness(BrightnessPlan),
+    PreviewOem { control: String, target: OemValue },
+    ApplyOem(OemPlan),
 }
 
 impl Job {
     fn kind(&self) -> JobKind {
         match self {
             Self::Refresh => JobKind::Refresh,
-            Self::Preview(_) | Self::PreviewBrightness { .. } => JobKind::Preview,
-            Self::Apply(_) | Self::ApplyBrightness(_) => JobKind::Apply,
+            Self::Preview(_) | Self::PreviewBrightness { .. } | Self::PreviewOem { .. } => {
+                JobKind::Preview
+            }
+            Self::Apply(_) | Self::ApplyBrightness(_) | Self::ApplyOem(_) => JobKind::Apply,
         }
     }
 }
@@ -158,6 +181,8 @@ enum Reply {
     Applied(ApplyResult, Snapshot),
     BrightnessPreview(BrightnessPlan),
     BrightnessApplied(BrightnessApplyResult, Snapshot),
+    OemPreview(OemPlan),
+    OemApplied(OemApplyResult, Snapshot),
     Error(ControlError),
 }
 
@@ -178,6 +203,7 @@ struct InFlight {
     id: u64,
     kind: JobKind,
     started: Instant,
+    selection_revision: u64,
 }
 
 pub struct Controller {
@@ -196,6 +222,12 @@ pub struct Controller {
     pub requested_brightness: u8,
     pub brightness_preview: Option<BrightnessPlan>,
     pub brightness_applied: Option<BrightnessApplyResult>,
+    pub selected_oem_control: Option<String>,
+    pub requested_oem_value: Option<OemValue>,
+    pub oem_preview: Option<OemPlan>,
+    pub oem_applied: Option<OemApplyResult>,
+    selection_revision: u64,
+    oem_write_uncertain: bool,
     pub error: Option<ControlError>,
     pub last_refresh: Option<Instant>,
     pub worker_available: bool,
@@ -235,6 +267,16 @@ impl Controller {
                             Ok(result) => Reply::BrightnessApplied(result, backend.snapshot()),
                             Err(error) => Reply::Error(error),
                         },
+                        Job::PreviewOem { control, target } => {
+                            match backend.plan_oem(&control, target) {
+                                Ok(plan) => Reply::OemPreview(plan),
+                                Err(error) => Reply::Error(error),
+                            }
+                        }
+                        Job::ApplyOem(plan) => match backend.apply_oem(&plan) {
+                            Ok(result) => Reply::OemApplied(result, backend.snapshot()),
+                            Err(error) => Reply::Error(error),
+                        },
                     }));
                     let panicked = result.is_err();
                     let reply = result.unwrap_or_else(|_| {
@@ -272,6 +314,12 @@ impl Controller {
             requested_brightness: 70,
             brightness_preview: None,
             brightness_applied: None,
+            selected_oem_control: None,
+            requested_oem_value: None,
+            oem_preview: None,
+            oem_applied: None,
+            selection_revision: 0,
+            oem_write_uncertain: false,
             error: None,
             last_refresh: None,
             worker_available: true,
@@ -279,13 +327,19 @@ impl Controller {
     }
 
     pub fn busy(&self) -> bool {
-        self.in_flight.is_some()
+        self.in_flight.is_some() || self.oem_write_uncertain
     }
 
     pub fn write_in_progress(&self) -> bool {
-        self.in_flight
-            .as_ref()
-            .is_some_and(|job| job.kind == JobKind::Apply)
+        self.oem_write_uncertain
+            || self
+                .in_flight
+                .as_ref()
+                .is_some_and(|job| job.kind == JobKind::Apply)
+    }
+
+    pub fn oem_write_state_unknown(&self) -> bool {
+        self.oem_write_uncertain
     }
 
     pub fn activity(&self) -> Option<(JobKind, Duration)> {
@@ -296,15 +350,25 @@ impl Controller {
 
     pub fn refresh(&mut self) -> Result<(), SubmitError> {
         self.submit(Job::Refresh)?;
+        self.invalidate_previews();
+        Ok(())
+    }
+
+    pub fn has_pending_preview(&self) -> bool {
+        self.preview.is_some() || self.brightness_preview.is_some() || self.oem_preview.is_some()
+    }
+
+    fn invalidate_previews(&mut self) {
         self.preview = None;
         self.brightness_preview = None;
-        Ok(())
+        self.oem_preview = None;
+        self.selection_revision = self.selection_revision.wrapping_add(1);
     }
 
     pub fn select_profile(&mut self, profile: PowerProfile) {
         if self.selected_profile != profile {
             self.selected_profile = profile;
-            self.preview = None;
+            self.invalidate_previews();
         }
     }
 
@@ -338,8 +402,8 @@ impl Controller {
         if self.policy_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
+        self.invalidate_previews();
         self.submit(Job::Preview(self.selected_profile))?;
-        self.preview = None;
         Ok(())
     }
 
@@ -355,16 +419,15 @@ impl Controller {
             .ok_or(SubmitError::PreviewRequired)?;
         self.submit(Job::Apply(plan))?;
         // A preview is single-use, including when applying fails or readback fails.
-        self.preview = None;
+        self.invalidate_previews();
         self.applied = None;
-        self.brightness_preview = None;
         Ok(())
     }
 
     pub fn select_brightness_device(&mut self, device: &str) {
         if self.selected_brightness_device.as_deref() != Some(device) {
             self.selected_brightness_device = Some(device.to_owned());
-            self.brightness_preview = None;
+            self.invalidate_previews();
             if let Some(current) = self
                 .snapshot
                 .as_ref()
@@ -392,7 +455,7 @@ impl Controller {
     pub fn set_brightness_target(&mut self, percent: u8) {
         if self.requested_brightness != percent {
             self.requested_brightness = percent;
-            self.brightness_preview = None;
+            self.invalidate_previews();
         }
     }
 
@@ -435,6 +498,7 @@ impl Controller {
         if self.brightness_unavailable_reason().is_some() {
             return Err(SubmitError::Unsupported);
         }
+        self.invalidate_previews();
         self.submit(Job::PreviewBrightness {
             percent: self.requested_brightness,
             device: self
@@ -442,7 +506,6 @@ impl Controller {
                 .clone()
                 .ok_or(SubmitError::Unsupported)?,
         })?;
-        self.brightness_preview = None;
         Ok(())
     }
 
@@ -460,9 +523,114 @@ impl Controller {
             .cloned()
             .ok_or(SubmitError::PreviewRequired)?;
         self.submit(Job::ApplyBrightness(plan))?;
-        self.brightness_preview = None;
+        self.invalidate_previews();
         self.brightness_applied = None;
-        self.preview = None;
+        Ok(())
+    }
+
+    pub fn select_oem_control(&mut self, id: &str) {
+        if self.selected_oem_control.as_deref() != Some(id) {
+            self.selected_oem_control = Some(id.to_owned());
+            self.requested_oem_value = self
+                .selected_oem()
+                .and_then(|control| control.current.clone());
+            self.invalidate_previews();
+        }
+    }
+
+    pub fn set_oem_target(&mut self, target: OemValue) {
+        if self.requested_oem_value.as_ref() != Some(&target) {
+            self.requested_oem_value = Some(target);
+            self.invalidate_previews();
+        }
+    }
+
+    pub fn selected_oem(&self) -> Option<&OemControl> {
+        let id = self.selected_oem_control.as_deref()?;
+        self.snapshot
+            .as_ref()?
+            .oem_controls
+            .iter()
+            .find(|control| control.id == id)
+    }
+
+    pub fn oem_unavailable_reason(&self) -> Option<&str> {
+        let Some(control) = self.selected_oem() else {
+            return Some("请选择本机实际提供的设备控制接口。");
+        };
+        if control.status != CapabilityStatus::Available || control.current.is_none() {
+            return Some(
+                control
+                    .reason
+                    .as_deref()
+                    .unwrap_or("该接口目前无法完成读取与写入，请刷新核对。"),
+            );
+        }
+        if control
+            .current
+            .as_ref()
+            .is_some_and(|value| !oem_value_in_domain(&control.domain, value))
+        {
+            return Some("接口当前值不在驱动公布的类型或范围内，请刷新核对。");
+        }
+        let Some(target) = &self.requested_oem_value else {
+            return Some("选择目标值后才能预览更改。");
+        };
+        if !oem_value_in_domain(&control.domain, target) {
+            return Some("目标值不在驱动公布的类型或范围内，请重新选择。");
+        }
+        None
+    }
+
+    fn oem_plan_matches(&self, plan: &OemPlan) -> bool {
+        self.selected_oem().is_some_and(|control| {
+            control.id == plan.control_id
+                && control.kind == plan.kind
+                && control.current.as_ref() == Some(&plan.previous)
+                && control.domain == plan.domain
+                && control.source == plan.source
+                && control.binding == plan.binding
+                && control.readback_scope == plan.readback_scope
+                && self.requested_oem_value.as_ref() == Some(&plan.target)
+        })
+    }
+
+    pub fn preview_oem(&mut self) -> Result<(), SubmitError> {
+        if self.oem_unavailable_reason().is_some() {
+            return Err(SubmitError::Unsupported);
+        }
+        let control = self
+            .selected_oem_control
+            .clone()
+            .ok_or(SubmitError::Unsupported)?;
+        let target = self
+            .requested_oem_value
+            .clone()
+            .ok_or(SubmitError::Unsupported)?;
+        self.invalidate_previews();
+        self.submit(Job::PreviewOem { control, target })
+    }
+
+    pub fn apply_oem_preview(&mut self) -> Result<(), SubmitError> {
+        if self.busy() {
+            return Err(SubmitError::Busy);
+        }
+        if self.oem_unavailable_reason().is_some() {
+            self.invalidate_previews();
+            return Err(SubmitError::Unsupported);
+        }
+        let Some(plan) = self
+            .oem_preview
+            .as_ref()
+            .filter(|plan| self.oem_plan_matches(plan))
+            .cloned()
+        else {
+            self.invalidate_previews();
+            return Err(SubmitError::PreviewRequired);
+        };
+        self.submit(Job::ApplyOem(plan))?;
+        self.invalidate_previews();
+        self.oem_applied = None;
         Ok(())
     }
 
@@ -487,6 +655,7 @@ impl Controller {
                     id,
                     kind,
                     started: Instant::now(),
+                    selection_revision: self.selection_revision,
                 });
                 self.error = None;
                 Ok(())
@@ -506,6 +675,10 @@ impl Controller {
                 if self.in_flight.as_ref().map(|job| job.id) != Some(response.id) {
                     return false;
                 }
+                let current_selection = self
+                    .in_flight
+                    .as_ref()
+                    .is_some_and(|job| job.selection_revision == self.selection_revision);
                 self.in_flight = None;
                 match response.reply {
                     Reply::Snapshot(snapshot, catalog) => {
@@ -515,13 +688,14 @@ impl Controller {
                     }
                     Reply::Preview(plan) => {
                         // A selection made while a request ran must invalidate its late result.
-                        if plan.requested == self.selected_profile {
+                        if current_selection && plan.requested == self.selected_profile {
                             self.preview = Some(plan);
                         }
                     }
                     Reply::BrightnessPreview(plan) => {
-                        if Some(plan.device_id.as_str())
-                            == self.selected_brightness_device.as_deref()
+                        if current_selection
+                            && Some(plan.device_id.as_str())
+                                == self.selected_brightness_device.as_deref()
                             && plan.requested_percent == self.requested_brightness
                         {
                             self.brightness_preview = Some(plan);
@@ -537,12 +711,51 @@ impl Controller {
                         self.snapshot = Some(snapshot);
                         self.last_refresh = Some(Instant::now());
                     }
-                    Reply::Error(error) => self.error = Some(error),
+                    Reply::OemPreview(plan) => {
+                        if current_selection {
+                            if self.oem_plan_matches(&plan) {
+                                self.oem_preview = Some(plan);
+                            } else {
+                                self.error = Some(ControlError::new(
+                                    "oem_preview_stale",
+                                    "设备状态或接口已变化，请刷新后重新预览。",
+                                ));
+                            }
+                        }
+                    }
+                    Reply::OemApplied(result, snapshot) => {
+                        self.oem_applied = Some(result);
+                        self.snapshot = Some(snapshot);
+                        self.last_refresh = Some(Instant::now());
+                    }
+                    Reply::Error(error) => {
+                        if error.code == "oem_helper_liveness_unknown" {
+                            // A missing wait result is not evidence that a
+                            // privileged writer stopped. Keep the write/close
+                            // interlock until this process is explicitly shut
+                            // down outside the normal native close path.
+                            self.oem_write_uncertain = true;
+                            self.invalidate_previews();
+                        }
+                        self.error = Some(error);
+                    }
                 }
                 if let Some(snapshot) = &self.snapshot {
                     if self.selected_brightness_device.is_none() && snapshot.brightness.len() == 1 {
                         let id = snapshot.brightness[0].id.clone();
                         self.select_brightness_device(&id);
+                    }
+                }
+                // A previously unavailable control can recover with the same
+                // ID. Initialize only an absent target; keep user edits.
+                if self.requested_oem_value.is_none() {
+                    if let Some(value) = self
+                        .selected_oem()
+                        .filter(|control| control.status == CapabilityStatus::Available)
+                        .and_then(|control| control.current.clone())
+                    {
+                        self.requested_oem_value = Some(value);
+                        self.invalidate_previews();
                     }
                 }
                 true
@@ -561,6 +774,7 @@ impl Controller {
         self.in_flight = None;
         self.preview = None;
         self.brightness_preview = None;
+        self.oem_preview = None;
         if self.error.is_none() {
             self.error = Some(ControlError::new(
                 "worker_stopped",
@@ -609,6 +823,15 @@ pub fn reading_text(reading: &SensorReading) -> String {
             format!("{value:.1} {}", reading.unit)
         }
         _ => "不可用".into(),
+    }
+}
+
+fn oem_value_in_domain(domain: &OemDomain, value: &OemValue) -> bool {
+    match (domain, value) {
+        (OemDomain::Boolean, OemValue::Boolean(_)) | (OemDomain::Rgb, OemValue::Rgb(_)) => true,
+        (OemDomain::Choices(choices), OemValue::Choice(value)) => choices.contains(value),
+        (OemDomain::Level { max }, OemValue::Level(value)) => value <= max,
+        _ => false,
     }
 }
 
@@ -663,6 +886,7 @@ mod tests {
                 reason: None,
             }],
             diagnostics: vec![],
+            oem_controls: vec![],
         }
     }
 
@@ -757,7 +981,7 @@ mod tests {
         .unwrap()
     }
 
-    fn finish(controller: &mut Controller) {
+    pub(crate) fn finish(controller: &mut Controller) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while controller.busy() && Instant::now() < deadline {
             controller.poll();
@@ -1039,6 +1263,378 @@ mod tests {
             Err(SubmitError::Unsupported)
         );
         assert!(!controller.busy());
+    }
+
+    fn oem_control() -> OemControl {
+        OemControl {
+            id: "fixture-fn-lock".into(),
+            kind: mechrevo_console_core::OemControlKind::FnLock,
+            label: "TEST Fn Lock / 非真实硬件".into(),
+            current: Some(OemValue::Boolean(false)),
+            domain: OemDomain::Boolean,
+            status: CapabilityStatus::Available,
+            // Root-owned OEM attributes still support the reviewed helper.
+            writable: false,
+            source: EvidenceSource {
+                backend: "fixture-only".into(),
+                path: "fixture://fn-lock".into(),
+                device_id: None,
+            },
+            binding: "fixture-identity".into(),
+            readback_scope: "fixture driver request; not physical measurement".into(),
+            reason: None,
+        }
+    }
+
+    struct OemFixtureBackend {
+        control: OemControl,
+        writes: Arc<AtomicUsize>,
+        reads: Arc<AtomicUsize>,
+        failure: Option<&'static str>,
+        apply_entered: Option<SyncSender<()>>,
+        apply_release: Option<Receiver<()>>,
+    }
+    impl Backend for OemFixtureBackend {
+        fn snapshot(&mut self) -> Snapshot {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let mut snapshot = fixture_snapshot();
+            snapshot.oem_controls = vec![self.control.clone()];
+            snapshot
+        }
+        fn catalog(&mut self) -> Vec<CatalogModel> {
+            vec![]
+        }
+        fn plan(&mut self, _: PowerProfile) -> Result<ProfilePlan, ControlError> {
+            unreachable!("OEM fixture never changes system power policy")
+        }
+        fn apply(&mut self, _: &ProfilePlan) -> Result<ApplyResult, ControlError> {
+            unreachable!("OEM fixture never writes system power policy")
+        }
+        fn plan_oem(&mut self, id: &str, target: OemValue) -> Result<OemPlan, ControlError> {
+            assert_eq!(id, self.control.id);
+            assert!(oem_value_in_domain(&self.control.domain, &target));
+            Ok(OemPlan {
+                control_id: id.into(),
+                kind: self.control.kind,
+                label: self.control.label.clone(),
+                previous: self.control.current.clone().unwrap(),
+                target,
+                domain: self.control.domain.clone(),
+                source: self.control.source.clone(),
+                binding: self.control.binding.clone(),
+                readback_scope: self.control.readback_scope.clone(),
+                requires_privilege: true,
+                companion_brightness: None,
+            })
+        }
+        fn apply_oem(&mut self, plan: &OemPlan) -> Result<OemApplyResult, ControlError> {
+            if let Some(entered) = self.apply_entered.take() {
+                entered.send(()).unwrap();
+            }
+            if let Some(release) = self.apply_release.take() {
+                release.recv().unwrap();
+            }
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            if let Some(code) = self.failure {
+                let mut error = ControlError::new(code, "fixture OEM operation failed");
+                error.details =
+                    vec!["fixture rollback/readback evidence must remain visible".into()];
+                return Err(error);
+            }
+            self.control.current = Some(plan.target.clone());
+            Ok(OemApplyResult {
+                control_id: plan.control_id.clone(),
+                kind: plan.kind,
+                previous: plan.previous.clone(),
+                confirmed: plan.target.clone(),
+                source: plan.source.clone(),
+                readback_scope: plan.readback_scope.clone(),
+            })
+        }
+    }
+    fn oem_controller(
+        failure: Option<&'static str>,
+    ) -> (Controller, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let controller = Controller::new(OemFixtureBackend {
+            control: oem_control(),
+            writes: writes.clone(),
+            reads: reads.clone(),
+            failure,
+            apply_entered: None,
+            apply_release: None,
+        })
+        .unwrap();
+        (controller, writes, reads)
+    }
+    pub(crate) fn prepare_oem(controller: &mut Controller) {
+        controller.refresh().unwrap();
+        finish(controller);
+        controller.select_oem_control("fixture-fn-lock");
+        controller.set_oem_target(OemValue::Boolean(true));
+    }
+    pub(crate) fn gated_oem_controller(
+        failure: Option<&'static str>,
+    ) -> (Controller, Receiver<()>, SyncSender<()>) {
+        let (entered, ready) = mpsc::sync_channel(1);
+        let (release, delayed) = mpsc::sync_channel(1);
+        let controller = Controller::new(OemFixtureBackend {
+            control: oem_control(),
+            writes: Arc::new(AtomicUsize::new(0)),
+            reads: Arc::new(AtomicUsize::new(0)),
+            failure,
+            apply_entered: Some(entered),
+            apply_release: Some(delayed),
+        })
+        .unwrap();
+        (controller, ready, release)
+    }
+
+    #[test]
+    fn oem_success_requires_single_use_preview_and_refreshes_actual_snapshot() {
+        let (mut controller, writes, reads) = oem_controller(None);
+        prepare_oem(&mut controller);
+        assert_eq!(
+            controller.apply_oem_preview(),
+            Err(SubmitError::PreviewRequired)
+        );
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        assert_eq!(
+            writes.load(Ordering::Relaxed),
+            0,
+            "preview must not authorize or write"
+        );
+        assert!(controller.oem_preview.as_ref().unwrap().requires_privilege);
+        assert!(controller.has_pending_preview());
+        controller.apply_oem_preview().unwrap();
+        assert!(controller.write_in_progress());
+        assert!(!controller.has_pending_preview());
+        finish(&mut controller);
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            controller.oem_applied.as_ref().unwrap().confirmed,
+            OemValue::Boolean(true)
+        );
+        assert_eq!(
+            controller.selected_oem().unwrap().current,
+            Some(OemValue::Boolean(true))
+        );
+        assert!(!controller.write_in_progress());
+        assert_eq!(
+            controller.apply_oem_preview(),
+            Err(SubmitError::PreviewRequired)
+        );
+    }
+
+    #[test]
+    fn oem_missing_unavailable_unknown_and_out_of_domain_never_reach_worker() {
+        let (mut controller, writes, _) = oem_controller(None);
+        assert_eq!(controller.preview_oem(), Err(SubmitError::Unsupported));
+        prepare_oem(&mut controller);
+        for status in [CapabilityStatus::Unavailable, CapabilityStatus::Unsupported] {
+            controller.snapshot.as_mut().unwrap().oem_controls[0].status = status;
+            assert_eq!(controller.preview_oem(), Err(SubmitError::Unsupported));
+        }
+        let control = &mut controller.snapshot.as_mut().unwrap().oem_controls[0];
+        control.status = CapabilityStatus::Available;
+        control.current = None;
+        assert_eq!(controller.preview_oem(), Err(SubmitError::Unsupported));
+        controller.snapshot.as_mut().unwrap().oem_controls[0].current =
+            Some(OemValue::Boolean(false));
+        for (domain, target) in [
+            (OemDomain::Boolean, OemValue::Level(1)),
+            (
+                OemDomain::Choices(vec!["balanced".into()]),
+                OemValue::Choice("made-up".into()),
+            ),
+            (OemDomain::Level { max: 3 }, OemValue::Level(4)),
+            (OemDomain::Rgb, OemValue::Boolean(true)),
+        ] {
+            let current = match &domain {
+                OemDomain::Boolean => OemValue::Boolean(false),
+                OemDomain::Choices(choices) => OemValue::Choice(choices[0].clone()),
+                OemDomain::Level { .. } => OemValue::Level(0),
+                OemDomain::Rgb => OemValue::Rgb([0, 0, 0]),
+            };
+            controller.snapshot.as_mut().unwrap().oem_controls[0].current = Some(current);
+            controller.snapshot.as_mut().unwrap().oem_controls[0].domain = domain;
+            controller.set_oem_target(target);
+            assert_eq!(controller.preview_oem(), Err(SubmitError::Unsupported));
+        }
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+        assert!(!controller.busy());
+    }
+
+    #[test]
+    fn oem_default_backend_reports_unsupported_without_manufactured_success() {
+        let mut controller = controller();
+        let mut snapshot = fixture_snapshot();
+        snapshot.oem_controls = vec![oem_control()];
+        controller.snapshot = Some(snapshot);
+        controller.select_oem_control("fixture-fn-lock");
+        controller.set_oem_target(OemValue::Boolean(true));
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        assert_eq!(controller.error.as_ref().unwrap().code, "oem_unavailable");
+        assert!(controller.oem_preview.is_none());
+        assert!(controller.oem_applied.is_none());
+    }
+
+    #[test]
+    fn oem_failed_apply_preserves_recovery_details_and_cannot_replay_preview() {
+        let (mut controller, writes, reads) = oem_controller(Some("oem_readback_mismatch"));
+        prepare_oem(&mut controller);
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.apply_oem_preview().unwrap();
+        finish(&mut controller);
+        let error = controller.error.as_ref().unwrap();
+        assert_eq!(error.code, "oem_readback_mismatch");
+        assert!(error.details[0].contains("rollback/readback"));
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            1,
+            "failed apply is not a confirmed snapshot"
+        );
+        assert!(controller.oem_applied.is_none());
+        assert_eq!(
+            controller.apply_oem_preview(),
+            Err(SubmitError::PreviewRequired)
+        );
+    }
+
+    #[test]
+    fn oem_late_a_to_b_to_a_and_cross_control_results_cannot_revive_old_plan() {
+        let (mut controller, writes, _) = oem_controller(None);
+        prepare_oem(&mut controller);
+        controller.preview_oem().unwrap();
+        controller.set_oem_target(OemValue::Boolean(false));
+        controller.set_oem_target(OemValue::Boolean(true));
+        finish(&mut controller);
+        assert!(
+            controller.oem_preview.is_none(),
+            "matching value does not cancel request revisions"
+        );
+        controller.preview_oem().unwrap();
+        controller.select_oem_control("different-control");
+        controller.select_oem_control("fixture-fn-lock");
+        controller.set_oem_target(OemValue::Boolean(true));
+        finish(&mut controller);
+        assert!(controller.oem_preview.is_none());
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn oem_other_requests_refresh_and_changed_binding_invalidate_preview() {
+        let (mut controller, writes, _) = oem_controller(None);
+        prepare_oem(&mut controller);
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.select_profile(PowerProfile::Performance);
+        assert!(controller.oem_preview.is_none());
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.set_brightness_target(42);
+        assert!(controller.oem_preview.is_none());
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.snapshot.as_mut().unwrap().oem_controls[0].binding = "replaced-device".into();
+        assert_eq!(
+            controller.apply_oem_preview(),
+            Err(SubmitError::PreviewRequired)
+        );
+        assert!(controller.oem_preview.is_none());
+        controller.refresh().unwrap();
+        finish(&mut controller);
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn oem_same_id_recovery_initializes_absent_target_without_overwriting_user_choice() {
+        let (mut controller, _, _) = oem_controller(None);
+        let mut snapshot = fixture_snapshot();
+        let mut control = oem_control();
+        control.status = CapabilityStatus::Unavailable;
+        control.current = None;
+        snapshot.oem_controls = vec![control];
+        controller.snapshot = Some(snapshot);
+        controller.select_oem_control("fixture-fn-lock");
+        assert!(controller.requested_oem_value.is_none());
+        controller.refresh().unwrap();
+        finish(&mut controller);
+        assert_eq!(
+            controller.requested_oem_value,
+            Some(OemValue::Boolean(false))
+        );
+        controller.set_oem_target(OemValue::Boolean(true));
+        controller.refresh().unwrap();
+        finish(&mut controller);
+        assert_eq!(
+            controller.requested_oem_value,
+            Some(OemValue::Boolean(true))
+        );
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        assert!(controller.oem_preview.is_some());
+    }
+
+    #[test]
+    fn oem_fresh_preview_of_changed_device_state_explains_required_refresh() {
+        let (mut controller, writes, _) = oem_controller(None);
+        prepare_oem(&mut controller);
+        controller.snapshot.as_mut().unwrap().oem_controls[0].current =
+            Some(OemValue::Boolean(true));
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        assert!(controller.oem_preview.is_none());
+        assert_eq!(controller.error.as_ref().unwrap().code, "oem_preview_stale");
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn oem_busy_write_owns_single_worker_until_result_finishes() {
+        let (mut controller, ready, release) = gated_oem_controller(None);
+        prepare_oem(&mut controller);
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.apply_oem_preview().unwrap();
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(controller.busy() && controller.write_in_progress());
+        assert_eq!(controller.refresh(), Err(SubmitError::Busy));
+        assert_eq!(controller.preview_oem(), Err(SubmitError::Busy));
+        assert!(
+            controller.write_in_progress(),
+            "native close must remain deferred for OEM writes"
+        );
+        release.send(()).unwrap();
+        finish(&mut controller);
+        assert!(!controller.write_in_progress());
+    }
+
+    #[test]
+    fn oem_unknown_helper_liveness_keeps_write_and_close_interlock() {
+        let (mut controller, _, _) = oem_controller(Some("oem_helper_liveness_unknown"));
+        prepare_oem(&mut controller);
+        controller.preview_oem().unwrap();
+        finish(&mut controller);
+        controller.apply_oem_preview().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while controller.error.is_none() && Instant::now() < deadline {
+            controller.poll();
+            thread::yield_now();
+        }
+        assert_eq!(
+            controller.error.as_ref().unwrap().code,
+            "oem_helper_liveness_unknown"
+        );
+        assert!(controller.busy() && controller.write_in_progress());
+        assert_eq!(controller.refresh(), Err(SubmitError::Busy));
+        assert!(controller.oem_preview.is_none());
+        assert!(controller.oem_applied.is_none());
     }
 
     #[test]

@@ -6,7 +6,8 @@
 use eframe::egui::{self, pos2, vec2, ColorImage, Context, FullOutput, RawInput, Rect, TextureId};
 use egui_system_font_provider::SystemFontProvider;
 use mechrevo_console_core::{
-    ApplyResult, CatalogModel, ControlError, PowerProfile, ProfilePlan, Snapshot,
+    ApplyResult, CapabilityStatus, CatalogModel, ControlError, EvidenceSource, OemApplyResult,
+    OemControl, OemControlKind, OemDomain, OemPlan, OemValue, PowerProfile, ProfilePlan, Snapshot,
 };
 use mechrevo_console_gui::{
     desktop::{DesktopApp, RenderMetrics, Section},
@@ -33,6 +34,12 @@ impl Backend for FixtureBackend {
     }
     fn apply(&mut self, _: &ProfilePlan) -> Result<ApplyResult, ControlError> {
         panic!("Rendering must not write hardware")
+    }
+    fn plan_oem(&mut self, _: &str, _: OemValue) -> Result<OemPlan, ControlError> {
+        panic!("Rendering or editing must not request an OEM control preview")
+    }
+    fn apply_oem(&mut self, _: &OemPlan) -> Result<OemApplyResult, ControlError> {
+        panic!("Rendering or editing must not apply an OEM control")
     }
 }
 
@@ -80,7 +87,7 @@ fn fixture(case: &str) -> DesktopApp {
             "bios_version":"TEST.0.0", "mechrevo_brand_detected":true,
             "support_note":"本数据只用于界面测试，检测到品牌不代表已经核验硬件控制能力。"
         },
-        "telemetry":telemetry, "brightness":[],
+        "telemetry":telemetry, "brightness":[], "oem_controls":[],
         "capabilities":[{
             "id":"power_profile", "label":"系统电源策略", "status":if case == "unavailable" { "unavailable" } else { "available" },
             "reason":if case == "unavailable" { "当前系统没有可用的电源策略服务；请安装对应服务后重新检测。" } else { "操作系统提供的策略接口" },
@@ -134,6 +141,85 @@ fn fixture(case: &str) -> DesktopApp {
         preferences.text_scale = 1.6;
     }
     DesktopApp::with_controller(controller, preferences)
+}
+
+fn oem_fixture() -> DesktopApp {
+    let mut app = fixture("representative");
+    app.preferences.auto_refresh = false;
+    let controls = [
+        (
+            "fn_lock",
+            OemControlKind::FnLock,
+            "Fn 锁",
+            OemValue::Boolean(false),
+            OemDomain::Boolean,
+        ),
+        (
+            "charging_profile",
+            OemControlKind::ChargingProfile,
+            "充电模式",
+            OemValue::Choice("high_capacity".into()),
+            OemDomain::Choices(vec![
+                "high_capacity".into(),
+                "balanced".into(),
+                "stationary".into(),
+            ]),
+        ),
+        (
+            "keyboard_brightness",
+            OemControlKind::KeyboardBrightness,
+            "键盘亮度",
+            OemValue::Level(2),
+            OemDomain::Level { max: 4 },
+        ),
+        (
+            "keyboard_color",
+            OemControlKind::KeyboardColor,
+            "键盘颜色",
+            OemValue::Rgb([168, 78, 78]),
+            OemDomain::Rgb,
+        ),
+        (
+            "ac_auto_boot",
+            OemControlKind::AcAutoBoot,
+            "接电自动开机",
+            OemValue::Boolean(false),
+            OemDomain::Boolean,
+        ),
+        (
+            "usb_power_share",
+            OemControlKind::UsbPowerShare,
+            "USB 关机供电",
+            OemValue::Boolean(false),
+            OemDomain::Boolean,
+        ),
+    ];
+    app.controller.snapshot.as_mut().unwrap().oem_controls = controls
+        .into_iter()
+        .map(|(id, kind, label, current, domain)| OemControl {
+            id: id.into(),
+            kind,
+            label: format!("{label} / 仅用于布局的很长设备控制名称"),
+            current: Some(current),
+            domain,
+            status: CapabilityStatus::Available,
+            writable: true,
+            source: EvidenceSource {
+                backend: "fixture-only".into(),
+                path: format!(
+                    "fixture://{}/attributes/{id}",
+                    "VeryLongUnbrokenDriverIdentity0123456789".repeat(4)
+                ),
+                device_id: Some("fixture-oem-device".into()),
+            },
+            binding: format!("fixture-only:{id}:{}", "not-a-hardware-binding".repeat(5)),
+            readback_scope: "仅确认测试驱动请求值；不代表实际充电阈值、物理颜色或关机供电效果。"
+                .repeat(3),
+            reason: Some("只有明确预览并应用才可请求后端；本数据不会接触真实硬件。".into()),
+        })
+        .collect();
+    app.select_section(Section::Controls);
+    app
 }
 
 struct Harness {
@@ -787,6 +873,335 @@ fn auto_sampling_switch_exposes_state_and_accepts_pointer_and_keyboard() {
     assert_state(&output, false);
 }
 
+fn oem_edits() -> [(&'static str, OemValue); 4] {
+    [
+        ("fn_lock", OemValue::Boolean(true)),
+        ("charging_profile", OemValue::Choice("stationary".into())),
+        ("keyboard_brightness", OemValue::Level(3)),
+        ("keyboard_color", OemValue::Rgb([12, 80, 230])),
+    ]
+}
+
+fn reveal_oem_control(
+    harness: &mut Harness,
+    app: &mut DesktopApp,
+    label: &str,
+    role: egui::accesskit::Role,
+) -> (RenderMetrics, FullOutput) {
+    // The application's bottom request uses its last measured content size.
+    // A fresh app has no such measurement yet; establish layout first.
+    settle(harness, app);
+    app.scroll_to_bottom();
+    let (mut metrics, mut output) = settle(harness, app);
+    let mut scroll_trace = Vec::new();
+    for _ in 0..8 {
+        let (id, bounds) = accessible_control(&output, label, role);
+        scroll_trace.push(format!(
+            "offset={:?}, viewport={:?}, control={bounds:?}",
+            metrics.scroll_offset, metrics.viewport
+        ));
+        if metrics.viewport.expand(1.0).contains_rect(bounds) {
+            let (_, node) = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(node_id, _)| *node_id == id)
+                .unwrap();
+            assert!(
+                !node.is_disabled(),
+                "OEM control '{label}' should be enabled"
+            );
+            return (metrics, output);
+        }
+        // At maximum text zoom the informational footer can fill much of the
+        // viewport. Exercise real wheel input to reveal the actual action,
+        // rather than assuming that reaching the footer proves it is usable.
+        harness.frame_with_events(
+            app,
+            vec![
+                egui::Event::PointerMoved(metrics.viewport.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(
+                        0.0,
+                        (metrics.viewport.center().y - bounds.center().y).clamp(-200.0, 200.0),
+                    ),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        (metrics, output) = settle(harness, app);
+    }
+    panic!("OEM control '{label}' remained clipped after bounded scrolling: {scroll_trace:?}");
+}
+
+fn assert_oem_editor(output: &FullOutput, id: &str) {
+    let nodes = &output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes;
+    match id {
+        "fn_lock" => {
+            let (id, _) = accessible_control(output, "目标状态", egui::accesskit::Role::CheckBox);
+            let (_, node) = nodes.iter().find(|(node_id, _)| *node_id == id).unwrap();
+            assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::True));
+        }
+        "charging_profile" => {
+            assert_page_title(output, "目标模式");
+            let (id, _) = accessible_control(output, "长期接电", egui::accesskit::Role::Button);
+            let (_, node) = nodes.iter().find(|(node_id, _)| *node_id == id).unwrap();
+            assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::True));
+        }
+        "keyboard_brightness" => {
+            assert!(nodes.iter().any(|(_, node)| {
+                node.role() == egui::accesskit::Role::Slider
+                    && node.numeric_value() == Some(3.0)
+                    && node.max_numeric_value() == Some(4.0)
+            }));
+        }
+        "keyboard_color" => {
+            for label in ["红", "绿", "蓝"] {
+                assert_page_title(output, label);
+            }
+            for value in [12.0, 80.0, 230.0] {
+                assert!(nodes.iter().any(|(_, node)| {
+                    node.role() == egui::accesskit::Role::SpinButton
+                        && node.numeric_value() == Some(value)
+                        && node.min_numeric_value() == Some(0.0)
+                        && node.max_numeric_value() == Some(255.0)
+                }));
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn oem_controls_wrap_at_every_dpi_and_keep_real_preview_actions_reachable() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let capture = std::env::var_os("MECHREVO_GUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+    if let Some(path) = &capture {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let mut verified = 0;
+    for dpi in [1.0, 1.25, 1.5, 2.0] {
+        for (id, target) in oem_edits() {
+            let mut app = oem_fixture();
+            if dpi == 2.0 {
+                app.preferences.text_scale = 1.6;
+            }
+            if dpi == 1.5 {
+                app.preferences.theme = Theme::Light;
+            }
+            app.controller.select_oem_control(id);
+            app.controller.set_oem_target(target.clone());
+            let mut harness = Harness::new(
+                [(360.0 * dpi) as u32, (280.0 * dpi) as u32],
+                dpi,
+                fonts.clone(),
+            );
+            let label = format!("oem-minimum-dpi{}-{id}", (dpi * 100.0) as u32);
+            assert_layout(&label, &mut app, &mut harness, capture.as_deref(), true);
+            let (metrics, output) = reveal_oem_control(
+                &mut harness,
+                &mut app,
+                "预览更改",
+                egui::accesskit::Role::Button,
+            );
+            assert_width(&label, &metrics);
+            assert_client_bounds(&label, &metrics, harness.physical, output.pixels_per_point);
+            assert_eq!(app.controller.selected_oem_control.as_deref(), Some(id));
+            assert_eq!(app.controller.requested_oem_value, Some(target));
+            assert!(app.controller.oem_preview.is_none());
+            assert!(
+                !app.controller.busy(),
+                "layout and editing must not submit a backend job"
+            );
+            verified += 1;
+        }
+    }
+    for (id, target) in oem_edits() {
+        let mut app = oem_fixture();
+        app.controller.select_oem_control(id);
+        app.controller.set_oem_target(target);
+        let mut harness = Harness::new([1120, 760], 1.0, fonts.clone());
+        let (_, mut output) = settle(&mut harness, &mut app);
+        assert_page_title(&output, "设备控制");
+        assert_oem_editor(&output, id);
+        if id == "charging_profile" {
+            assert_eq!(
+                app.controller.requested_oem_value,
+                Some(OemValue::Choice("stationary".into())),
+                "localized display labels must preserve the driver's typed choice value"
+            );
+        }
+        if id == "fn_lock" {
+            let (_, toggle) =
+                accessible_control(&output, "目标状态", egui::accesskit::Role::CheckBox);
+            output = click(&mut harness, &mut app, toggle.center());
+            assert_eq!(
+                app.controller.requested_oem_value,
+                Some(OemValue::Boolean(false)),
+                "editing the visible Boolean must update the typed request"
+            );
+            let (_, toggle) =
+                accessible_control(&output, "目标状态", egui::accesskit::Role::CheckBox);
+            output = click(&mut harness, &mut app, toggle.center());
+            assert_oem_editor(&output, id);
+            let last_label = app
+                .controller
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .oem_controls
+                .last()
+                .unwrap()
+                .label
+                .clone();
+            let (_, selector) =
+                accessible_control(&output, &last_label, egui::accesskit::Role::Button);
+            click(&mut harness, &mut app, selector.center());
+            assert_eq!(
+                app.controller.selected_oem_control.as_deref(),
+                Some("usb_power_share")
+            );
+            assert_eq!(
+                app.controller.requested_oem_value,
+                Some(OemValue::Boolean(false))
+            );
+            assert!(!app.controller.busy());
+            app.controller.select_oem_control(id);
+            app.controller.set_oem_target(OemValue::Boolean(true));
+        }
+        assert_layout(
+            &format!("oem-desktop-{id}"),
+            &mut app,
+            &mut harness,
+            capture.as_deref(),
+            false,
+        );
+        reveal_oem_control(
+            &mut harness,
+            &mut app,
+            "预览更改",
+            egui::accesskit::Role::Button,
+        );
+        verified += 1;
+    }
+    let mut app = oem_fixture();
+    app.preferences.text_scale = 1.6;
+    app.controller.select_oem_control("usb_power_share");
+    app.controller.set_oem_target(OemValue::Boolean(true));
+    let control = app.controller.selected_oem().unwrap().clone();
+    app.controller.oem_preview = Some(OemPlan {
+        control_id: control.id,
+        kind: control.kind,
+        label: control.label,
+        previous: control.current.unwrap(),
+        target: OemValue::Boolean(true),
+        domain: control.domain,
+        source: control.source,
+        binding: control.binding,
+        readback_scope: control.readback_scope,
+        requires_privilege: true,
+        companion_brightness: None,
+    });
+    let mut harness = Harness::new([720, 560], 2.0, fonts);
+    let (_, output) = reveal_oem_control(
+        &mut harness,
+        &mut app,
+        "接口详情",
+        egui::accesskit::Role::DisclosureTriangle,
+    );
+    let (details_id, details) = accessible_control(
+        &output,
+        "接口详情",
+        egui::accesskit::Role::DisclosureTriangle,
+    );
+    let output = click(&mut harness, &mut app, details.center());
+    let (_, node) = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == details_id)
+        .unwrap();
+    assert_eq!(node.is_expanded(), Some(true));
+    let (metrics, output) = reveal_oem_control(
+        &mut harness,
+        &mut app,
+        "应用并回读",
+        egui::accesskit::Role::Button,
+    );
+    assert_width("oem-expanded-details-and-apply", &metrics);
+    assert_client_bounds(
+        "oem-expanded-details-and-apply",
+        &metrics,
+        harness.physical,
+        output.pixels_per_point,
+    );
+    assert!(app.controller.oem_preview.is_some());
+    assert!(!app.controller.busy());
+    verified += 1;
+    assert_eq!(verified, 21);
+    println!("Verified {verified} OEM layouts with six actual fixture controls: all four value domains, four minimum-window DPI scales, 160% text, light theme, and actual preview-action reachability; rendering and editing submit no backend request.");
+}
+
+#[test]
+fn unavailable_oem_controls_and_empty_inventory_cannot_offer_a_write() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    for status in [CapabilityStatus::Unavailable, CapabilityStatus::Unsupported] {
+        let mut app = oem_fixture();
+        app.controller.select_oem_control("usb_power_share");
+        let control = app
+            .controller
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .oem_controls
+            .last_mut()
+            .unwrap();
+        control.status = status;
+        control.current = None;
+        control.writable = false;
+        control.reason = Some("测试接口当前不可用，未进行任何硬件写入。".into());
+        let mut harness = Harness::new([360, 280], 1.0, fonts.clone());
+        assert_layout("oem-unavailable", &mut app, &mut harness, None, true);
+        let (_, output) = settle(&mut harness, &mut app);
+        assert!(app.controller.oem_unavailable_reason().is_some());
+        assert!(!output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| {
+                node.role() == egui::accesskit::Role::Button
+                    && matches!(node.label(), Some("预览更改" | "应用并回读"))
+                    && !node.is_disabled()
+            }));
+        assert!(!app.controller.busy());
+    }
+    let mut app = fixture("no_telemetry");
+    app.select_section(Section::Controls);
+    let mut harness = Harness::new([1120, 760], 1.0, fonts);
+    let (_, output) = settle(&mut harness, &mut app);
+    assert_page_title(&output, "未发现 OEM 控制接口");
+    assert!(app.controller.selected_oem_control.is_none());
+    assert!(app.controller.oem_unavailable_reason().is_some());
+    assert!(!app.controller.busy());
+}
+
 #[test]
 fn overview_gives_compact_space_to_real_device_readings() {
     let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
@@ -941,7 +1356,7 @@ fn assert_selected_navigation(output: &FullOutput, selected: &str) {
         .as_ref()
         .unwrap()
         .nodes;
-    for label in ["概览", "传感器", "型号目录"] {
+    for label in ["概览", "传感器", "控制", "型号目录"] {
         let (_, node) = nodes
             .iter()
             .find(|(_, node)| {
@@ -981,7 +1396,7 @@ fn wrapped_navigation_accepts_pointer_and_keyboard_at_minimum_window_size() {
                 ),
             );
             let mut bounds = Vec::new();
-            for label in ["概览", "传感器", "型号目录"] {
+            for label in ["概览", "传感器", "控制", "型号目录"] {
                 let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
                 assert!(client.expand(1.0).contains_rect(rect), "DPI={dpi} text={text_scale}: navigation '{label}' is clipped: {rect:?} outside {client:?}");
                 assert!(
@@ -994,7 +1409,7 @@ fn wrapped_navigation_accepts_pointer_and_keyboard_at_minimum_window_size() {
             }
             // These are pointer events at actual accessible button bounds, not a
             // direct mutation of the section field or a synthetic click result.
-            for label in ["型号目录", "传感器", "概览"] {
+            for label in ["型号目录", "控制", "传感器", "概览"] {
                 let (_, rect) = accessible_control(&output, label, egui::accesskit::Role::Button);
                 output = click(&mut harness, &mut app, rect.center());
                 assert_selected_navigation(&output, label);
@@ -1034,6 +1449,7 @@ fn wrapped_navigation_accepts_pointer_and_keyboard_at_minimum_window_size() {
     }
     for (label, title) in [
         ("型号目录", "型号目录"),
+        ("控制", "设备控制"),
         ("传感器", "传感器"),
         ("概览", "设备概览"),
     ] {

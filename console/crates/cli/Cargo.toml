@@ -9,6 +9,10 @@ rust-version.workspace = true
 name = "mechrevo-console"
 path = "src/main.rs"
 
+[[bin]]
+name = "mechrevo-console-oem-helper"
+path = "src/oem_helper.rs"
+
 [dependencies]
 mechrevo-console-core = { path = "../core" }
 serde_json.workspace = true

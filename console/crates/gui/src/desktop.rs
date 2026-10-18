@@ -1,7 +1,9 @@
 //! A quiet, responsive desktop surface built around real device readings.
 use crate::{appearance, reading_text, Controller, DisplayMode, JobKind, Preferences, Theme};
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Stroke, Vec2};
-use mechrevo_console_core::{CapabilityStatus, PowerProfile, SensorReading, Service};
+use mechrevo_console_core::{
+    CapabilityStatus, OemControlKind, OemDomain, OemValue, PowerProfile, SensorReading, Service,
+};
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
@@ -41,6 +43,7 @@ impl Default for RenderMetrics {
 pub enum Section {
     #[default]
     Dashboard,
+    Controls,
     Sensors,
     Catalog,
 }
@@ -285,8 +288,7 @@ impl DesktopApp {
         }
         if self.preferences.auto_refresh
             && !self.controller.busy()
-            && self.controller.preview.is_none()
-            && self.controller.brightness_preview.is_none()
+            && !self.controller.has_pending_preview()
             && self.controller.worker_available
             && !self.pending_close
             && self
@@ -297,7 +299,9 @@ impl DesktopApp {
             let _ = self.controller.refresh();
         }
         if self.controller.busy() {
-            ctx.request_repaint_after(Duration::from_millis(80));
+            if !self.controller.oem_write_state_unknown() {
+                ctx.request_repaint_after(Duration::from_millis(80));
+            }
         } else if self.preferences.auto_refresh {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
@@ -347,6 +351,7 @@ impl DesktopApp {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (section, label) in [
             (Section::Dashboard, "概览"),
+            (Section::Controls, "控制"),
             (Section::Sensors, "传感器"),
             (Section::Catalog, "型号目录"),
         ] {
@@ -404,6 +409,7 @@ impl DesktopApp {
             ui.add_space(8.0);
             match self.section {
                 Section::Dashboard => thermal_panel_rect = self.dashboard(ui),
+                Section::Controls => self.oem_controls(ui),
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
             }
@@ -431,7 +437,6 @@ impl DesktopApp {
 
     fn header(&mut self, ui: &mut egui::Ui) {
         let wide = ui.available_width() >= 760.0;
-        let width = ui.available_width();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
@@ -442,7 +447,9 @@ impl DesktopApp {
             if wide {
                 // The actions remain direct children of this row. A nested
                 // wrapping row would inherit the remaining sliver of width.
-                ui.add_space((width - 650.0).max(10.0));
+                // In a wrapping row available_width() means the maximum width
+                // after wrapping, not the remaining space on this line.
+                ui.add_space((ui.available_size_before_wrap().x - 280.0).max(8.0));
                 self.header_actions(ui);
             }
         });
@@ -489,6 +496,7 @@ impl DesktopApp {
         let wide = ui.available_width() >= 660.0;
         let title = match self.section {
             Section::Dashboard => "设备概览",
+            Section::Controls => "设备控制",
             Section::Sensors => "传感器",
             Section::Catalog => "型号目录",
         };
@@ -983,6 +991,244 @@ impl DesktopApp {
                 .color(green(ui)),
             );
         }
+        if let Some(applied) = &self.controller.oem_applied {
+            let label = self
+                .controller
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| {
+                    snapshot
+                        .oem_controls
+                        .iter()
+                        .find(|control| control.id == applied.control_id)
+                })
+                .map(|control| control.label.as_str())
+                .unwrap_or(&applied.control_id);
+            ui.label(
+                RichText::new(format!(
+                    "{label} 请求已回读：{} → {}",
+                    oem_value_text(&applied.previous),
+                    oem_value_text(&applied.confirmed)
+                ))
+                .color(green(ui)),
+            );
+            ui.label(
+                RichText::new(&applied.readback_scope)
+                    .size(13.0)
+                    .color(secondary(ui)),
+            );
+        }
+    }
+
+    fn oem_controls(&mut self, ui: &mut egui::Ui) {
+        let controls = self
+            .controller
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.oem_controls.clone())
+            .unwrap_or_default();
+        if controls.is_empty() {
+            empty_state(ui, "未发现 OEM 控制接口", "本页只显示这台设备实际提供的接口。刷新后仍为空，表示当前平台尚未提供可用的型号控制。");
+            return;
+        }
+        if self.controller.selected_oem_control.is_none() {
+            self.controller.select_oem_control(&controls[0].id);
+        }
+        surface(ui, |ui| {
+            ui.label(
+                RichText::new("选择要调节的设备功能")
+                    .size(14.0)
+                    .color(label_color(ui)),
+            );
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                for control in &controls {
+                    let selected = self.controller.selected_oem_control.as_deref()
+                        == Some(control.id.as_str());
+                    if ui
+                        .add_enabled(
+                            !self.controller.write_in_progress(),
+                            egui::Button::selectable(selected, &control.label),
+                        )
+                        .clicked()
+                    {
+                        self.controller.select_oem_control(&control.id);
+                    }
+                }
+            });
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(12.0);
+            let Some(control) = self.controller.selected_oem().cloned() else {
+                ui.label("所选设备接口已离线，请刷新并重新选择。");
+                return;
+            };
+            ui.label(RichText::new(&control.label).size(18.0));
+            ui.label(
+                RichText::new(format!(
+                    "当前  {}",
+                    control
+                        .current
+                        .as_ref()
+                        .map(oem_value_text)
+                        .unwrap_or_else(|| "未采集".into())
+                ))
+                .color(secondary(ui)),
+            );
+            let adjustable =
+                control.status == CapabilityStatus::Available && control.current.is_some();
+            if adjustable {
+                let mut target = self.controller.requested_oem_value.clone();
+                ui.add_space(8.0);
+                ui.add_enabled_ui(!self.controller.write_in_progress(), |ui| {
+                    match (&control.domain, &mut target) {
+                        (OemDomain::Boolean, Some(OemValue::Boolean(value))) => {
+                            ui.checkbox(value, "目标状态");
+                        }
+                        (OemDomain::Choices(choices), Some(OemValue::Choice(value))) => {
+                            ui.label(RichText::new("目标模式").size(13.0).color(secondary(ui)));
+                            ui.horizontal_wrapped(|ui| {
+                                for choice in choices {
+                                    ui.selectable_value(
+                                        value,
+                                        choice.clone(),
+                                        oem_choice_label(choice),
+                                    )
+                                    .on_hover_text(choice);
+                                }
+                            });
+                        }
+                        (OemDomain::Level { max }, Some(OemValue::Level(value))) => {
+                            let label = ui.label(format!("目标级别  {value} / {max}"));
+                            ui.scope(|ui| {
+                                slider_style(ui);
+                                ui.add(egui::Slider::new(value, 0..=*max).show_value(false))
+                                    .labelled_by(label.id);
+                            });
+                        }
+                        (OemDomain::Rgb, Some(OemValue::Rgb(rgb))) => {
+                            ui.label(RichText::new("目标颜色").size(13.0).color(secondary(ui)));
+                            ui.horizontal_wrapped(|ui| {
+                                for (label, channel) in
+                                    ["红", "绿", "蓝"].into_iter().zip(rgb.iter_mut())
+                                {
+                                    let label = ui.label(label);
+                                    ui.add(egui::DragValue::new(channel).range(0..=255))
+                                        .labelled_by(label.id);
+                                }
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(30.0, 22.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    rect,
+                                    6.0,
+                                    Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                                );
+                            });
+                        }
+                        _ => {
+                            ui.label("接口公布的值与范围不一致，请刷新后重新选择。");
+                        }
+                    }
+                });
+                if let Some(target) = target {
+                    self.controller.set_oem_target(target);
+                }
+            }
+            if control.kind == OemControlKind::ChargingProfile {
+                ui.label(
+                    RichText::new("这里选择充电模式，不代表固定的 60% 或 80% 充电上限。")
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            }
+            if matches!(
+                control.kind,
+                OemControlKind::KeyboardBrightness | OemControlKind::KeyboardColor
+            ) {
+                ui.label(
+                    RichText::new("键盘灯读数为请求 / 驱动状态，未测量实际发光效果。")
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            }
+            ui.label(
+                RichText::new(&control.readback_scope)
+                    .size(13.0)
+                    .color(secondary(ui)),
+            );
+            let reason = self.controller.oem_unavailable_reason().map(str::to_owned);
+            if let Some(reason) = &reason {
+                unavailable(ui, reason);
+            }
+            if let Some(plan) = &self.controller.oem_preview {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} → {}",
+                        oem_value_text(&plan.previous),
+                        oem_value_text(&plan.target)
+                    ))
+                    .color(green(ui)),
+                );
+                if let Some(brightness) = plan.companion_brightness {
+                    ui.label(format!("伴随键盘亮度  {brightness}"));
+                }
+                if plan.requires_privilege {
+                    ui.label(
+                        RichText::new("应用时请求管理员授权")
+                            .size(13.0)
+                            .color(secondary(ui)),
+                    );
+                }
+                ui.label(
+                    RichText::new(&plan.readback_scope)
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+            }
+            egui::CollapsingHeader::new("接口详情")
+                .id_salt(("oem-interface-details", &control.id))
+                .show(ui, |ui| {
+                    ui.label(&control.id);
+                    evidence(ui, &control.source.backend, &control.source.path);
+                    ui.label(
+                        RichText::new(&control.binding)
+                            .size(13.0)
+                            .color(secondary(ui)),
+                    );
+                });
+            if reason.is_none() || self.controller.oem_preview.is_some() {
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(
+                            reason.is_none() && !self.controller.busy(),
+                            egui::Button::new("预览更改"),
+                        )
+                        .clicked()
+                    {
+                        let _ = self.controller.preview_oem();
+                    }
+                    if self.controller.oem_preview.is_some()
+                        && ui
+                            .add_enabled(
+                                reason.is_none() && !self.controller.busy(),
+                                primary_button(ui, "应用并回读"),
+                            )
+                            .clicked()
+                    {
+                        if let Err(error) = self.controller.apply_oem_preview() {
+                            self.controller.error = Some(mechrevo_console_core::ControlError::new(
+                                "oem_preview_invalidated",
+                                format!("设备请求或接口已变化，请重新预览：{error:?}"),
+                            ));
+                        }
+                    }
+                });
+            }
+        });
     }
 
     fn power_controls(&mut self, ui: &mut egui::Ui) {
@@ -1637,6 +1883,23 @@ fn profile_label(profile: &str) -> &str {
         _ => profile,
     }
 }
+fn oem_value_text(value: &OemValue) -> String {
+    match value {
+        OemValue::Boolean(true) => "开启".into(),
+        OemValue::Boolean(false) => "关闭".into(),
+        OemValue::Choice(choice) => oem_choice_label(choice).into(),
+        OemValue::Level(value) => value.to_string(),
+        OemValue::Rgb([red, green, blue]) => format!("#{red:02X}{green:02X}{blue:02X}"),
+    }
+}
+fn oem_choice_label(choice: &str) -> &str {
+    match choice {
+        "high_capacity" => "高容量",
+        "balanced" => "均衡",
+        "stationary" => "长期接电",
+        _ => choice,
+    }
+}
 fn is_temperature(r: &SensorReading) -> bool {
     matches!(r.kind.as_str(), "temperature" | "temp")
         && matches!(r.unit.as_str(), "°C" | "C" | "celsius")
@@ -1914,6 +2177,7 @@ mod tests {
             power_policy: PowerPolicy::default(),
             diagnostics: vec![],
             brightness: vec![],
+            oem_controls: vec![],
         }
     }
     #[test]
@@ -1994,5 +2258,63 @@ mod tests {
         }
         fan.label = "mechrevo_ec:GPU fan".into();
         assert_eq!(fan_component(&fan), Some("GPU"));
+    }
+
+    #[test]
+    fn native_close_waits_for_oem_apply_and_stays_blocked_for_unknown_helper() {
+        for failure in [None, Some("oem_helper_liveness_unknown")] {
+            let (mut controller, ready, release) = crate::tests::gated_oem_controller(failure);
+            crate::tests::prepare_oem(&mut controller);
+            controller.preview_oem().unwrap();
+            crate::tests::finish(&mut controller);
+            controller.apply_oem_preview().unwrap();
+            ready.recv_timeout(Duration::from_secs(2)).unwrap();
+            let mut app = DesktopApp::with_controller(
+                controller,
+                Preferences {
+                    auto_refresh: false,
+                    ..Default::default()
+                },
+            );
+            let ctx = egui::Context::default();
+            let mut close = egui::RawInput::default();
+            close
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .events
+                .push(egui::ViewportEvent::Close);
+            let output = ctx.run_pass(close, |ctx| app.tick(ctx));
+            let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+            assert!(commands.contains(&egui::ViewportCommand::CancelClose));
+            assert!(!commands.contains(&egui::ViewportCommand::Close));
+            // This close-event harness has no renderer or texture consumer.
+            // Explicitly discard only its unrendered texture deltas.
+            output.drop_without_applying_deltas();
+            assert!(app.pending_close);
+            release.send(()).unwrap();
+            if failure.is_some() {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while app.controller.error.is_none() && Instant::now() < deadline {
+                    app.controller.poll();
+                    std::thread::yield_now();
+                }
+                assert!(app.controller.write_in_progress());
+                let output = ctx.run_pass(egui::RawInput::default(), |ctx| app.tick(ctx));
+                assert!(app.pending_close);
+                assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .contains(&egui::ViewportCommand::Close));
+                output.drop_without_applying_deltas();
+            } else {
+                crate::tests::finish(&mut app.controller);
+                let output = ctx.run_pass(egui::RawInput::default(), |ctx| app.tick(ctx));
+                assert!(!app.pending_close);
+                assert!(output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .contains(&egui::ViewportCommand::Close));
+                output.drop_without_applying_deltas();
+            }
+        }
     }
 }
