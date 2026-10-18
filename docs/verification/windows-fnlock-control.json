@@ -5,11 +5,11 @@
   "scope": "Windows x64 Fn-lock source candidate only. Real native transport and qualification paths are implemented; offline compilation does not establish Windows installation, UAC, driver interaction or physical Fn behavior.",
   "source": {
     "base_commit_at_documentation": "057789e10c3df94ffa7ccd6b99de42f76d0116a1",
-    "feature_source_commit": null,
-    "feature_source_committed": false,
+    "feature_source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+    "feature_source_committed": true,
     "final_input_snapshot_sha256": "2d8e7d31acbdf89ae7b02cb73afc583378af3d02c7bead0ae3e34db64ef9303f",
     "final_verification_pending": false,
-    "scope": "Frozen runtime and verification inputs passed local suites. Feature commit identity is recorded after signing; Windows runtime acceptance remains absent.",
+    "scope": "Signed feature commit binds the 92 frozen verification inputs. Linux packaging metadata is pinned separately; Windows runtime acceptance remains absent.",
     "final_input_files": 92
   },
   "implemented": {
@@ -60,7 +60,11 @@
       "errors": 0,
       "skipped": 0,
       "receipt_sha256": "8855c76950a9a08bc45f82dc73f2965524e0ef17c07bd4439101b8be83602bc1",
-      "scope": "Full console domain after Linux packaging feature and required-input changes; not hardware acceptance."
+      "scope": "Full console domain after Linux packaging feature and required-input changes; not hardware acceptance.",
+      "tracking_session": "b8cec1e4-3c18-4d72-9f3e-8438b8ec3dc5",
+      "tracking_status": "partial",
+      "gap_count": 16,
+      "unresolved_event_count": 0
     },
     "first_windows_compile": {
       "exit_code": 0,
@@ -137,7 +141,6 @@
     }
   },
   "remaining": [
-    "Commit qualified source separately; no remote publication is established by this receipt.",
     "Run PowerShell parser/native verifier, MSVC and WiX MSI build on native Windows x64.",
     "Verify install/upgrade/rollback/Repair/removal, protected ACLs, active-writer refusal, crash gate residue and same-product repair on Windows.",
     "Verify both UAC consent and alternate-administrator credential paths, strict peer authentication and actual helper completion on Windows.",
@@ -148,5 +151,11 @@
     "docs/WINDOWS-FNLOCK-CONTROL-DESIGN.md",
     "docs/verification/windows-ec-abi.json",
     "packaging/windows/README.md"
-  ]
+  ],
+  "publication": {
+    "feature_source_locally_committed": true,
+    "remote_push_verified": false,
+    "aur_published": false,
+    "scope": "Signed local feature commit only; installation and remote publication have separate evidence."
+  }
 }
