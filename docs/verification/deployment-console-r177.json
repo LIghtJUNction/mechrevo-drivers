@@ -1,0 +1,393 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-18T11:57:53.170753+00:00",
+  "status": "linux_console_r177_installed_readonly_cli_isolated_gui_cleanup_and_independent_archive_verified",
+  "source": {
+    "commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+    "commit_signature": "G",
+    "feature_source_pushed": true,
+    "snapshot_sha256": "db4fd335730b372e46b44c8544d1a36537828c4a2fafd7925f69c9c6304e584d",
+    "input_files": 95,
+    "matches_green_verification_source": true,
+    "candidate_evidence_ref": "docs/verification/os-profile-fan-control.json",
+    "candidate_scope": "Historical source/offline qualification remains separate from this later actual Linux installation and any native or physical-effect acceptance."
+  },
+  "verification": {
+    "rust_workspace_all_features": {
+      "passed": 580,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 0,
+      "fmt": "passed",
+      "clippy": "passed",
+      "windows_compile": "passed",
+      "receipt_sha256": "31808065f73b46e8048ecbf10257a3bce32efd792654174137ccf2bd705ac5c6"
+    },
+    "python_console": {
+      "passed": 143,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "receipt_sha256": "521113f1eda994868a33f2d174df3f0e22a8751950bf52bb3239dad542c4ccb9"
+    },
+    "actual_linux_production_features": {
+      "passed": 579,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 0,
+      "source_unchanged": true,
+      "features": "mechrevo-console-gui/gui",
+      "receipt_sha256": "a6dd742f36cc41aaa0e18baae85849f6697b891bdc466100fdaa04749bbda45a"
+    },
+    "scope": "Complete offline suites and actual Linux feature selection. Passing tests/Windows compilation are not live service, fan lease or Windows runtime acceptance."
+  },
+  "installation": {
+    "installed_package": "mechrevo-console 0.1.0.r177.gd48692a-1",
+    "previous_console_package": "mechrevo-console 0.1.0.r174.g256fb05-1",
+    "unchanged_packages": {
+      "power": "mechrevo-power-control 0.1.0-18",
+      "driver": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1"
+    },
+    "installer_exit_code": 0,
+    "installed_verification": "passed",
+    "verified_regular_payload_files": 11,
+    "all_payload_bytes_modes_root_ownership_match": true,
+    "pacman_integrity": {
+      "console": {
+        "files": 23,
+        "altered": 0
+      },
+      "power": {
+        "files": 26,
+        "altered": 0
+      },
+      "driver": {
+        "files": 126,
+        "altered": 0
+      }
+    },
+    "runtime_guard_before_and_after": true,
+    "protected_policy": {
+      "cpu_pl1_watts": 55,
+      "target_celsius": 90,
+      "polling_seconds": 1,
+      "rapl_debounce_seconds": 0,
+      "unchanged": true
+    },
+    "protected_services": {
+      "count": 4,
+      "pids_and_start_times_unchanged": true
+    },
+    "efi": {
+      "checked_files": 4,
+      "hashes_unchanged": true
+    },
+    "loaded_module_count": 6,
+    "loaded_module_identities_unchanged": true,
+    "new_fan_interface_loaded": false,
+    "power_reinstalled": false,
+    "driver_reinstalled": false,
+    "driver_reloaded": false,
+    "rebooted": false,
+    "hardware_setter_executed_during_install": false,
+    "backup_directory": "/home/lightjunction/Backups/mechrevo-drivers/light/2026-10-18/os-policy-fan-console-0.1.0.r177.gd48692a-1",
+    "private_installed_verification_sha256": "22c84d3c8e4313562c770a1f5c8979aaee96b6f3c78f5a34cf4bedad3149bc5f",
+    "evidence_basis": "Parent supplied actual root installer terminal, payload/integrity and before/after runtime-guard facts. Root-only evidence was not bypassed by this documentation agent.",
+    "independent_root_runtime_audit": {
+      "status": "passed",
+      "receipt_sha256": "ecff3c5cc8f3aeafa2909d7aaab63c70a7b307fe5a8531e00eaa61677ab9c226",
+      "both_guard_baselines_and_current_passed": true,
+      "services_pid_start_and_state_unchanged": true,
+      "efi_and_loaded_module_identities_unchanged": true,
+      "cpu_policy_55w_90c_1s_0s_preserved": true,
+      "msr_and_mmio_limits_reported_watts": [
+        55,
+        140
+      ],
+      "scope": "Independent readonly audit after installation; preserved policy/limit readback is not a new CPU setter or sustained-load acceptance."
+    }
+  },
+  "archive": {
+    "filename": "mechrevo-console-0.1.0.r177.gd48692a-1-x86_64.pkg.tar.zst",
+    "sha256": "dd54562e8061dc86ce10cc8d00c919f2f12ddc179ef1b30f4227ed6a306daa04",
+    "bytes": 7648014,
+    "provenance_sha256": "39de8d67ac3b84cbb8b4ef1014d11f4a8bab499d3ef5e31014a014d3a86e5e29",
+    "recipe_sha256": "86237b171ef3cd86eb82ab734d8622ed372c8bfebe008e11132cd4d8e620dae6",
+    "BUILDINFO_recipe_hash_matches": true,
+    "release_build": "--release --workspace --features mechrevo-console-gui/gui --locked --offline",
+    "reused_target": true,
+    "fresh_target_directory": false,
+    "workspace_crates_recompiled": [
+      "mechrevo-console-cli",
+      "mechrevo-console-core",
+      "mechrevo-console-gui"
+    ],
+    "scope": "Existing release target reused; all three workspace crates recompiled from this build pinned clean source. Build provenance installed=false retains its earlier build-stage scope.",
+    "private_backup_manifest_sha256": "8034d9457996f48ec75f383c5619ef2ec2ddc07563e5c94ec4b418f7b57f0616",
+    "independent_backup_inventory_audit": {
+      "status": "passed",
+      "receipt_sha256": "ecff3c5cc8f3aeafa2909d7aaab63c70a7b307fe5a8531e00eaa61677ab9c226",
+      "original_regular_files": 28,
+      "exact_inventory_including_manifest": 29,
+      "fresh_openat_directory_descriptor": true,
+      "all_original_files_root_owned_mode_0600_single_link": true,
+      "two_pass_sha256_and_stable_file_identity_verified": true,
+      "archive_provenance_current_payloads_exact": true,
+      "earlier_validation_script_failures_retained": [
+        "An initial quoting syntax failure did not enter the root audit.",
+        "A later validator local-variable overwrite caused a self-check failure; the validator was corrected and the full readonly audit rerun passed."
+      ],
+      "backup_or_system_modified_to_make_validation_pass": false,
+      "scope": "New readonly validation results supplement installation evidence; the earlier failed validator receipts/diffs remain preserved and the protected backup was not rewritten."
+    },
+    "backup_keep_classification": {
+      "label": "keep",
+      "regular_files": 29,
+      "receipt_sha256": "513dc83c299464edd38a3585e9bb71de214f25fe9a0fbcead2ba0530e6b9a5c3",
+      "post_classification_bytes_and_stat_identity_unchanged": true,
+      "verified_unchanged_fields": [
+        "dev",
+        "inode",
+        "mode",
+        "uid",
+        "gid",
+        "nlink",
+        "size",
+        "mtime",
+        "ctime"
+      ],
+      "scope": "All 29 backup regular files classified keep; a subsequent readonly check confirmed bytes and recorded file identity/metadata unchanged. Classification is not a disposal permission."
+    }
+  },
+  "payload_files": {
+    "usr/bin/mechrevo-console": {
+      "sha256": "025d8401c4547d6c9aa018eda71c8e1a0f32857b8b57e14af911e607c282b7b6",
+      "bytes": 2838080,
+      "mode": 493
+    },
+    "usr/bin/mechrevo-console-gui": {
+      "sha256": "37df1a5d86721e5a543f1ea93d35d093a6caa04e789b13311123b06c0bed2595",
+      "bytes": 23716248,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/fan-helper": {
+      "sha256": "4b10635998427b92a19726af957ee2c4287f01c1d90ad1afcbf8f080227dbfae",
+      "bytes": 833280,
+      "mode": 493
+    },
+    "usr/lib/mechrevo-console/oem-helper": {
+      "sha256": "2c05f3be52fe16ebc97237583fe5cbbae4ac78df3e1cdc3de4316a9ecaaee2f5",
+      "bytes": 925568,
+      "mode": 493
+    },
+    "usr/share/applications/best.lmm.mechrevo-console.desktop": {
+      "sha256": "0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48",
+      "bytes": 524,
+      "mode": 420
+    },
+    "usr/share/doc/mechrevo-console/MECHREVO-CONSOLE.md": {
+      "sha256": "e25fb5311a6a660c19b56d74a76eb5eeab5110a3e84cc51e2cd345c45279a5f9",
+      "bytes": 3768,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Cormorant-OFL.txt": {
+      "sha256": "60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/LICENSE": {
+      "sha256": "cd6cc5e62e8217ce3c538d256e8c1ef9c9128dc7b30b825c1512676c66461657",
+      "bytes": 1089,
+      "mode": 420
+    },
+    "usr/share/licenses/mechrevo-console/Manrope-OFL.txt": {
+      "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+      "bytes": 4387,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.fan.policy": {
+      "sha256": "ca2b1b6bef6a8acd42047c2caae3edb7626c2346e72a0a5bbaf78c7571a4d76d",
+      "bytes": 1056,
+      "mode": 420
+    },
+    "usr/share/polkit-1/actions/org.mechrevo.console.oem.policy": {
+      "sha256": "61872098435090906cb0b4d6ada336edd883dc712e102a8d6e6e07733100d47f",
+      "bytes": 991,
+      "mode": 420
+    }
+  },
+  "installed_runtime_validation": {
+    "readonly_cli": {
+      "status": "passed",
+      "receipt_sha256": "8c066e6578896f032531cce5a3a1c294ecb29231cdfba0a960765d38e2b0a800",
+      "cli_receipt_sha256": "e0b10a0452d2e5586e79e72a667fb6d13a83ec197d55d31b68f731e33b584cef",
+      "ordinary_uid": 1000,
+      "installed_cli_sha256": "025d8401c4547d6c9aa018eda71c8e1a0f32857b8b57e14af911e607c282b7b6",
+      "commands_exited_zero": 4,
+      "all_stderr_empty": true,
+      "thermal_frames": 2,
+      "system_power_service_source_observed": true,
+      "profile_before": "balanced",
+      "profile_after": "balanced",
+      "profile_dry_run_target": "balanced",
+      "expected_current_guard": "balanced",
+      "hardware_setter_executed": false,
+      "scope": "Installed ordinary-user status, two thermal frames, same-profile PPD dry-run with exact-current guard, and final status. No ActiveProfile Set, profile transition, released holds, CPU or fan transaction acceptance."
+    },
+    "private_native_gui": {
+      "status": "limited_isolated_service_display_fan_empty_state_and_cleanup_verified",
+      "receipt_sha256": "8c066e6578896f032531cce5a3a1c294ecb29231cdfba0a960765d38e2b0a800",
+      "review_sha256": "9d3c3a3a9607e4e94ddf9e0e071cd47abc757d084eb431587770734cde0ac6eb",
+      "gui_sha256": "37df1a5d86721e5a543f1ea93d35d093a6caa04e789b13311123b06c0bed2595",
+      "run_sha256": "ead93ca9467e3078ffb463eac7325e50d54c0a7b760eb4fa05fc68c84bbcb727",
+      "capture_sha256": "cbf3e786c3e8e72061733fd1d729afd830ad393c4f33b5b7d428f5580a403005",
+      "screenshots": {
+        "overview.png": {
+          "sha256": "8a8443e5e270106a956b4d636f42f06f2c2bcce69ad6943f51de3c4d0c011280",
+          "width": 1280,
+          "height": 720
+        },
+        "fan-unprobed.png": {
+          "sha256": "831a39976ff1d88b9acaf92fb1fbc3f6f01158b8fed4a2491b4d23905cad6f0b",
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "screenshots_visually_reviewed": true,
+      "screenshots_independently_viewed_by_root": true,
+      "environment": "Private native Linux Cage, XDG, D-Bus and AT-SPI with exact own-PID fan navigation; no user desktop access.",
+      "system_power_service_display_verified": true,
+      "fan_unprobed_and_no_draft_verified": true,
+      "authorization_actions_activated": 0,
+      "apply_actions_activated": 0,
+      "probe_or_curve_import_performed": false,
+      "native_minimum_floor_operation_verified": false,
+      "footer_reachability_verified": false,
+      "normal_close_verified": false,
+      "cleanup": {
+        "first": {
+          "app_pid": 2253513,
+          "app_wait": -15,
+          "registry_pid": 2253502,
+          "registry_wait": -15,
+          "compositor_pid": 2253458,
+          "compositor_wait": 0
+        },
+        "successful_retry": {
+          "app_pid": 2254873,
+          "app_wait": -15,
+          "registry_pid": 2254862,
+          "registry_wait": -15,
+          "compositor_pid": 2254818,
+          "compositor_wait": 0
+        },
+        "own_pid_exists_after": {
+          "2253513": false,
+          "2253502": false,
+          "2253458": false,
+          "2254873": false,
+          "2254862": false,
+          "2254818": false
+        },
+        "own_process_group_members_after": [],
+        "native_gui_or_cage_after": [],
+        "sigkill_sent": false,
+        "normal_close_verified": false
+      },
+      "first_attempt": {
+        "failed_at": "Auxiliary test harness accessibility desktop was not ready; None dereference before any navigation action.",
+        "reason": "AttributeError: 'NoneType' object has no attribute 'get_child_count'",
+        "evidence_preserved": true,
+        "retry_change": "Only copied untracked QA script: bounded 4 second accessibility desktop readiness and None child protection; no Rust/source or installed binary changes."
+      },
+      "scope": "Actual installed Linux readonly service display and unprobed fan empty-state rendering/navigation only. SIGTERM and actual waits verify owned-process cleanup, not graceful close, live setter, floor/lease runtime or physical hardware effect."
+    },
+    "ppd_live_set_verified": false,
+    "fan_native_lease_or_write_verified": false,
+    "rpm_cooling_or_noise_verified": false,
+    "windows_runtime_verified": false
+  },
+  "tracking": {
+    "installation": {
+      "session": "64ebad9f-a0e5-4a89-94ce-a76823e00234",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "build": {
+      "session": "ef7846f7-cf6d-4f4d-bf6c-2506b6f39db7",
+      "command_exit_code": 0,
+      "tracking_status": "partial",
+      "gap_count": 1,
+      "unresolved_event_count": 0,
+      "scope": "One fakeroot temporary pkgdir permission gap, retained separately from the successful build command."
+    },
+    "actual_linux_production_features": {
+      "session": "e143b835-1e4f-4fd9-8c24-7de80e7ec54c",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "source": {
+      "session": "dd25938f-fdc6-43c1-a528-4487edfd0376",
+      "status": "finished",
+      "final_tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "metadata_finalization_session": "7692094a-07ef-4208-b2d7-5c72b11757f6",
+      "metadata_prior_failed_sessions": [
+        "3a9457a7-7b31-4f41-b446-90ffd2fefe28",
+        "7ddfcfde-c183-4556-b784-945df81a7e76"
+      ]
+    },
+    "native_first_attempt": {
+      "command_exit_code": 2,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "session": "0958cd5f-837e-4a2d-b381-d6af628ac4f8",
+      "command_status": "failed_before_navigation"
+    },
+    "native_successful_retry": {
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "session": "dfae0707-8344-4910-a371-b4632c482362",
+      "command_status": "succeeded"
+    },
+    "native_final_receipt": {
+      "session": "07b65fe7-4a11-4226-8931-3434b7d642f3",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "independent_root_installation_audit": {
+      "session": "5b384abf-edb5-4d97-a89d-d798cf7fb159",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    },
+    "backup_keep_classification": {
+      "session": "9bb6261e-07fd-4d77-919e-032843813d4d",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
+    }
+  },
+  "publication": {
+    "feature_source_pushed": true,
+    "aur_published": false,
+    "windows_msi_runtime_accepted": false
+  },
+  "remaining": [
+    "No live PPD Set, profile-transition/hold side effects, native floor operation or real fan lease/write acceptance.",
+    "RPM/cooling/noise, graceful-close, below-viewport reachability, Windows runtime and suspend/reboot acceptance remain unverified."
+  ],
+  "parity_scope": "No family or issue closure; historical r174/r171/r168 acceptance is not transferred to this binary."
+}

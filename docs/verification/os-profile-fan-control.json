@@ -110,8 +110,14 @@
       "scope": "Second whole verification attempt failed GUI type-complexity lint. A minimal named-payload fix and stable rerun are pending; no final green or deployment is established by the passing test/compile subsets."
     },
     "actual_linux_production_features": {
-      "status": "pending",
-      "scope": "The separate test run with the actual Linux release feature selection has not been accepted here yet."
+      "status": "passed",
+      "tests_passed": 579,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 0,
+      "source_unchanged": true,
+      "receipt_sha256": "a6dd742f36cc41aaa0e18baae85849f6697b891bdc466100fdaa04749bbda45a",
+      "scope": "Offline actual Linux release feature selection only; not installed runtime or hardware acceptance."
     },
     "markref": {
       "marks": 45,
@@ -131,10 +137,17 @@
   "tracking": {
     "source": {
       "session": "dd25938f-fdc6-43c1-a528-4487edfd0376",
-      "status": "running",
+      "status": "finished",
       "gap_count_observed": 0,
       "unresolved_event_count_observed": 0,
-      "final_tracking_status": "pending_root_finalization"
+      "final_tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0,
+      "metadata_finalization_session": "7692094a-07ef-4208-b2d7-5c72b11757f6",
+      "metadata_prior_failed_sessions": [
+        "3a9457a7-7b31-4f41-b446-90ffd2fefe28",
+        "7ddfcfde-c183-4556-b784-945df81a7e76"
+      ]
     },
     "packaging_contracts": {
       "session_prefix": "37f072aa",
@@ -163,6 +176,13 @@
       "gap_count": 0,
       "unresolved_event_count": 0,
       "command_exit_code": 0
+    },
+    "actual_linux_production_features": {
+      "session": "e143b835-1e4f-4fd9-8c24-7de80e7ec54c",
+      "command_exit_code": 0,
+      "tracking_status": "complete",
+      "gap_count": 0,
+      "unresolved_event_count": 0
     }
   },
   "parity_scope": "Only bounded candidate progress for F03/F04/F24; all 28 feature families and 77 issues remain unresolved. No fan preset/full-speed/acoustic fix is claimed.",
@@ -171,5 +191,11 @@
     "docs/FAN-CURVE-CONTROL.md",
     "docs/MECHREVO-CONSOLE.md"
   ],
-  "upstream_api_reference": "https://upower.pages.freedesktop.org/power-profiles-daemon/gdbus-org.freedesktop.UPower.PowerProfiles.html"
+  "upstream_api_reference": "https://upower.pages.freedesktop.org/power-profiles-daemon/gdbus-org.freedesktop.UPower.PowerProfiles.html",
+  "record_scope": "Historical source/offline qualification recorded before r177 installation. Original candidate-stage not-installed/native acceptance fields retain that scope; subsequent_linux_deployment records the later installed package.",
+  "subsequent_linux_deployment": {
+    "installed_package": "mechrevo-console 0.1.0.r177.gd48692a-1",
+    "evidence_ref": "docs/verification/deployment-console-r177.json",
+    "scope": "Linux package installation only; live PPD setter, real fan lease/RPM/noise and Windows runtime remain unverified."
+  }
 }

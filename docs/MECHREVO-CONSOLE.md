@@ -2,15 +2,15 @@
 
 源码位于 [console](../console/README.md)，与内核驱动和 TCC 分开构建。CLI 和原生图形界面使用同一 Rust 核心。Windows 和 Linux 各有系统后端；实际功能以运行时能力结果为准。
 
-## 系统电源策略与风扇最低比例源码候选（尚未安装）
+## 系统电源策略与风扇最低比例（r177 已安装，实机待验）
 
 Linux 源码新增 PPD 系统电源服务读取／设置及界面；只有确认两个服务名字都无 owner 才回退 ACPI，异常或身份变化不绕过服务。预览绑定真实公布档位、当前值、应用临时请求和服务身份；设置可能先释放应用请求再失败，故 PPD 不自动重试或恢复。CLI 新增 `profile … --expected-current RAW`，精确核对原始名称／GUID；刷新保留未知回执，新的显式意图和本地 worker 完成后关闭仍允许。[系统电源策略](SYSTEM-POWER-PROFILES.md)
 
-完整用户风扇曲线新增可选 CPU／GPU 最低输出比例 `1..100%`，默认不设置且保留 0 值档位；只有显式选定通道并允许抬高 0 值才修改它们。GUI 点“应用到草稿”后仍需预览和显式应用，继续走原有租约及原表恢复。它是占空比下限，不是 RPM 或已验证的避振参数。[风扇合同](FAN-CURVE-CONTROL.md#最低输出比例源码候选尚未安装)
+完整用户风扇曲线新增可选 CPU／GPU 最低输出比例 `1..100%`，默认不设置且保留 0 值档位；只有显式选定通道并允许抬高 0 值才修改它们。GUI 点“应用到草稿”后仍需预览和显式应用，继续走原有租约及原表恢复。它是占空比下限，不是 RPM 或已验证的避振参数。[风扇合同](FAN-CURVE-CONTROL.md)
 
-本轮签名源码 `d48692a` 已推送，95 份冻结输入通过 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 编译；实际 Linux 发布特性测试另在进行。纯策略模块的限定风扇负例和完整离线套件都不能算原生 CLI／GUI 或实机通过。当前安装仍为 r174，原驱动尚未新加载，没有新增风扇写入或噪声验收。[本轮候选收据](verification/os-profile-fan-control.json)
+本轮签名源码 `d48692a` 已推送，95 份冻结输入通过 580 项 Rust／143 项 Python 控制台检查及格式、Clippy、Windows 编译；实际 Linux 发布特性另有 579 项测试通过、源码前后一致。Linux `0.1.0.r177.gd48692a-1` 已安装，11 项载荷和包完整性核对通过，原 55W／90°C／1 秒／0 秒策略、四个服务、EFI 与六个加载模块身份不变；没有 setter、重载或重启。安装版普通用户四条只读命令全部退出 0、stderr 为空；真实 PPD 当前 `balanced` 的带基线校验预览前后未变，两帧热采样正常。私有原生窗口的系统电源服务概览、未探测且无草稿的风扇页经两张 1280×720 截图核对，根代理也逐张查看；没有授权、应用、Set、探测或导入。首次 AT-SPI 桌面未就绪导致导航前失败，证据保留；仅测试脚本加有界等待和空值保护后重试通过，Rust 和安装 ELF 未改。应用／registry 以 SIGTERM 等待回收，Cage 退出 0，自有 PID 和进程组均空；不证明正常关窗、最低比例运行或页尾可达。独立 root 审计已双遍核对 28 份原文件及清单共 29 项，包载荷／策略／服务／EFI／模块身份再次通过。离线检查和安装都不能算 PPD 实写、真实风扇租约或声音验收。[r177 安装收据](verification/deployment-console-r177.json)、[历史候选收据](verification/os-profile-fan-control.json)
 
-## r174 控制台已安装（2026-10-18）
+## r174 历史安装验收（2026-10-18）
 
 Linux 控制台 `0.1.0.r174.g256fb05-1` 已真实安装，功能源码为本地签名提交 `256fb05aded292eca662bc0eaf1d876320596a24`，打包元数据另由签名提交 `c0b11920db7a03a5bc32fb033bd9a470bd1db12c` 固定。92 份输入匹配最终 519 项全特性 Rust／140 项 Python 控制台检查；实际 Linux 包只启用 GUI 特性，对应离线测试 518 项通过、0 失败。另一次 Windows all-targets 仅编译检查退出 0，保留两条 unused 警告，不能算 Windows 运行通过。[r174 安装收据](verification/deployment-console-r174.json)
 
@@ -18,7 +18,7 @@ Linux 控制台 `0.1.0.r174.g256fb05-1` 已真实安装，功能源码为本地�
 
 已安装原生 GUI 在私有 Cage／XDG／D-Bus／AT-SPI 环境中完成概览、“控制”和未检查的 CPU 功耗页核对，三张 1280×720 截图经人工复核；根代理另看过概览。只点击本进程两个选择器，未检查 CPU、授权或应用，Linux 界面没有 Windows Fn 入口。应用和自有 registry 经 SIGTERM 回收，compositor 退出 0；无超时或 SIGKILL，原有用户 registry 不变，没有访问实际用户桌面。这是隔离启动／显示验收，不是正常关窗或硬件控制验收；独立清理检查确认自有应用与 registry 的精确 PID 已消失、私有进程组为空，wrapper 已等待结束且退出 0。r171 亮度写入与 r168 CPU 事务仍只属于各自历史版本。
 
-本次仅升级控制台：功耗工具仍为 `0.1.0-18`，驱动仍为 `4.24.0.r162.ge4bfb3f-1`，未重装两者、重载、重启或执行硬件 setter。55W／90°C／1 秒／0 秒策略、四个服务的 PID／启动时间、四份 EFI 摘要和六个加载模块身份均不变，新风扇接口仍未加载。安装跟踪 complete、0 gap／0 unresolved；更早的 wrapper 因把文件作为 root 参数而拒绝，子进程未开始，这次失败另记，不覆盖。源码未推送，未发布 AUR；真实风扇写入、噪声效果及 Windows 兼容均未增加验收结论。
+本次仅升级控制台：功耗工具仍为 `0.1.0-18`，驱动仍为 `4.24.0.r162.ge4bfb3f-1`，未重装两者、重载、重启或执行硬件 setter。55W／90°C／1 秒／0 秒策略、四个服务的 PID／启动时间、四份 EFI 摘要和六个加载模块身份均不变，新风扇接口仍未加载。安装跟踪 complete、0 gap／0 unresolved；更早的 wrapper 因把文件作为 root 参数而拒绝，子进程未开始，这次失败另记，不覆盖。当次验收时源码尚未推送，后续已同步，未发布 AUR；真实风扇写入、噪声效果及 Windows 兼容均未增加验收结论。
 
 ## Windows Fn 锁源码候选（尚未安装）
 
@@ -34,7 +34,7 @@ mechrevo-console.exe oem windows-fn set off
 
 固定支持清单当前只有未验收 candidate；默认关闭 `windows-fnlock-candidate` 编译功能，没有正式 `runtime_accepted` 名单，也没有用户自填清单、地址或跳过资格的运行开关。MSI 配方及维护 gate 已落源码；维护 DLL 仅通过 MinGW 交叉编译／链接，MSVC／WiX／MSI 构建、签名发布、Windows 安装升级／Repair、UAC 及硬件读写均待验收。最终离线检查已通过 519 项 Rust／140 项 Python 控制台测试，格式、Clippy 和 Windows 目标编译通过；这不代替 Windows 实机验收。[候选收据](verification/windows-fnlock-control.json)、[历史设计约束](WINDOWS-FNLOCK-CONTROL-DESIGN.md)、[Windows 构建说明](../packaging/windows/README.md)。
 
-本机已安装控制台现为上文 Linux `0.1.0.r174.g256fb05-1`；“候选尚未安装”指 Windows 产物。本轮没有安装 Windows 候选、重载驱动或重启，也不增加完整兼容或问题已解决的结论。
+本机已安装控制台现为上文 Linux `0.1.0.r177.gd48692a-1`；“候选尚未安装”指 Windows 产物。本轮没有安装 Windows 候选、重载驱动或重启，也不增加完整兼容或问题已解决的结论。
 
 ## r171 历史安装验收（2026-10-18）
 
@@ -141,7 +141,7 @@ Rust 身份识别使用独立的精确规则。品牌命中仅是身份线索；
 
 ## 系统功能
 
-r174 及更早安装的电源策略使用 Linux `platform_profile` 和 Windows `powercfg`。新源码另接入优先的 Linux PPD 系统服务，具体资格、holds 副作用与失败合同见[系统电源策略](SYSTEM-POWER-PROFILES.md)；它尚未安装。这里的系统策略不等于原厂办公、狂暴或指定瓦数模式，PPD 的服务副作用也不能按直接 sysfs 写入处理。
+r174 及更早安装的电源策略使用 Linux `platform_profile` 和 Windows `powercfg`。新源码另接入优先的 Linux PPD 系统服务，具体资格、holds 副作用与失败合同见[系统电源策略](SYSTEM-POWER-PROFILES.md)；它已随 r177 安装，真实服务 Set 尚未验收。这里的系统策略不等于原厂办公、狂暴或指定瓦数模式，PPD 的服务副作用也不能按直接 sysfs 写入处理。
 
 屏幕亮度使用 Linux backlight 或 Windows `WmiMonitorBrightness`。控制值与实际亮度分开；多屏需要选择目标。缺驱动、权限不足或不支持的目标值会返回明确错误，不显示虚构的成功状态。
 

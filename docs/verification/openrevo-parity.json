@@ -4,10 +4,10 @@
   "baseline_commit": "ed204c4b707fb80868821b440a67c6fe580f9625",
   "baseline_scope": "Separate Windows and Linux real controls, preserving all 28 OEM behavior families and every current public open issue. This index does not authorize arbitrary EC, firmware or accessory writes.",
   "current_work": {
-    "status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified",
+    "status": "partial_linux_r177_installed_readonly_cli_isolated_gui_and_archive_verified",
     "source_commit": "5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60",
-    "scope": "Latest installed Linux r174 verifies package payloads, protected runtime preservation, ordinary-user readonly status/thermal sampling and isolated native GUI overview/control/CPU-unprobed navigation with exact owned-process cleanup. Historical r171 brightness and r168 CPU writes retain original scopes. Windows Fn-lock is source/offline only. All 28 families and 77 upstream issues remain unresolved.",
-    "installation_status": "r174_console_installed_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
+    "scope": "Linux r177 payloads, protected runtime preservation and independent exact backup inventory verified; ordinary-user PPD read/same-profile dry-run, readonly thermal and private GUI service-display/fan-empty-state navigation with owned-process cleanup passed. Historical writes keep their original scope; no live PPD Set or physical fan acceptance. All 28 families and 77 issues remain unresolved.",
+    "installation_status": "r177_console_installed_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
     "completion_requires": "Keep implementation, offline tests, candidate requested-state transactions, installation/loading and physical-effect acceptance separate for each feature and platform.",
     "evidence_ref": "docs/verification/oem-controls.json",
     "evidence_sha256": "1ee8bc671c3db65f7c843d31bed77c85ce9b67f50382fd3aecd5c687939c373a",
@@ -85,13 +85,12 @@
     "source_commit_scope": "Historical four-control OEM implementation; latest driver and console source commits are recorded separately in latest_deployment.",
     "deployment_verification_scope": "Historical r160 installed OEM subset only; its Fn toggle/restore acceptance is not transferred to the r163 binary.",
     "latest_deployment": {
-      "status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified",
-      "evidence_ref": "docs/verification/deployment-console-r174.json",
-      "evidence_sha256": "6472ccc1aa3f4700b890cf0cb4f752291462574f099dc6dfaabc45aa483d02f2",
-      "console_source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
-      "packaging_metadata_commit": "c0b11920db7a03a5bc32fb033bd9a470bd1db12c",
+      "status": "partial_linux_r177_installed_readonly_cli_isolated_gui_and_archive_verified",
+      "evidence_ref": "docs/verification/deployment-console-r177.json",
+      "evidence_sha256": "fce68ca0149d0d7e991e88eed56d3bcb76e0a64b9db2f3a18d4838ab5b06bf02",
+      "console_source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
       "source_signature_status": "G",
-      "console_package": "mechrevo-console 0.1.0.r174.g256fb05-1",
+      "console_package": "mechrevo-console 0.1.0.r177.gd48692a-1",
       "power_package": "mechrevo-power-control 0.1.0-18",
       "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
       "power_and_driver_reinstalled": false,
@@ -100,18 +99,19 @@
       "package_integrity_files": 23,
       "package_integrity_altered": 0,
       "runtime_guard_before_and_after_passed": true,
-      "installed_cli_scope": "Ordinary UID 1000 package/ownership/Qkk/status checks and two readonly thermal frames passed; status had 38 readings and all five commands exited 0 with empty stderr. No r171 brightness or r168 CPU writes were rerun.",
-      "installed_native_gui_scope": "Private Cage/XDG/D-Bus/AT-SPI overview, Controls and CPU-unprobed views visually verified; only two own-PID selector clicks, zero authorization/Apply. Linux Windows-Fn entry absent; no user desktop or hardware action.",
+      "installed_cli_scope": "Ordinary UID1000 status, two thermal frames, current balanced PPD dry-run with expected-current balanced, and final status all exited0 with empty stderr; actual service/current preserved. No Set or historical setter transfer.",
+      "installed_native_gui_scope": "Private Cage overview system power service and unprobed/no-draft fan page visually verified at1280x720, including independent root image review. One exact own-PID fan navigation only; no auth/Apply/probe/import/Set or minimum-floor operation.",
       "hardware_setter_executed_this_installation": false,
       "real_fan_transaction_verified": false,
-      "normal_user_administrator_dialog_verified": false,
       "gui_apply_verified": false,
       "physical_effect_acceptance": false,
       "AUR_published": false,
-      "remote_pushed": false,
+      "remote_pushed": true,
       "complete_family_resolved": false,
-      "record_scope": "Linux package installation only. Historical r171 brightness and r168 CPU write records remain separate; Windows source/offline checks are not Windows installation or runtime acceptance.",
-      "installed_native_gui_cleanup_scope": "App and owned registry reaped after SIGTERM -15, compositor/wrapper reaped exit0; exact app/registry PIDs absent and owned process group empty. No timeout/SIGKILL; user registry unchanged. This is not graceful-close or in-flight-writer recovery acceptance."
+      "record_scope": "Linux package installation only. Feature source push is separate from AUR, Windows release and physical-effect acceptance.",
+      "installed_native_gui_cleanup_scope": "Both attempts owned app/registry SIGTERM waited -15, Cage waited0; all owned PIDs absent and process group empty, no SIGKILL. Not graceful-close or below-viewport reachability acceptance.",
+      "independent_backup_inventory_verified": true,
+      "ppd_live_set_verified": false
     },
     "thermal_sampling_development": {
       "status": "partial_linux_source_and_r166_installed_read_only_subset_verified",
@@ -374,14 +374,45 @@
     "os_profile_fan_development": {
       "status": "source_candidate_offline_qualified_not_installed",
       "evidence_ref": "docs/verification/os-profile-fan-control.json",
-      "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
+      "evidence_sha256": "6f4619f17596486849a556dc5655d283d1fe83d4e711d6ecf5c248b5fe74dba3",
       "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
       "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-      "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
+      "verification_scope": "580 all-features Rust, 143 Python console and 579 actual Linux release-feature tests passed on the frozen 95-input snapshot. Candidate pure-function mutations retain their scope. No native lease or physical acceptance.",
       "installed": false,
       "physical_acceptance": false,
       "complete_family_resolved": false,
-      "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
+      "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+      "record_scope": "Historical source/offline candidate scope; later r177 Linux installation is separate.",
+      "subsequent_linux_deployment_ref": "docs/verification/deployment-console-r177.json"
+    },
+    "historical_r174_deployment": {
+      "status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified",
+      "evidence_ref": "docs/verification/deployment-console-r174.json",
+      "evidence_sha256": "6472ccc1aa3f4700b890cf0cb4f752291462574f099dc6dfaabc45aa483d02f2",
+      "console_source_commit": "256fb05aded292eca662bc0eaf1d876320596a24",
+      "packaging_metadata_commit": "c0b11920db7a03a5bc32fb033bd9a470bd1db12c",
+      "source_signature_status": "G",
+      "console_package": "mechrevo-console 0.1.0.r174.g256fb05-1",
+      "power_package": "mechrevo-power-control 0.1.0-18",
+      "driver_package": "mechrevo-drivers-dkms-git 4.24.0.r162.ge4bfb3f-1",
+      "power_and_driver_reinstalled": false,
+      "new_driver_loaded": false,
+      "payloads_verified": 11,
+      "package_integrity_files": 23,
+      "package_integrity_altered": 0,
+      "runtime_guard_before_and_after_passed": true,
+      "installed_cli_scope": "Ordinary UID 1000 package/ownership/Qkk/status checks and two readonly thermal frames passed; status had 38 readings and all five commands exited 0 with empty stderr. No r171 brightness or r168 CPU writes were rerun.",
+      "installed_native_gui_scope": "Private Cage/XDG/D-Bus/AT-SPI overview, Controls and CPU-unprobed views visually verified; only two own-PID selector clicks, zero authorization/Apply. Linux Windows-Fn entry absent; no user desktop or hardware action.",
+      "hardware_setter_executed_this_installation": false,
+      "real_fan_transaction_verified": false,
+      "normal_user_administrator_dialog_verified": false,
+      "gui_apply_verified": false,
+      "physical_effect_acceptance": false,
+      "AUR_published": false,
+      "remote_pushed": false,
+      "complete_family_resolved": false,
+      "record_scope": "Linux package installation only. Historical r171 brightness and r168 CPU write records remain separate; Windows source/offline checks are not Windows installation or runtime acceptance.",
+      "installed_native_gui_cleanup_scope": "App and owned registry reaped after SIGTERM -15, compositor/wrapper reaped exit0; exact app/registry PIDs absent and owned process group empty. No timeout/SIGKILL; user registry unchanged. This is not graceful-close or in-flight-writer recovery acceptance."
     }
   },
   "upstream": {
@@ -642,20 +673,23 @@
         "docs/OEM-FEATURE-COVERAGE.md#当前-28-类行为清单",
         "docs/MECHREVO-CONSOLE.md",
         "docs/verification/deployment-r158.json",
-        "docs/verification/os-profile-fan-control.json"
+        "docs/verification/os-profile-fan-control.json",
+        "docs/verification/deployment-console-r177.json"
       ],
       "resolved_in_this_project": false,
       "os_profile_fan_candidate": {
         "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
+        "evidence_sha256": "6f4619f17596486849a556dc5655d283d1fe83d4e711d6ecf5c248b5fe74dba3",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
+        "verification_scope": "580 all-features Rust, 143 Python console and 579 actual Linux release-feature tests passed on the frozen 95-input snapshot. Candidate pure-function mutations retain their scope. No native lease or physical acceptance.",
         "installed": false,
         "physical_acceptance": false,
         "complete_family_resolved": false,
-        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+        "record_scope": "Historical source/offline candidate scope; later r177 Linux installation is separate.",
+        "subsequent_linux_deployment_ref": "docs/verification/deployment-console-r177.json"
       }
     },
     {
@@ -715,7 +749,8 @@
         "docs/verification/deployment-fan-r162-r163.json",
         "docs/verification/thermal-sampling.json",
         "docs/verification/deployment-console-r166.json",
-        "docs/verification/os-profile-fan-control.json"
+        "docs/verification/os-profile-fan-control.json",
+        "docs/verification/deployment-console-r177.json"
       ],
       "resolved_in_this_project": false,
       "source_development_notes": [
@@ -743,14 +778,16 @@
       "os_profile_fan_candidate": {
         "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
+        "evidence_sha256": "6f4619f17596486849a556dc5655d283d1fe83d4e711d6ecf5c248b5fe74dba3",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
+        "verification_scope": "580 all-features Rust, 143 Python console and 579 actual Linux release-feature tests passed on the frozen 95-input snapshot. Candidate pure-function mutations retain their scope. No native lease or physical acceptance.",
         "installed": false,
         "physical_acceptance": false,
         "complete_family_resolved": false,
-        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+        "record_scope": "Historical source/offline candidate scope; later r177 Linux installation is separate.",
+        "subsequent_linux_deployment_ref": "docs/verification/deployment-console-r177.json"
       }
     },
     {
@@ -2088,7 +2125,7 @@
         "G15"
       ],
       "baseline_status": "incomplete",
-      "current_work_status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified_windows_source_candidate",
+      "current_work_status": "partial_linux_r177_installed_readonly_cli_isolated_gui_and_archive_verified",
       "baseline_notes": [
         "Linux原生概览与CLI已安装并有只读记录。",
         "托盘、OSD、完整服务、权限、升级和双端OEM控制待完成。"
@@ -2100,8 +2137,8 @@
           "readback": "partial_driver_ec_or_led_requested_state_candidate_verified",
           "recovery": "partial_conditional_recovery_offline_and_candidate_state_restore_verified",
           "automated_tests": "partial_candidate_contracts_verified_complete_family_pending",
-          "installation": "r174_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
-          "loading": "r174_installed_readonly_cli_and_isolated_gui_navigation_cleanup_verified_no_setters_no_gui_apply",
+          "installation": "r177_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded",
+          "loading": "r177_installed_readonly_cli_ppd_preview_and_isolated_gui_empty_state_cleanup_verified_no_setters",
           "physical_acceptance": "not_accepted_for_complete_feature"
         },
         "windows": {
@@ -2138,7 +2175,8 @@
         "docs/verification/deployment-console-r171.json",
         "docs/verification/windows-fnlock-control.json",
         "docs/verification/deployment-console-r174.json",
-        "docs/verification/os-profile-fan-control.json"
+        "docs/verification/os-profile-fan-control.json",
+        "docs/verification/deployment-console-r177.json"
       ],
       "resolved_in_this_project": false,
       "baseline_linux_state": {
@@ -2229,14 +2267,22 @@
       "os_profile_fan_candidate": {
         "status": "source_candidate_offline_qualified_not_installed",
         "evidence_ref": "docs/verification/os-profile-fan-control.json",
-        "evidence_sha256": "8aa4ad056fce52f393a4b847de36309a1a4fe7e522ebe08e041403770c88b656",
+        "evidence_sha256": "6f4619f17596486849a556dc5655d283d1fe83d4e711d6ecf5c248b5fe74dba3",
         "system_profile_scope": "Linux PPD read/Set and GUI source wiring; service identity/holds bound before apply; no automatic retry/rollback after Set, and no live-service acceptance.",
         "minimum_fan_output_scope": "Explicit optional selected-channel duty floors on a complete validated user curve, default None; preserve zero unless explicitly allowed. Not RPM, OEM presets or noise/thermal qualification.",
-        "verification_scope": "Final unchanged 95-input snapshot: 580 Rust workspace and 143 Python console checks, fmt/Clippy/Windows compile passed. Portable floor and conditional-restore behavior mutations retain separate scopes; actual Linux production-feature run is pending. No native lease or hardware acceptance.",
+        "verification_scope": "580 all-features Rust, 143 Python console and 579 actual Linux release-feature tests passed on the frozen 95-input snapshot. Candidate pure-function mutations retain their scope. No native lease or physical acceptance.",
         "installed": false,
         "physical_acceptance": false,
         "complete_family_resolved": false,
-        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0"
+        "source_commit": "d48692a04f3788275a0a51eef976ee0b698809c0",
+        "record_scope": "Historical source/offline candidate scope; later r177 Linux installation is separate.",
+        "subsequent_linux_deployment_ref": "docs/verification/deployment-console-r177.json"
+      },
+      "historical_r174_installation_state": {
+        "current_work_status": "partial_linux_r174_installed_readonly_cli_isolated_gui_and_cleanup_verified_windows_source_candidate",
+        "installation": "r174_console_payload_verified_power18_and_r162_driver_unchanged_new_fan_interface_not_loaded_no_complete_feature_acceptance",
+        "loading": "r174_installed_readonly_cli_and_isolated_gui_navigation_cleanup_verified_no_setters_no_gui_apply",
+        "scope": "Prior r174 installation/runtime fields retained unchanged; not transferred to r177."
       }
     },
     {
