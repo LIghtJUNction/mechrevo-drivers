@@ -62,7 +62,8 @@ TOUCHPAD_BIND_PATH = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/bind")
 TOUCHPAD_UNBIND_PATH = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/unbind")
 TOUCHPAD_BOUND_CHECK = Path(f"/sys/bus/i2c/drivers/i2c_hid_acpi/{TOUCHPAD_I2C_DEVICE}")
 
-# OEM Mechrevo profiles matching original specifications
+# Local cooling defaults: keep at least 60% in normal modes. This floor was
+# exercised on GM6PX0X; it is a control request, not a guaranteed RPM or OEM curve.
 MECHREVO_PROFILES = [
     {
         "id": "mechrevo_office",
@@ -90,7 +91,7 @@ MECHREVO_PROFILES = [
         "fan": {
             "useControl": True,
             "fanProfile": "Quiet",
-            "minimumFanspeed": 0,
+            "minimumFanspeed": 60,
             "maximumFanspeed": 100,
             "offsetFanspeed": 0,
             "customFanCurve": {
@@ -148,7 +149,7 @@ MECHREVO_PROFILES = [
         "fan": {
             "useControl": True,
             "fanProfile": "Balanced",
-            "minimumFanspeed": 0,
+            "minimumFanspeed": 60,
             "maximumFanspeed": 100,
             "offsetFanspeed": 0,
             "customFanCurve": {
@@ -206,7 +207,7 @@ MECHREVO_PROFILES = [
         "fan": {
             "useControl": True,
             "fanProfile": "Freezy",
-            "minimumFanspeed": 0,
+            "minimumFanspeed": 60,
             "maximumFanspeed": 100,
             "offsetFanspeed": 0,
             "customFanCurve": {

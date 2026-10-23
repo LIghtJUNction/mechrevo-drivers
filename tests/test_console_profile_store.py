@@ -1,5 +1,6 @@
 """Test safe function modules only; the full legacy CLI is never imported."""
 import importlib.util
+import ast
 import copy
 import json
 import os
@@ -233,6 +234,54 @@ class PreservationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'non-regular'):
             self.fn()
         self.assertEqual(target.read_bytes(), original)
+
+
+class ShippedFanDefaultsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("MECHREVO_TEST_TMPDIR"))
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'profiles'
+        source = REPO / 'scripts/mechrevo_control.py'
+        tree = ast.parse(source.read_text())
+        # Execute only the shipped data and store function, never hardware helpers.
+        nodes = [node for node in tree.body if
+                 (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and
+                  t.id == 'MECHREVO_PROFILES' for t in node.targets)) or
+                 (isinstance(node, ast.FunctionDef) and node.name == 'sync_oem_profiles')]
+        self.ns = {'json': json, 'os': os, 'Path': Path, 'PROFILES_PATH': self.path}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), self.ns)
+        self.sync = self.ns['sync_oem_profiles']
+
+    def test_new_store_keeps_all_operating_modes_above_low_speed_floor(self):
+        self.sync()
+        profiles = {p['id']: p for p in json.loads(self.path.read_bytes())}
+        for name in ('office', 'gaming', 'turbo'):
+            with self.subTest(mode=name):
+                fan = profiles['mechrevo_' + name]['fan']
+                self.assertTrue(fan['useControl'])
+                self.assertNotEqual(fan['fanProfile'], 'Custom')  # TCC ignores floors for custom curves.
+                self.assertGreaterEqual(fan['minimumFanspeed'], 60)
+                self.assertEqual(fan['maximumFanspeed'], 100)
+        self.assertEqual(profiles['mechrevo_fan_boost']['fan']['minimumFanspeed'], 100)
+
+    def test_existing_user_floor_is_preserved_while_missing_modes_get_new_defaults(self):
+        office = copy.deepcopy(self.ns['MECHREVO_PROFILES'][0])
+        office['fan']['minimumFanspeed'] = 25
+        self.path.write_text(json.dumps([office]))
+        self.sync()
+        profiles = json.loads(self.path.read_bytes())
+        self.assertEqual(profiles[0], office)
+        for profile in profiles[1:]:
+            self.assertGreaterEqual(profile['fan']['minimumFanspeed'], 60)
+        before = self.path.read_bytes()
+        self.sync()
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_corrupt_existing_store_is_not_replaced_by_cooling_defaults(self):
+        self.path.write_bytes(b'{broken')
+        with self.assertRaises(ValueError):
+            self.sync()
+        self.assertEqual(self.path.read_bytes(), b'{broken')
 
 
 if __name__ == '__main__':
