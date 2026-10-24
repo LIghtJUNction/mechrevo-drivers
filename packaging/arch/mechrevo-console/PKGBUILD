@@ -25,7 +25,7 @@ source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
         'best.lmm.mechrevo-console.desktop'
         'mechrevo-console.install')
 sha256sums=('SKIP'
-            '0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48'
+            'bca48b9200f8aa66b34f357c3b8cce4f679bba998b6e777afec047bf601576a5'
             'SKIP')
 install=mechrevo-console.install
 
