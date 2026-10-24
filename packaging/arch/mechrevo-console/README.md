@@ -1,8 +1,14 @@
 # 本地 Arch 控制台包
 
-`mechrevo-console` 独立安装 Rust CLI、原生 GUI 和受限 OEM helper，不依赖 DKMS 包，也不替换
-`mechrevo-control`、TCC 或已有热键守护进程。安装不新增服务、不修改风扇曲线，
-GUI 从应用菜单中的“机械革命控制台”启动。
+`mechrevo-console` 安装 Rust CLI、原生 GUI、受限 OEM helper 和统一的
+`mechrevo-control` 桥接工具，不依赖 DKMS 包。安装会把未改过的 TUXEDO 默认 profile
+迁移为机械革命 Gaming profile，并保留用户已经修改过的 profile；不会覆盖用户曲线。
+包同时提供用户级 `mechrevo-gaming-hotkey.service`，用于在实体按键、GUI 或电源状态切换
+后同步机身性能档位灯。首次安装后执行：
+
+```sh
+systemctl --user enable --now mechrevo-gaming-hotkey.service
+```
 
 当前配方固定源码提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60`，包版本为
 `0.1.0.r160.g5542b9d-1`。这是本地部署配方，不表示已经发布到 AUR。
@@ -39,7 +45,8 @@ mechrevo-console --version
 mechrevo-console status --json
 ```
 
-安装目标为 `/usr/bin/mechrevo-console`、`/usr/bin/mechrevo-console-gui` 和
+安装目标为 `/usr/bin/mechrevo-console`、`/usr/bin/mechrevo-console-gui`、
+`/usr/bin/mechrevo-control` 和
 `/usr/share/applications/best.lmm.mechrevo-console.desktop`；desktop ID 与 GUI
 的 Wayland app ID 一致。另安装 root 归属的
 `/usr/lib/mechrevo-console/oem-helper`（0755，无 setuid）和

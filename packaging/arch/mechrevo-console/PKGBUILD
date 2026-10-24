@@ -22,9 +22,12 @@ options=('!strip' '!debug' '!lto')
 _source_commit=5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60
 _source_url=${MECHREVO_CONSOLE_SOURCE:-"${url}.git"}
 source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
-        'best.lmm.mechrevo-console.desktop')
+        'best.lmm.mechrevo-console.desktop'
+        'mechrevo-console.install')
 sha256sums=('SKIP'
-            '0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48')
+            '0cb013d59b97f15e9efd1937180159d69f5070b84cfced6f17ad98ad539a8d48'
+            'SKIP')
+install=mechrevo-console.install
 
 prepare() {
     cd "${srcdir}/mechrevo-drivers" || return 1
@@ -39,6 +42,7 @@ prepare() {
         console/crates/cli/src/oem_helper.rs console/crates/core/src/privilege.rs \
         console/crates/gui/src/main.rs \
         console/resources/org.mechrevo.console.oem.policy \
+        scripts/mechrevo_control.py scripts/mechrevo-gaming-hotkey.service \
         console/crates/gui/assets/fonts/Cormorant-OFL.txt \
         console/crates/gui/assets/fonts/Manrope-OFL.txt \
         docs/MECHREVO-CONSOLE.md LICENSE; do
@@ -106,6 +110,9 @@ package() {
         "${pkgdir}/usr/share/licenses/${pkgname}/Cormorant-OFL.txt"
     install -Dm644 console/crates/gui/assets/fonts/Manrope-OFL.txt \
         "${pkgdir}/usr/share/licenses/${pkgname}/Manrope-OFL.txt"
+    install -Dm755 scripts/mechrevo_control.py "${pkgdir}/usr/bin/mechrevo-control"
+    install -Dm644 scripts/mechrevo-gaming-hotkey.service \
+        "${pkgdir}/usr/lib/systemd/user/mechrevo-gaming-hotkey.service"
     install -Dm644 docs/MECHREVO-CONSOLE.md \
         "${pkgdir}/usr/share/doc/${pkgname}/MECHREVO-CONSOLE.md"
 }

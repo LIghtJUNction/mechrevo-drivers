@@ -277,11 +277,72 @@ class ShippedFanDefaultsTests(unittest.TestCase):
         self.sync()
         self.assertEqual(self.path.read_bytes(), before)
 
+    def test_stock_tuxedo_default_is_migrated_to_mechrevo_gaming(self):
+        stock = {
+            'id': '__default_custom_profile__',
+            'name': 'TUXEDO Defaults',
+            'description': 'Edit profile to change behaviour',
+            'fan': {'minimumFanspeed': 0},
+        }
+        self.path.write_text(json.dumps([stock]))
+        self.sync()
+        profiles = json.loads(self.path.read_bytes())
+        default = profiles[0]
+        self.assertEqual(default['id'], '__default_custom_profile__')
+        self.assertEqual(default['name'], '机械革命-游戏平衡模式 (Gaming)')
+        self.assertEqual(default['fan']['fanProfile'], 'Balanced')
+        self.assertEqual(default['fan']['minimumFanspeed'], 60)
+        self.assertEqual(default['cpu']['energyPerformancePreference'], 'balance_performance')
+
+    def test_user_named_default_is_preserved(self):
+        custom = {
+            'id': '__default_custom_profile__',
+            'name': '我的低噪配置',
+            'description': '用户修改',
+            'fan': {'minimumFanspeed': 25},
+        }
+        self.path.write_text(json.dumps([custom]))
+        self.sync()
+        profiles = json.loads(self.path.read_bytes())
+        self.assertEqual(profiles[0], custom)
+
     def test_corrupt_existing_store_is_not_replaced_by_cooling_defaults(self):
         self.path.write_bytes(b'{broken')
         with self.assertRaises(ValueError):
             self.sync()
         self.assertEqual(self.path.read_bytes(), b'{broken')
+
+
+class ModeLedSyncTests(unittest.TestCase):
+    def setUp(self):
+        source = REPO / 'scripts/mechrevo_control.py'
+        tree = ast.parse(source.read_text())
+        nodes = [node for node in tree.body if
+                 (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name)
+                  and t.id == 'PROFILE_MODE_KEYS' for t in node.targets)) or
+                 (isinstance(node, ast.FunctionDef) and node.name == 'sync_mode_led_from_profile')]
+        self.leds = []
+        self.ns = {
+            'PROFILE_MODE_KEYS': {},
+            'get_current_mode_info': lambda: ('', 'mechrevo_gaming'),
+            'set_hardware_mode_led': self.leds.append,
+        }
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), self.ns)
+
+    def test_external_profile_change_updates_the_matching_led_once(self):
+        sync = self.ns['sync_mode_led_from_profile']
+        self.assertEqual(sync('mechrevo_turbo'), 'mechrevo_turbo')
+        self.assertEqual(self.leds, ['turbo'])
+
+    def test_default_profile_is_treated_as_mechrevo_gaming(self):
+        sync = self.ns['sync_mode_led_from_profile']
+        self.assertEqual(sync('__default_custom_profile__'), '__default_custom_profile__')
+        self.assertEqual(self.leds, ['gaming'])
+
+    def test_unknown_profile_is_not_written_to_the_ec(self):
+        sync = self.ns['sync_mode_led_from_profile']
+        self.assertEqual(sync('unrecognized-profile'), 'unrecognized-profile')
+        self.assertEqual(self.leds, [])
 
 
 if __name__ == '__main__':

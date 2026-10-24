@@ -363,10 +363,29 @@ def sync_oem_profiles() -> None:
     else:
         current_profiles = json.loads(original.decode("utf-8"), object_pairs_hook=unique_object,
                                       parse_constant=invalid_constant)
+    # TCC ships a root-owned ``__default_custom_profile__`` which is still
+    # named "TUXEDO Defaults" on an untouched installation.  Power-state
+    # switching always selects that ID, so merely appending Mechrevo profiles
+    # leaves the machine on the generic curve.  Migrate only that exact stock
+    # record to the qualified Gaming profile; any user edit is preserved.
+    migrated = False
+    gaming = next(record for record in MECHREVO_PROFILES if record["id"] == "mechrevo_gaming")
+    migrated_profiles = []
+    for record in current_profiles:
+        if (record.get("id") == "__default_custom_profile__"
+                and record.get("name") == "TUXEDO Defaults"
+                and record.get("description") == "Edit profile to change behaviour"):
+            replacement = json.loads(json.dumps(gaming))
+            replacement["id"] = "__default_custom_profile__"
+            migrated_profiles.append(replacement)
+            migrated = True
+        else:
+            migrated_profiles.append(record)
+    current_profiles = migrated_profiles
     existing_ids = profile_ids(current_profiles, PROFILES_PATH)
     profile_ids(MECHREVO_PROFILES, "built-in defaults")
     missing = [record for record in MECHREVO_PROFILES if record["id"] not in existing_ids]
-    if not missing:
+    if not missing and not migrated:
         return  # No write, inode replacement, chmod, or mtime change for a complete store.
 
     payload = (json.dumps(current_profiles + missing, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
@@ -463,10 +482,37 @@ def set_hardware_mode_led(mode_key: str) -> None:
             fd = os.open(dev_path, os.O_RDWR)
             W_UW_MODE = 0x4008f012
             buf = struct.pack("q", val)
-            fcntl.ioctl(fd, W_UW_MODE, buf)
-            os.close(fd)
+            try:
+                fcntl.ioctl(fd, W_UW_MODE, buf)
+            finally:
+                os.close(fd)
         except Exception:
             pass
+
+
+PROFILE_MODE_KEYS = {
+    "__default_custom_profile__": "gaming",
+    "mechrevo_office": "office",
+    "mechrevo_gaming": "gaming",
+    "mechrevo_turbo": "turbo",
+    "mechrevo_fan_boost": "boost",
+}
+
+
+def sync_mode_led_from_profile(profile_id: str | None = None) -> str:
+    """Make the physical mode LED follow the active TCC profile.
+
+    The chassis button changes the LED as a side effect of the button path,
+    but GUI, power-state and daemon changes can select a profile without that
+    path.  Polling the profile identity gives those callers the same readback
+    contract without writing the EC on every loop.
+    """
+    if profile_id is None:
+        _, profile_id = get_current_mode_info()
+    mode_key = PROFILE_MODE_KEYS.get(profile_id)
+    if mode_key:
+        set_hardware_mode_led(mode_key)
+    return profile_id
 
 
 def set_mode(mode_name: str, notify: bool = False) -> None:
@@ -548,6 +594,18 @@ def run_daemon() -> None:
         sys.exit(1)
 
     print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
+    try:
+        sync_oem_profiles()
+    except Exception as err:
+        # Profile installation is normally performed by the package as root;
+        # a user daemon must keep working when the store is intentionally
+        # immutable or owned by another administrator.
+        print(f"[*] Profiles 未同步（保留现有配置）: {err}", file=sys.stderr)
+    try:
+        last_profile_id = sync_mode_led_from_profile()
+    except Exception as err:
+        last_profile_id = ""
+        print(f"[*] 初始模式灯同步失败: {err}", file=sys.stderr)
     last_mode_trigger = 0.0
     last_fn_trigger = 0.0
     last_tp_trigger = 0.0
@@ -559,6 +617,15 @@ def run_daemon() -> None:
         event_size = struct.calcsize(event_format)
 
         while True:
+            ready, _, _ = select.select([f], [], [], 1.0)
+            if not ready:
+                try:
+                    current_profile_id = get_current_mode_info()[1]
+                    if current_profile_id != last_profile_id:
+                        last_profile_id = sync_mode_led_from_profile(current_profile_id)
+                except Exception as err:
+                    print(f"模式灯同步失败: {err}", file=sys.stderr)
+                continue
             data = f.read(event_size)
             if not data or len(data) < event_size:
                 break
@@ -573,6 +640,7 @@ def run_daemon() -> None:
                         print("[*] 捕捉到机身实体模式按键触发！执行模式切换...")
                         try:
                             cycle_mode(notify=True)
+                            last_profile_id = sync_mode_led_from_profile()
                         except Exception as err:
                             print(f"模式切换失败: {err}", file=sys.stderr)
 
