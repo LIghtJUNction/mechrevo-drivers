@@ -10,8 +10,8 @@
 systemctl --user enable --now mechrevo-gaming-hotkey.service
 ```
 
-当前配方固定源码提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60`，包版本为
-`0.1.0.r160.g5542b9d-1`。这是本地部署配方，不表示已经发布到 AUR。
+当前配方固定源码提交 `f6cb11d78ad9acc3b38917359ed9eb5a39c7958f`，包版本为
+`0.1.0.r181.gf6cb11d-1`。这是本地部署配方，不表示已经发布到 AUR。
 后续更新应一并修改提交、版本和部署验证记录，不能只替换安装目录里的二进制。
 
 该固定提交包含 OEM helper 与策略。本轮包的实际构建、安装及硬件验证结果由部署
