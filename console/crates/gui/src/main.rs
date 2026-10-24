@@ -10,7 +10,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "机械革命控制台",
+        "机械革命控制中心",
         options,
         Box::new(|creation| {
             mechrevo_console_gui::desktop::DesktopApp::new(creation)

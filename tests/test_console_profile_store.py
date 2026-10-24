@@ -262,6 +262,10 @@ class ShippedFanDefaultsTests(unittest.TestCase):
                 self.assertNotEqual(fan['fanProfile'], 'Custom')  # TCC ignores floors for custom curves.
                 self.assertGreaterEqual(fan['minimumFanspeed'], 60)
                 self.assertEqual(fan['maximumFanspeed'], 100)
+        quiet = profiles['mechrevo_gaming_quiet']['fan']
+        self.assertEqual(quiet['fanProfile'], 'Balanced')
+        self.assertGreaterEqual(quiet['minimumFanspeed'], 50)
+        self.assertEqual(quiet['maximumFanspeed'], 100)
         self.assertEqual(profiles['mechrevo_fan_boost']['fan']['minimumFanspeed'], 100)
 
     def test_existing_user_floor_is_preserved_while_missing_modes_get_new_defaults(self):
@@ -272,7 +276,10 @@ class ShippedFanDefaultsTests(unittest.TestCase):
         profiles = json.loads(self.path.read_bytes())
         self.assertEqual(profiles[0], office)
         for profile in profiles[1:]:
-            self.assertGreaterEqual(profile['fan']['minimumFanspeed'], 60)
+            minimum = profile['fan']['minimumFanspeed']
+            self.assertGreaterEqual(minimum, 50)
+            if profile['id'] != 'mechrevo_gaming_quiet':
+                self.assertGreaterEqual(minimum, 60)
         before = self.path.read_bytes()
         self.sync()
         self.assertEqual(self.path.read_bytes(), before)

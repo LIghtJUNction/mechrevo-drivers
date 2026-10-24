@@ -418,7 +418,7 @@ impl DesktopApp {
             ui.add_space(6.0);
             bottom_marker = ui
                 .label(
-                    RichText::new("开发预览 0.1  /  只读监测 · 系统控制需预览、应用并回读")
+                    RichText::new("MECHREVO CONTROL  ·  实时设备状态与可核验控制")
                         .size(13.0)
                         .color(secondary(ui)),
                 )

@@ -182,6 +182,64 @@ MECHREVO_PROFILES = [
         "nvidiaPowerCTRLProfile": {"cTGPOffset": 25},
     },
     {
+        "id": "mechrevo_gaming_quiet",
+        "name": "机械革命-游戏低噪模式 (Gaming Quiet)",
+        "description": "保留游戏平衡 CPU 参数，降低中温段风扇请求，高温仍快速强冷",
+        "display": {
+            "brightness": 80,
+            "useBrightness": True,
+            "refreshRate": -1,
+            "useRefRate": False,
+            "xResolution": -1,
+            "yResolution": -1,
+            "useResolution": False,
+        },
+        "cpu": {
+            "useMaxPerfGov": False,
+            "governor": "powersave",
+            "energyPerformancePreference": "balance_performance",
+            "noTurbo": False,
+            "onlineCores": 24,
+            "scalingMinFrequency": 800000,
+            "scalingMaxFrequency": 4900000,
+        },
+        "webcam": {"status": True, "useStatus": True},
+        "fan": {
+            "useControl": True,
+            "fanProfile": "Balanced",
+            "minimumFanspeed": 50,
+            "maximumFanspeed": 100,
+            "offsetFanspeed": 0,
+            "customFanCurve": {
+                "tableCPU": [
+                    {"temp": 20, "speed": 12},
+                    {"temp": 30, "speed": 15},
+                    {"temp": 40, "speed": 22},
+                    {"temp": 50, "speed": 32},
+                    {"temp": 60, "speed": 42},
+                    {"temp": 70, "speed": 54},
+                    {"temp": 80, "speed": 68},
+                    {"temp": 90, "speed": 82},
+                    {"temp": 100, "speed": 96},
+                ],
+                "tableGPU": [
+                    {"temp": 20, "speed": 12},
+                    {"temp": 30, "speed": 15},
+                    {"temp": 40, "speed": 22},
+                    {"temp": 50, "speed": 32},
+                    {"temp": 60, "speed": 42},
+                    {"temp": 70, "speed": 54},
+                    {"temp": 80, "speed": 68},
+                    {"temp": 90, "speed": 82},
+                    {"temp": 100, "speed": 96},
+                ],
+            },
+        },
+        "odmProfile": {"name": ""},
+        "odmPowerLimits": {"tdpValues": []},
+        "nvidiaPowerCTRLProfile": {"cTGPOffset": 25},
+    },
+    {
         "id": "mechrevo_turbo",
         "name": "机械革命-极速狂暴模式 (Turbo)",
         "description": "机械革命原厂狂暴模式：PL1 130W 满血释放，全核激进，强冷曲线",
@@ -494,6 +552,7 @@ PROFILE_MODE_KEYS = {
     "__default_custom_profile__": "gaming",
     "mechrevo_office": "office",
     "mechrevo_gaming": "gaming",
+    "mechrevo_gaming_quiet": "gaming",
     "mechrevo_turbo": "turbo",
     "mechrevo_fan_boost": "boost",
 }
@@ -521,6 +580,7 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
     mapping = {
         "office": ("mechrevo_office", "办公节能模式 (Office)", "长期功耗 PL1: 45W | 低噪静音温控曲线"),
         "gaming": ("mechrevo_gaming", "游戏平衡模式 (Gaming)", "长期功耗 PL1: 75W | 动态睿频温控曲线"),
+        "gaming-quiet": ("mechrevo_gaming_quiet", "游戏低噪模式 (Gaming Quiet)", "保留游戏平衡 CPU 参数 | 降低中温段风扇请求"),
         "turbo": ("mechrevo_turbo", "极速狂暴模式 (Turbo)", "长期功耗 PL1: 130W 满血释放 | 强冷温控曲线"),
         "boost": ("mechrevo_fan_boost", "一键全速强冷 (Fan Boost)", "双风扇 100% 满转速运行"),
     }
@@ -538,9 +598,9 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
 
 
 def cycle_mode(notify: bool = True) -> str:
-    """Cycle through Office -> Gaming -> Turbo -> Office and notify."""
+    """Cycle through Gaming -> Gaming Quiet -> Turbo -> Gaming and notify."""
     _, current_id = get_current_mode_info()
-    order = ["mechrevo_office", "mechrevo_gaming", "mechrevo_turbo"]
+    order = ["mechrevo_gaming", "mechrevo_gaming_quiet", "mechrevo_turbo"]
     key_map = {
         "mechrevo_office": "office",
         "mechrevo_gaming": "gaming",
@@ -1043,8 +1103,8 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", help="子命令")
 
     # mode
-    p_mode = subparsers.add_parser("mode", help="切换或查看运行模式 (office, gaming, turbo, boost, cycle)")
-    p_mode.add_argument("target", nargs="?", choices=["office", "gaming", "turbo", "boost", "cycle"], help="目标模式")
+    p_mode = subparsers.add_parser("mode", help="切换或查看运行模式 (gaming, gaming-quiet, turbo, office, boost, cycle)")
+    p_mode.add_argument("target", nargs="?", choices=["office", "gaming", "gaming-quiet", "turbo", "boost", "cycle"], help="目标模式")
     p_mode.add_argument("--notify", action="store_true", help="发送桌面通知")
 
     # color
