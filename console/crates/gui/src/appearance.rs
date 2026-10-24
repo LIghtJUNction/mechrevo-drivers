@@ -105,7 +105,7 @@ fn diffuse_field(dark: bool) -> egui::ColorImage {
             let channel =
                 |base: f32, a: f32| (base + a * warm + grain * 0.55).clamp(0.0, 255.0) as u8;
             pixels.push(if dark {
-                Color32::from_rgb(channel(20.0, 12.0), channel(21.0, 8.0), channel(22.0, 4.0))
+                Color32::from_rgb(channel(11.0, 4.0), channel(13.0, 4.0), channel(15.0, 5.0))
             } else {
                 Color32::from_rgb(
                     channel(239.0, 9.0),
@@ -127,22 +127,22 @@ pub(crate) fn glass<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -
     };
     let response = egui::Frame::new()
         .fill(if dark {
-            Color32::from_rgba_unmultiplied(34, 35, 36, 239)
+            Color32::from_rgb(24, 28, 32)
         } else {
-            Color32::from_rgba_unmultiplied(252, 252, 249, 240)
+            Color32::from_rgb(248, 249, 246)
         })
-        .stroke(egui::Stroke::new(0.7, edge))
-        .corner_radius(20.0)
+        .stroke(egui::Stroke::new(1.0, edge))
+        .corner_radius(12.0)
         .shadow(egui::epaint::Shadow {
-            offset: [0, 6],
-            blur: 20,
+            offset: [0, 4],
+            blur: 14,
             spread: 0,
-            color: Color32::from_black_alpha(if dark { 24 } else { 10 }),
+            color: Color32::from_black_alpha(if dark { 28 } else { 12 }),
         })
         .inner_margin(if ui.available_width() < 380.0 {
-            18.0
+            16.0
         } else {
-            24.0
+            20.0
         })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());

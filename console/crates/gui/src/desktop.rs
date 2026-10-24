@@ -9,13 +9,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-const BACKGROUND: Color32 = Color32::from_rgb(23, 24, 24);
-const PANEL: Color32 = Color32::from_rgb(31, 32, 31);
-const FOREGROUND: Color32 = Color32::from_rgb(246, 246, 243);
-const SUBTLE: Color32 = Color32::from_rgb(164, 167, 169);
-const GREEN: Color32 = Color32::from_rgb(167, 192, 140);
-const AMBER: Color32 = Color32::from_rgb(221, 187, 124);
-const ERROR: Color32 = Color32::from_rgb(237, 154, 140);
+const BACKGROUND: Color32 = Color32::from_rgb(11, 13, 15);
+const PANEL: Color32 = Color32::from_rgb(24, 28, 32);
+const FOREGROUND: Color32 = Color32::from_rgb(241, 243, 245);
+const SUBTLE: Color32 = Color32::from_rgb(139, 148, 158);
+const GREEN: Color32 = Color32::from_rgb(143, 211, 154);
+const AMBER: Color32 = Color32::from_rgb(240, 200, 121);
+const ERROR: Color32 = Color32::from_rgb(255, 133, 133);
+const INFO: Color32 = Color32::from_rgb(143, 184, 242);
+const FIXTURE: Color32 = Color32::from_rgb(169, 155, 203);
 const HISTORY_LIMIT: usize = 120;
 
 #[derive(Debug, Clone, Copy)]
@@ -194,7 +196,7 @@ impl DesktopApp {
             Color32::from_rgb(251, 250, 245)
         };
         let line = if dark {
-            Color32::from_rgb(59, 61, 56)
+            Color32::from_rgb(41, 48, 56)
         } else {
             Color32::from_rgb(211, 213, 201)
         };
@@ -205,7 +207,7 @@ impl DesktopApp {
         v.override_text_color = Some(text);
         v.hyperlink_color = text;
         v.selection.bg_fill = if dark {
-            Color32::from_rgb(78, 84, 66)
+            Color32::from_rgb(49, 75, 75)
         } else {
             Color32::from_rgb(211, 221, 192)
         };
@@ -217,7 +219,7 @@ impl DesktopApp {
         v.widgets.inactive.bg_stroke = Stroke::new(1.0, line);
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, text);
         v.widgets.hovered.bg_fill = if dark {
-            Color32::from_rgb(52, 55, 48)
+            Color32::from_rgb(32, 39, 44)
         } else {
             Color32::from_rgb(228, 231, 218)
         };
@@ -225,7 +227,7 @@ impl DesktopApp {
         v.widgets.hovered.bg_stroke = Stroke::new(
             1.0,
             if dark {
-                Color32::from_rgb(112, 120, 98)
+                INFO
             } else {
                 Color32::from_rgb(130, 139, 114)
             },
@@ -242,15 +244,15 @@ impl DesktopApp {
                 egui::Theme::Light
             },
             |style| {
-                style.spacing.item_spacing = Vec2::new(10.0, 9.0);
-                style.spacing.button_padding = Vec2::new(14.0, 9.0);
+                style.spacing.item_spacing = Vec2::new(8.0, 8.0);
+                style.spacing.button_padding = Vec2::new(12.0, 8.0);
                 style.spacing.interact_size.y = 36.0;
                 style.spacing.indent = 14.0;
                 style.animation_time = if self.motion_enabled { 0.18 } else { 0.0 };
                 style.wrap_mode = Some(egui::TextWrapMode::Wrap);
                 style
                     .text_styles
-                    .insert(egui::TextStyle::Heading, FontId::proportional(22.0));
+                    .insert(egui::TextStyle::Heading, FontId::proportional(24.0));
                 style
                     .text_styles
                     .insert(egui::TextStyle::Body, FontId::proportional(14.0));
@@ -404,9 +406,9 @@ impl DesktopApp {
                 self.display_settings(ui);
             }
             self.feedback(ui);
-            ui.add_space(8.0);
+            ui.add_space(0.0);
             heading_rect = ui.scope(|ui| self.editorial_heading(ui)).response.rect;
-            ui.add_space(8.0);
+            ui.add_space(0.0);
             match self.section {
                 Section::Dashboard => thermal_panel_rect = self.dashboard(ui),
                 Section::Controls => self.oem_controls(ui),
@@ -457,7 +459,7 @@ impl DesktopApp {
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| self.header_actions(ui));
         }
-        ui.add_space(6.0);
+        ui.add_space(2.0);
         ui.separator();
     }
 
@@ -509,7 +511,7 @@ impl DesktopApp {
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.set_width(width * 0.43 - 10.0);
-                        ui.label(RichText::new(title).size(34.0));
+                        ui.label(RichText::new(title).size(34.0).strong());
                     },
                 );
                 ui.allocate_ui_with_layout(
@@ -539,7 +541,13 @@ impl DesktopApp {
             .and_then(|s| s.identity.board_name.as_deref())
             .unwrap_or("型号待识别");
         ui.add(
-            egui::Label::new(RichText::new(product).size(14.0).color(label_color(ui))).truncate(),
+            egui::Label::new(
+                RichText::new(product)
+                    .size(15.0)
+                    .strong()
+                    .color(foreground(ui)),
+            )
+            .truncate(),
         )
         .on_hover_text(format!("{product}\n{platform} · {board}"));
         let status = if self.controller.busy() {
@@ -558,15 +566,25 @@ impl DesktopApp {
         } else {
             "等待采集".into()
         };
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!("{platform}  ·  {status}"))
-                    .size(13.0)
-                    .color(secondary(ui)),
-            )
-            .truncate(),
-        )
-        .on_hover_text(format!("{platform} · {board}"));
+        ui.label(
+            RichText::new(format!("{platform}  ·  {status}"))
+                .size(13.0)
+                .color(secondary(ui)),
+        );
+        ui.add_space(4.0);
+        let (provenance, provenance_color) = data_provenance(snapshot);
+        ui.label(
+            RichText::new(format!(
+                "{provenance}  ·  {}",
+                if snapshot.is_some() && !snapshot_is_fixture(snapshot) {
+                    "已回读"
+                } else {
+                    "等待采集"
+                }
+            ))
+            .size(13.0)
+            .color(provenance_color),
+        );
     }
 
     fn display_settings(&mut self, ui: &mut egui::Ui) {
@@ -680,11 +698,7 @@ impl DesktopApp {
                 if ui.available_width() >= 720.0 {
                     ui.set_min_height(222.0);
                 }
-                ui.label(
-                    RichText::new("温度与散热")
-                        .size(14.0)
-                        .color(label_color(ui)),
-                );
+                ui.label(RichText::new("实时监测").size(14.0).color(label_color(ui)));
                 ui.add_space(8.0);
                 let width = ui.available_width();
                 if width >= 720.0 {
@@ -848,11 +862,24 @@ impl DesktopApp {
             // available to screen readers and keyboard-only users.
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new("正在积累趋势")
-                            .size(13.0)
-                            .color(secondary(ui)),
-                    );
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("趋势暂不可用")
+                                .size(14.0)
+                                .strong()
+                                .color(label_color(ui)),
+                        );
+                        ui.label(
+                            RichText::new("正在积累趋势")
+                                .size(13.0)
+                                .color(secondary(ui)),
+                        );
+                        ui.label(
+                            RichText::new(format!("至少需要 3 次硬件采样 · 当前已采集 {count} 次"))
+                                .size(13.0)
+                                .color(secondary(ui)),
+                        );
+                    });
                 });
             });
             painter.line_segment(
@@ -1694,6 +1721,27 @@ fn label_color(ui: &egui::Ui) -> Color32 {
     } else {
         Color32::from_rgb(68, 72, 75)
     }
+}
+
+fn data_provenance(snapshot: Option<&mechrevo_console_core::Snapshot>) -> (&'static str, Color32) {
+    let Some(snapshot) = snapshot else {
+        return ("尚未确认硬件", AMBER);
+    };
+    if snapshot_is_fixture(Some(snapshot)) {
+        ("模拟数据", FIXTURE)
+    } else {
+        ("真实硬件", GREEN)
+    }
+}
+
+fn snapshot_is_fixture(snapshot: Option<&mechrevo_console_core::Snapshot>) -> bool {
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    snapshot
+        .telemetry
+        .iter()
+        .any(|reading| reading.source.backend.to_lowercase().contains("fixture"))
 }
 
 /// One focusable click target retains egui's pointer, Space/Enter and
