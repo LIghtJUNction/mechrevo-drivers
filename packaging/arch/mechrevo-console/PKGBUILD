@@ -5,7 +5,7 @@
 # Local package: the Rust console is independent of DKMS and the legacy tools.
 
 pkgname=mechrevo-console
-pkgver=0.1.0.r184.g4a4e8d6
+pkgver=0.1.0.r185.g272ec25
 pkgrel=1
 pkgdesc='Native MECHREVO system and OEM device control console'
 arch=('x86_64')
@@ -19,7 +19,7 @@ optdepends=('noto-fonts-cjk: Chinese system font fallback')
 options=('!strip' '!debug' '!lto')
 
 # Always build the reviewed commit, including when using an existing local repo.
-_source_commit=4a4e8d648f6396c0f1358e41660965ef67ecfcf7
+_source_commit=272ec25ba31983a61534f3120cfd488657a52987
 _source_url=${MECHREVO_CONSOLE_SOURCE:-"${url}.git"}
 source=("mechrevo-drivers::git+${_source_url}#commit=${_source_commit}"
         'best.lmm.mechrevo-console.desktop'
