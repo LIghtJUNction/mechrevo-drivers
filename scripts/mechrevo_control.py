@@ -612,7 +612,24 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
         raise ValueError(f"Unknown mode '{mode_name}'. Valid options: {', '.join(mapping.keys())}")
 
     target_id, title_name, desc_info = mapping[mode_key]
-    call_tccd_dbus("SetTempProfileById", "s", target_id)
+    response = call_tccd_dbus("SetTempProfileById", "s", target_id)
+    try:
+        accepted = json.loads(response)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"tccd returned invalid profile-switch JSON: {exc}") from exc
+    if (not isinstance(accepted, dict) or accepted.get("type") != "b"
+            or not isinstance(accepted.get("data"), list) or len(accepted["data"]) != 1
+            or accepted["data"][0] is not True):
+        raise RuntimeError(f"tccd did not accept profile switch to {target_id}: {response}")
+    deadline = time.monotonic() + 5.0
+    while True:
+        _, active_id = get_current_mode_info()
+        if active_id == target_id:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"Timed out waiting for active profile {target_id}; observed {active_id}")
+        time.sleep(min(0.1, remaining))
     set_hardware_mode_led(mode_key)
     if notify:
         send_notification("★ 机械革命电竞控制台 ★", f"运行模式已切换为：【{title_name}】\n{desc_info}")
@@ -686,7 +703,7 @@ def run_daemon() -> None:
     last_tp_trigger = 0.0
     last_kbl_trigger = 0.0
 
-    with open(target_dev, "rb") as f:
+    with open(target_dev, "rb", buffering=0) as f:
         # struct input_event: timeval (16B), type (2B), code (2B), value (4B) -> 24B on 64-bit
         event_format = "qqHHi"
         event_size = struct.calcsize(event_format)
@@ -699,12 +716,14 @@ def run_daemon() -> None:
                     last_profile_id = sync_mode_led_from_profile(current_profile_id)
                 continue
             data = f.read(event_size)
-            if not data or len(data) < event_size:
-                break
+            if not data:
+                raise RuntimeError(f"Hotkey input device disconnected: {target_dev}")
+            if len(data) != event_size:
+                raise RuntimeError(f"Incomplete hotkey input event: expected {event_size} bytes, got {len(data)}")
             _, _, ev_type, ev_code, ev_value = struct.unpack(event_format, data)
             # EV_KEY = 1, ev_value == 1 (key press)
             if ev_type == 1 and ev_value == 1:
-                now = time.time()
+                now = time.monotonic()
                 # 1. Physical mode switch key (KEY_F6 = 64)
                 if ev_code == 64:
                     if now - last_mode_trigger >= 0.35:  # 350ms debounce
