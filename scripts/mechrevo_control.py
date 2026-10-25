@@ -637,24 +637,19 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
 
 
 def cycle_mode(notify: bool = True) -> str:
-    """Cycle through Gaming -> Gaming Quiet -> Turbo -> Gaming and notify."""
+    """Cycle through the distinct hardware modes Office -> Gaming -> Turbo."""
     _, current_id = get_current_mode_info()
-    order = ["mechrevo_gaming", "mechrevo_gaming_quiet", "mechrevo_turbo"]
-    key_map = {
-        "mechrevo_office": "office",
-        "mechrevo_gaming": "gaming",
-        "mechrevo_gaming_quiet": "gaming-quiet",
-        "mechrevo_turbo": "turbo",
-    }
-
-    if current_id in order:
-        idx = order.index(current_id)
-        next_id = order[(idx + 1) % len(order)]
+    order = ("office", "gaming", "turbo")
+    # Quiet keeps Gaming's hardware mode; Fan Boost keeps Turbo's. Treat these
+    # software variants as their current hardware step instead of repeating it.
+    current_key = PROFILE_MODE_KEYS.get(current_id)
+    if current_key == "boost":
+        current_key = "turbo"
+    if current_key in order:
+        next_key = order[(order.index(current_key) + 1) % len(order)]
     else:
-        # Default fallback to gaming
-        next_id = "mechrevo_gaming"
+        next_key = "gaming"
 
-    next_key = key_map[next_id]
     set_mode(next_key, notify=notify)
     return next_key
 

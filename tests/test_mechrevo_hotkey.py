@@ -2,6 +2,7 @@
 import importlib.util
 import fcntl
 import io
+import json
 import os
 from pathlib import Path
 import select
@@ -34,25 +35,128 @@ class PerformanceModeCycleTests(unittest.TestCase):
             result = control.cycle_mode(notify=False)
         return result, set_mode
 
-    def test_gaming_advances_to_gaming_quiet(self):
+    def test_office_advances_to_gaming(self):
+        result, set_mode = self.call_with_profile("mechrevo_office")
+        self.assertEqual(result, "gaming")
+        set_mode.assert_called_once_with("gaming", notify=False)
+
+    def test_gaming_advances_to_turbo(self):
         result, set_mode = self.call_with_profile("mechrevo_gaming")
-        self.assertEqual(result, "gaming-quiet")
-        set_mode.assert_called_once_with("gaming-quiet", notify=False)
+        self.assertEqual(result, "turbo")
+        set_mode.assert_called_once_with("turbo", notify=False)
 
     def test_gaming_quiet_advances_to_turbo(self):
         result, set_mode = self.call_with_profile("mechrevo_gaming_quiet")
         self.assertEqual(result, "turbo")
         set_mode.assert_called_once_with("turbo", notify=False)
 
-    def test_turbo_wraps_back_to_gaming(self):
+    def test_turbo_wraps_back_to_office(self):
         result, set_mode = self.call_with_profile("mechrevo_turbo")
-        self.assertEqual(result, "gaming")
-        set_mode.assert_called_once_with("gaming", notify=False)
+        self.assertEqual(result, "office")
+        set_mode.assert_called_once_with("office", notify=False)
+
+    def test_software_variants_advance_from_their_hardware_step(self):
+        for profile, expected in (("__default_custom_profile__", "turbo"),
+                                  ("mechrevo_fan_boost", "office")):
+            with self.subTest(profile=profile):
+                result, set_mode = self.call_with_profile(profile)
+                self.assertEqual(result, expected)
+                set_mode.assert_called_once_with(expected, notify=False)
 
     def test_unknown_profile_falls_back_to_gaming(self):
         result, set_mode = self.call_with_profile("some-user-profile")
         self.assertEqual(result, "gaming")
         set_mode.assert_called_once_with("gaming", notify=False)
+
+
+class HardwareCycleBoundaryTests(unittest.TestCase):
+    """Exercise the real cycle and switch functions at their DBus/ioctl edges."""
+
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.active_id = "mechrevo_office"
+        self.raw_mode = 0xa0
+        self.writes = []
+        self.requests = []
+        stack.enter_context(mock.patch.object(control, "sync_oem_profiles"))
+        self.bus = stack.enter_context(mock.patch.object(control, "call_tccd_dbus", side_effect=self.dbus))
+        stack.enter_context(mock.patch.object(Path, "exists", return_value=True))
+        stack.enter_context(mock.patch.object(control.os, "open", return_value=7))
+        self.close = stack.enter_context(mock.patch.object(control.os, "close"))
+        self.ioctl = stack.enter_context(mock.patch.object(control.fcntl, "ioctl", side_effect=self.mode_ioctl))
+        self.notify = stack.enter_context(mock.patch.object(control, "send_notification"))
+        self.output = stack.enter_context(redirect_stdout(io.StringIO()))
+
+    def dbus(self, method, *arguments):
+        if method == "GetActiveProfileJSON":
+            profile = {"id": self.active_id, "name": self.active_id}
+            return json.dumps({"type": "s", "data": [json.dumps(profile)]})
+        self.assertEqual(method, "SetTempProfileById")
+        self.assertEqual(arguments[0], "s")
+        self.active_id = arguments[1]
+        self.requests.append(self.active_id)
+        return '{"type":"b","data":[true]}'
+
+    def mode_ioctl(self, fd, command, argument, *_):
+        self.assertEqual(fd, 7)
+        if command == 0x4008F012:
+            self.raw_mode = struct.unpack("i", argument)[0]
+            self.writes.append(self.raw_mode)
+        else:
+            self.assertEqual(command, 0x8008EF14)
+            argument[:4] = struct.pack("i", self.raw_mode)
+        return 0
+
+    def test_complete_cycle_requests_three_distinct_hardware_modes(self):
+        result = [control.cycle_mode(notify=True) for _ in range(3)]
+        self.assertEqual(result, ["gaming", "turbo", "office"])
+        self.assertEqual(self.requests, ["mechrevo_gaming", "mechrevo_turbo", "mechrevo_office"])
+        self.assertEqual(self.writes, [0x00, 0x10, 0xa0])
+        self.assertEqual(self.active_id, "mechrevo_office")
+        self.assertEqual(self.notify.call_count, 3)
+        self.assertEqual(self.close.call_count, 3)
+
+    def test_variants_do_not_repeat_the_same_hardware_mode(self):
+        for profile, expected_id, raw in (("mechrevo_gaming_quiet", "mechrevo_turbo", 0x10),
+                                          ("__default_custom_profile__", "mechrevo_turbo", 0x10),
+                                          ("mechrevo_fan_boost", "mechrevo_office", 0xa0)):
+            with self.subTest(profile=profile):
+                self.active_id = profile
+                control.cycle_mode(notify=False)
+                self.assertEqual(self.active_id, expected_id)
+                self.assertEqual(self.writes[-1], raw)
+        self.notify.assert_not_called()
+
+    def test_profile_read_failure_does_not_select_a_fallback_or_announce_success(self):
+        self.bus.side_effect = OSError("profile read disconnected")
+        with self.assertRaisesRegex(OSError, "profile read disconnected"):
+            control.cycle_mode(notify=True)
+        self.assertEqual(self.requests, [])
+        self.ioctl.assert_not_called()
+        self.notify.assert_not_called()
+        self.assertNotIn("[✓]", self.output.getvalue())
+
+    def test_rejected_switch_does_not_write_hardware_or_announce_success(self):
+        def reject(method, *arguments):
+            if method == "SetTempProfileById":
+                return '{"type":"b","data":[false]}'
+            return self.dbus(method, *arguments)
+        self.bus.side_effect = reject
+        with self.assertRaisesRegex(RuntimeError, "did not accept"):
+            control.cycle_mode(notify=True)
+        self.assertEqual(self.active_id, "mechrevo_office")
+        self.ioctl.assert_not_called()
+        self.notify.assert_not_called()
+        self.assertNotIn("[✓]", self.output.getvalue())
+
+    def test_hardware_failure_closes_device_and_does_not_announce_success(self):
+        self.ioctl.side_effect = OSError("mode write failed")
+        with self.assertRaisesRegex(OSError, "mode write failed"):
+            control.cycle_mode(notify=True)
+        self.close.assert_called_once_with(7)
+        self.notify.assert_not_called()
+        self.assertNotIn("[✓]", self.output.getvalue())
 
 
 class ControlFailureTests(unittest.TestCase):

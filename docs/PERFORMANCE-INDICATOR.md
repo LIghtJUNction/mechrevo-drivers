@@ -48,6 +48,14 @@ other bits. CustomerModeLightOn/Off are real calls on this selected manager;
 the TUXEDO model whitelist alone cannot disprove their OEM applicability.
 The physical meaning on this machine still needs observation.
 
+The selected manager's `ModeSwitchChanged` (060016d9) has an
+Office → Gaming → Turbo → Office branch for AppType 3 or CustomId 0x27.
+Other OEM branches can include Custom; this does not establish one universal
+cycle for every machine. The Linux physical-button cycle uses the three
+ordinary modes. Gaming Quiet remains separately selectable and shares Gaming's
+hardware mode; Fan Boost shares Turbo's hardware mode. Neither is presented as
+an additional ordinary indicator state.
+
 The ACPI table also reads 0x0751 bit 4 (TBME) and bit 7 (UFME) in GPU/power
 policy. Consequently W_UW_MODE is a hardware-mode operation, not an independent
 LED-brightness interface. Its readback cannot establish emitted light.
@@ -66,6 +74,22 @@ visible change**. The original low-field value 0 was restored and the temporary
 module unloaded. It is not shipped or installed as a supported lamp feature.
 Do not turn that successful register write into a claim of repaired lighting.
 
+## Confirmed physical observation
+
+Later on 2026-10-26, with the installed control tool selecting Turbo and
+W_UW_MODE readback at 0x10, the user explicitly confirmed that the light beside
+the power button illuminated or changed state. The temporary 0x07a5 module had
+already been unloaded and its original value restored. The proposed 0x0727
+trial was never executed. This observation therefore belongs to the existing
+hardware-mode path, not either independent-lamp candidate.
+
+The previous Linux cycle used Gaming → Gaming Quiet → Turbo. The first two
+both requested 0x00, so three presses could produce only two hardware-mode
+values. The physical-button cycle now requests Office (0xa0), Gaming (0x00),
+and Turbo (0x10). Software profile confirmation and EC readback are required
+before completion is announced. Three distinct request values still do not
+establish three independently observed physical brightness levels.
+
 Private recovery and trial receipts are under
 `/home/lightjunction/Backups/mechrevo-drivers/2026-10-26-mode-led/`.
 Reproducible local disassembly and the rejected source remain in the ignored
@@ -73,7 +97,9 @@ Reproducible local disassembly and the rejected source remain in the ignored
 
 ## Remaining acceptance
 
-The three physical lamp states, mode transitions, and wake/resume behavior are
-not yet established. The existing W_UW_MODE bridge does not prove an independent
-lamp interface. Further changes require the actual OEM branch plus physical
-confirmation; the failed candidate must not be reintroduced as a silent fallback.
+Turbo illumination has user confirmation on this host. The individual Office
+and Gaming lamp states, a complete physical-button cycle, and wake/resume
+behavior are not yet established. The existing W_UW_MODE bridge does not prove
+an independent lamp interface or numeric brightness percentages. Further
+changes require the actual OEM branch plus physical confirmation; the failed
+candidate must not be reintroduced as a silent fallback.
