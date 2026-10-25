@@ -1,6 +1,7 @@
 """Regression tests for the physical performance-mode cycle."""
 import importlib.util
 from pathlib import Path
+import struct
 import unittest
 from unittest import mock
 
@@ -47,6 +48,44 @@ class PerformanceModeCycleTests(unittest.TestCase):
         result, set_mode = self.call_with_profile("some-user-profile")
         self.assertEqual(result, "gaming")
         set_mode.assert_called_once_with("gaming", notify=False)
+
+
+class ControlFailureTests(unittest.TestCase):
+    def test_dbus_transport_failure_is_not_replaced_by_default_mode(self):
+        with mock.patch.object(control, "call_tccd_dbus", side_effect=OSError("bus down")), \
+                self.assertRaises(OSError):
+            control.get_current_mode_info()
+
+    def test_malformed_dbus_profile_is_rejected(self):
+        with mock.patch.object(control, "call_tccd_dbus", return_value="{}"), \
+                self.assertRaisesRegex(RuntimeError, "no active profile"):
+            control.get_current_mode_info()
+
+    def test_mode_ioctl_failure_is_raised_and_fd_is_closed(self):
+        with mock.patch.object(control.os, "open", return_value=7), \
+                mock.patch.object(control.os, "close") as close, \
+                mock.patch.object(control.fcntl, "ioctl", side_effect=OSError("ioctl failed")), \
+                self.assertRaises(OSError):
+            control.set_hardware_mode_led("gaming")
+        close.assert_called_once_with(7)
+
+    def test_mode_readback_mismatch_is_not_reported_as_success(self):
+        def ioctl(_fd, command, argument, *_):
+            if command == 0x8008EF14:
+                argument[:4] = struct.pack("i", 0x10)
+            return 0
+
+        with mock.patch.object(control.os, "open", return_value=7), \
+                mock.patch.object(control.os, "close") as close, \
+                mock.patch.object(control.fcntl, "ioctl", side_effect=ioctl), \
+                self.assertRaisesRegex(RuntimeError, "readback mismatch"):
+            control.set_hardware_mode_led("gaming")
+        close.assert_called_once_with(7)
+
+    def test_notification_failure_is_visible(self):
+        with mock.patch.object(control.shutil, "which", return_value=None), \
+                self.assertRaisesRegex(RuntimeError, "notify-send"):
+            control.send_notification("title", "message")
 
 
 if __name__ == "__main__":

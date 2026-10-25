@@ -32,20 +32,27 @@ def get_state_dir() -> Path:
     sys_dir = Path("/var/lib/mechrevo-control")
     if sys_dir.exists() and os.access(sys_dir, os.W_OK):
         return sys_dir
+    errors = []
     if os.geteuid() == 0:
         try:
             sys_dir.mkdir(parents=True, exist_ok=True)
             return sys_dir
-        except Exception:
-            pass
+        except OSError as exc:
+            errors.append(f"{sys_dir}: {exc}")
     user_dir = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "mechrevo-control"
     try:
         user_dir.mkdir(parents=True, exist_ok=True)
         return user_dir
-    except Exception:
+    except OSError as exc:
+        errors.append(f"{user_dir}: {exc}")
         fallback = Path("/tmp/mechrevo-control")
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+            print("状态目录回退到 " + str(fallback) + ": " + "; ".join(errors), file=sys.stderr)
+            return fallback
+        except OSError as fallback_exc:
+            errors.append(f"{fallback}: {fallback_exc}")
+            raise RuntimeError("Unable to create a state directory: " + "; ".join(errors)) from fallback_exc
 
 
 def get_state_file(name: str) -> Path:
@@ -492,30 +499,37 @@ def sync_oem_profiles() -> None:
 
 
 def send_notification(title: str, message: str, icon: str = "preferences-system-power") -> None:
-    """Send desktop notification via notify-send with critical urgency to bypass DND."""
-    try:
-        subprocess.run(
-            ["notify-send", "-u", "critical", "-t", "3000", "-a", "MECHREVO Gaming Center", "-i", icon, title, message],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except Exception:
-        pass
+    """Send a notification and propagate notifier failures."""
+    if not shutil.which("notify-send"):
+        raise RuntimeError("通知发送失败：找不到 notify-send")
+    run_cmd(["notify-send", "-u", "critical", "-t", "3000",
+             "-a", "MECHREVO Gaming Center", "-i", icon, title, message])
 
 
 def get_current_mode_info() -> tuple[str, str]:
     """Get active profile (name, id)."""
+    out = call_tccd_dbus("GetActiveProfileJSON")
     try:
-        out = call_tccd_dbus("GetActiveProfileJSON")
         parsed = json.loads(out)
-        if "data" in parsed and parsed["data"]:
-            raw_inner = parsed["data"][0]
-            profile_data = json.loads(raw_inner) if isinstance(raw_inner, str) else raw_inner
-            return profile_data.get("name", "Unknown"), profile_data.get("id", "")
-    except Exception:
-        pass
-    return "默认模式", ""
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"tccd returned invalid active-profile JSON: {exc}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("data"), list) or not parsed["data"]:
+        raise RuntimeError("tccd returned no active profile")
+    raw_inner = parsed["data"][0]
+    if isinstance(raw_inner, str):
+        try:
+            profile_data = json.loads(raw_inner)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"tccd returned invalid profile payload: {exc}") from exc
+    else:
+        profile_data = raw_inner
+    if not isinstance(profile_data, dict):
+        raise RuntimeError("tccd returned a non-object active profile")
+    name = profile_data.get("name")
+    profile_id = profile_data.get("id")
+    if not isinstance(name, str) or not name or not isinstance(profile_id, str) or not profile_id:
+        raise RuntimeError("tccd returned an incomplete active profile")
+    return name, profile_id
 
 
 def get_current_mode() -> str:
@@ -524,7 +538,12 @@ def get_current_mode() -> str:
 
 
 def set_hardware_mode_led(mode_key: str) -> None:
-    """Sync EC hardware mode register 0x0751 to update physical LED indicator."""
+    """Request a mode byte and require the EC readback to match it.
+
+    The driver exposes the mode byte, but Linux has no independent physical LED
+    readback for this machine. A matching EC readback therefore proves only
+    that the request reached the driver, not that a chassis lamp is illuminated.
+    """
     raw_mode_map = {
         "office": 0xa0,
         "gaming": 0x00,
@@ -532,20 +551,23 @@ def set_hardware_mode_led(mode_key: str) -> None:
         "boost": 0x10,
     }
     if mode_key not in raw_mode_map:
-        return
+        raise ValueError(f"Unknown hardware mode key: {mode_key}")
     val = raw_mode_map[mode_key]
     dev_path = Path("/dev/tuxedo_io")
-    if dev_path.exists():
-        try:
-            fd = os.open(dev_path, os.O_RDWR)
-            W_UW_MODE = 0x4008f012
-            buf = struct.pack("q", val)
-            try:
-                fcntl.ioctl(fd, W_UW_MODE, buf)
-            finally:
-                os.close(fd)
-        except Exception:
-            pass
+    if not dev_path.exists():
+        raise RuntimeError(f"Uniwill control device is unavailable: {dev_path}")
+    fd = os.open(dev_path, os.O_RDWR)
+    W_UW_MODE = 0x4008f012
+    R_UW_MODE = 0x8008ef14
+    try:
+        fcntl.ioctl(fd, W_UW_MODE, struct.pack("i", val))
+        readback = bytearray(8)
+        fcntl.ioctl(fd, R_UW_MODE, readback, True)
+        actual = struct.unpack("i", readback[:4])[0] & 0xff
+    finally:
+        os.close(fd)
+    if actual != val:
+        raise RuntimeError(f"EC mode readback mismatch: requested 0x{val:02x}, got 0x{actual:02x}")
 
 
 PROFILE_MODE_KEYS = {
@@ -591,10 +613,9 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
     target_id, title_name, desc_info = mapping[mode_key]
     call_tccd_dbus("SetTempProfileById", "s", target_id)
     set_hardware_mode_led(mode_key)
-    print(f"[✓] 成功切换至机械革命运行模式: {title_name} ({target_id})")
-
     if notify:
         send_notification("★ 机械革命电竞控制台 ★", f"运行模式已切换为：【{title_name}】\n{desc_info}")
+    print(f"[✓] 成功切换至机械革命运行模式: {title_name} ({target_id})")
 
 
 def cycle_mode(notify: bool = True) -> str:
@@ -624,11 +645,13 @@ def toggle_touchpad() -> None:
     """Toggle touchpad via desktop script or omarchy tool."""
     script = Path.home() / ".config/hypr/scripts/toggle-touchpad.sh"
     if script.exists():
-        run_cmd([str(script)], check=False)
+        run_cmd([str(script)])
     elif shutil.which("omarchy-toggle-touchpad"):
-        run_cmd(["omarchy-toggle-touchpad"], check=False)
+        run_cmd(["omarchy-toggle-touchpad"])
     elif shutil.which("omarchy-toggle-input-device"):
-        run_cmd(["omarchy-toggle-input-device", "touchpad", "toggle"], check=False)
+        run_cmd(["omarchy-toggle-input-device", "touchpad", "toggle"])
+    else:
+        raise RuntimeError("No supported touchpad toggle command is available")
 
 
 def run_daemon() -> None:
@@ -655,18 +678,8 @@ def run_daemon() -> None:
         sys.exit(1)
 
     print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
-    try:
-        sync_oem_profiles()
-    except Exception as err:
-        # Profile installation is normally performed by the package as root;
-        # a user daemon must keep working when the store is intentionally
-        # immutable or owned by another administrator.
-        print(f"[*] Profiles 未同步（保留现有配置）: {err}", file=sys.stderr)
-    try:
-        last_profile_id = sync_mode_led_from_profile()
-    except Exception as err:
-        last_profile_id = ""
-        print(f"[*] 初始模式灯同步失败: {err}", file=sys.stderr)
+    sync_oem_profiles()
+    last_profile_id = sync_mode_led_from_profile()
     last_mode_trigger = 0.0
     last_fn_trigger = 0.0
     last_tp_trigger = 0.0
@@ -680,12 +693,9 @@ def run_daemon() -> None:
         while True:
             ready, _, _ = select.select([f], [], [], 1.0)
             if not ready:
-                try:
-                    current_profile_id = get_current_mode_info()[1]
-                    if current_profile_id != last_profile_id:
-                        last_profile_id = sync_mode_led_from_profile(current_profile_id)
-                except Exception as err:
-                    print(f"模式灯同步失败: {err}", file=sys.stderr)
+                current_profile_id = get_current_mode_info()[1]
+                if current_profile_id != last_profile_id:
+                    last_profile_id = sync_mode_led_from_profile(current_profile_id)
                 continue
             data = f.read(event_size)
             if not data or len(data) < event_size:
@@ -699,48 +709,45 @@ def run_daemon() -> None:
                     if now - last_mode_trigger >= 0.35:  # 350ms debounce
                         last_mode_trigger = now
                         print("[*] 捕捉到机身实体模式按键触发！执行模式切换...")
-                        try:
-                            cycle_mode(notify=True)
-                            last_profile_id = sync_mode_led_from_profile()
-                        except Exception as err:
-                            print(f"模式切换失败: {err}", file=sys.stderr)
+                        cycle_mode(notify=True)
+                        last_profile_id = sync_mode_led_from_profile()
 
                 # 2. Fn Lock toggle key (KEY_FN_ESC = 465)
                 elif ev_code == 465:
                     if now - last_fn_trigger >= 0.35:
                         last_fn_trigger = now
                         print("[*] 捕捉到 Fn+Esc (Fn 模式锁) 物理组合键触发！执行切换...")
-                        try:
-                            toggle_fn_lock(notify=True)
-                        except Exception as err:
-                            print(f"Fn Lock 切换失败: {err}", file=sys.stderr)
+                        toggle_fn_lock(notify=True)
 
                 # 3. Touchpad toggle key (KEY_F21 = 191)
                 elif ev_code == 191:
                     if now - last_tp_trigger >= 0.4:
                         last_tp_trigger = now
                         print("[*] 捕捉到触控板硬件切换键 (KEY_F21) 触发！执行触控板开关...")
-                        try:
-                            toggle_touchpad()
-                        except Exception as err:
-                            print(f"触控板切换失败: {err}", file=sys.stderr)
+                        toggle_touchpad()
 
                 # 4. Keyboard backlight keys (KEY_KBDILLUMTOGGLE = 228, KEY_KBDILLUMDOWN = 229, KEY_KBDILLUMUP = 230)
                 elif ev_code == 228:
                     if now - last_kbl_trigger >= 0.2:
                         last_kbl_trigger = now
                         if shutil.which("omarchy-brightness-keyboard"):
-                            run_cmd(["omarchy-brightness-keyboard", "cycle"], check=False)
+                            run_cmd(["omarchy-brightness-keyboard", "cycle"])
+                        else:
+                            raise RuntimeError("找不到 omarchy-brightness-keyboard")
                 elif ev_code == 229:
                     if now - last_kbl_trigger >= 0.1:
                         last_kbl_trigger = now
                         if shutil.which("omarchy-brightness-keyboard"):
-                            run_cmd(["omarchy-brightness-keyboard", "down"], check=False)
+                            run_cmd(["omarchy-brightness-keyboard", "down"])
+                        else:
+                            raise RuntimeError("找不到 omarchy-brightness-keyboard")
                 elif ev_code == 230:
                     if now - last_kbl_trigger >= 0.1:
                         last_kbl_trigger = now
                         if shutil.which("omarchy-brightness-keyboard"):
-                            run_cmd(["omarchy-brightness-keyboard", "up"], check=False)
+                            run_cmd(["omarchy-brightness-keyboard", "up"])
+                        else:
+                            raise RuntimeError("找不到 omarchy-brightness-keyboard")
 
 
 # ==============================================================================
@@ -791,6 +798,8 @@ def set_win_lock(enabled: bool) -> None:
 
 def get_touchpad() -> bool:
     """Check if touchpad is enabled (device bound)."""
+    if not TOUCHPAD_BOUND_CHECK.parent.exists():
+        raise RuntimeError(f"Touchpad binding interface is unavailable: {TOUCHPAD_BOUND_CHECK.parent}")
     return TOUCHPAD_BOUND_CHECK.exists()
 
 
@@ -798,11 +807,16 @@ def set_touchpad(enabled: bool) -> None:
     """Enable or disable touchpad via I2C driver bind/unbind."""
     current = get_touchpad()
     if enabled and not current:
-        if TOUCHPAD_BIND_PATH.exists():
-            TOUCHPAD_BIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
+        if not TOUCHPAD_BIND_PATH.exists():
+            raise RuntimeError(f"Touchpad bind interface is unavailable: {TOUCHPAD_BIND_PATH}")
+        TOUCHPAD_BIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
     elif not enabled and current:
-        if TOUCHPAD_UNBIND_PATH.exists():
-            TOUCHPAD_UNBIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
+        if not TOUCHPAD_UNBIND_PATH.exists():
+            raise RuntimeError(f"Touchpad unbind interface is unavailable: {TOUCHPAD_UNBIND_PATH}")
+        TOUCHPAD_UNBIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
+    actual = get_touchpad()
+    if actual != enabled:
+        raise RuntimeError(f"触控板状态回读不匹配: requested {enabled}, got {actual}")
     get_state_file("touchpad_state").write_text("1" if enabled else "0")
     state_str = "已开启 (正常滑动)" if enabled else "已锁定禁用 (防误触生效)"
     print(f"[✓] 机械革命触控板状态: {state_str}")
@@ -814,12 +828,12 @@ def set_touchpad(enabled: bool) -> None:
 
 def get_fn_lock() -> bool:
     """Check if Fn Lock is enabled."""
-    if FN_LOCK_PATH.exists():
-        try:
-            return FN_LOCK_PATH.read_text().strip() == "1"
-        except Exception:
-            pass
-    return False
+    if not FN_LOCK_PATH.exists():
+        raise RuntimeError("Fn lock sysfs interface not available on this platform")
+    value = FN_LOCK_PATH.read_text().strip()
+    if value not in {"0", "1"}:
+        raise RuntimeError(f"Invalid Fn lock state: {value!r}")
+    return value == "1"
 
 
 def set_fn_lock(enabled: bool, notify: bool = True) -> None:
@@ -829,24 +843,21 @@ def set_fn_lock(enabled: bool, notify: bool = True) -> None:
     val_str = "1" if enabled else "0"
     try:
         FN_LOCK_PATH.write_text(val_str)
-    except PermissionError:
-        run_cmd(["sudo", "chmod", "0666", str(FN_LOCK_PATH)], check=False)
-        try:
-            FN_LOCK_PATH.write_text(val_str)
-        except Exception:
-            p = subprocess.Popen(["sudo", "tee", str(FN_LOCK_PATH)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            p.communicate(input=val_str.encode())
+    except OSError as exc:
+        raise RuntimeError(f"写入 Fn lock 失败: {exc}") from exc
+    actual = FN_LOCK_PATH.read_text().strip()
+    if actual != val_str:
+        raise RuntimeError(f"Fn lock 回读不匹配: requested {val_str}, got {actual!r}")
 
     # 1 = Multimedia priority, 0 = Standard F1-F12 priority
     mode_name = "多媒体快捷键优先" if enabled else "标准功能键优先 (F1-F12)"
     desc = "直接按 F1-F12 调节音量/亮度/触控板，按 Fn+Fx 触发标准功能键" if enabled else "直接按 F1-F12 触发标准功能键，按 Fn+Fx 调节多媒体"
-    print(f"[✓] 机械革命 Fn 快捷键模式: {mode_name} ({desc})")
-
     if shutil.which("omarchy-osd"):
-        run_cmd(["omarchy-osd", "-i", "keyboard", "-m", f"Fn 锁定: {'已开启 (多媒体)' if enabled else '已关闭 (F1-F12)'}"], check=False)
+        run_cmd(["omarchy-osd", "-i", "keyboard", "-m", f"Fn 锁定: {'已开启 (多媒体)' if enabled else '已关闭 (F1-F12)'}"])
 
     if notify:
         send_notification("★ 机械革命键盘 ★", f"Fn 键模式已切换为：\n【{mode_name}】\n{desc}")
+    print(f"[✓] 机械革命 Fn 快捷键模式: {mode_name} ({desc})")
 
 
 def toggle_fn_lock(notify: bool = True) -> bool:
@@ -863,9 +874,12 @@ def toggle_fn_lock(notify: bool = True) -> bool:
 
 def get_battery_profile() -> str:
     """Get current battery charging profile."""
-    if BATTERY_PROFILE_PATH.exists():
-        return BATTERY_PROFILE_PATH.read_text().strip()
-    return "high_capacity"
+    if not BATTERY_PROFILE_PATH.exists():
+        raise RuntimeError(f"Battery profile sysfs interface is unavailable: {BATTERY_PROFILE_PATH}")
+    value = BATTERY_PROFILE_PATH.read_text().strip()
+    if not value:
+        raise RuntimeError("Battery profile sysfs returned an empty value")
+    return value
 
 
 def set_battery_profile(profile: str) -> None:
@@ -882,9 +896,13 @@ def set_battery_profile(profile: str) -> None:
         raise ValueError(f"Unknown battery profile '{profile}'. Valid: high, balanced, stationary")
 
     target = mapping[p_key]
-    if BATTERY_PROFILE_PATH.exists():
-        BATTERY_PROFILE_PATH.write_text(target)
+    if not BATTERY_PROFILE_PATH.exists():
+        raise RuntimeError(f"Battery profile sysfs interface is unavailable: {BATTERY_PROFILE_PATH}")
     call_tccd_dbus("SetChargingProfile", "s", target)
+    BATTERY_PROFILE_PATH.write_text(target)
+    actual = BATTERY_PROFILE_PATH.read_text().strip()
+    if actual != target:
+        raise RuntimeError(f"电池档位回读不匹配: requested {target}, got {actual!r}")
     desc = {
         "high_capacity": "高容量模式 (充电至 100%)",
         "balanced": "平衡保养模式 (限充 80%)",
@@ -926,12 +944,21 @@ def set_rgb(color_hex: str, brightness: int | None = None) -> None:
     multi_intensity_path = RGB_LEDS_DIR / "multi_intensity"
     brightness_path = RGB_LEDS_DIR / "brightness"
 
-    if multi_intensity_path.exists():
-        multi_intensity_path.write_text(f"{r} {g} {b}\n")
+    if not multi_intensity_path.exists():
+        raise RuntimeError(f"键盘 RGB 接口不可用: {multi_intensity_path}")
+    multi_intensity_path.write_text(f"{r} {g} {b}\n")
+    actual_color = multi_intensity_path.read_text().strip()
+    if actual_color != f"{r} {g} {b}":
+        raise RuntimeError(f"键盘 RGB 回读不匹配: requested {r} {g} {b}, got {actual_color!r}")
 
-    if brightness is not None and brightness_path.exists():
+    if brightness is not None:
+        if not brightness_path.exists():
+            raise RuntimeError(f"键盘亮度接口不可用: {brightness_path}")
         b_val = max(0, min(3, int(brightness)))
         brightness_path.write_text(f"{b_val}\n")
+        actual_brightness = brightness_path.read_text().strip()
+        if actual_brightness != str(b_val):
+            raise RuntimeError(f"键盘亮度回读不匹配: requested {b_val}, got {actual_brightness!r}")
 
     print(f"[✓] 机械革命单区 RGB 灯效已更新: RGB({r}, {g}, {b})" + (f", 亮度: {brightness}/3" if brightness is not None else ""))
 
@@ -939,12 +966,12 @@ def set_rgb(color_hex: str, brightness: int | None = None) -> None:
 def apply_display_color(temp_k: int | None = None, gamma: float | None = None, is_identity: bool = False) -> None:
     """Apply screen color calibration safely (avoiding NVIDIA CTM grey screen)."""
     # X11 via xrandr
-    if os.environ.get("DISPLAY") and shutil.which("xrandr"):
-        try:
-            g_str = f"{gamma:.2f}:{gamma:.2f}:{gamma:.2f}" if gamma else "1.0:1.0:1.0"
-            run_cmd(["xrandr", "--output", "eDP-1", "--gamma", g_str], check=False)
-        except Exception:
-            pass
+    if not os.environ.get("DISPLAY"):
+        raise RuntimeError("屏幕色彩设置需要 X11 DISPLAY")
+    if not shutil.which("xrandr"):
+        raise RuntimeError("找不到 xrandr，无法设置屏幕色彩")
+    g_str = f"{gamma:.2f}:{gamma:.2f}:{gamma:.2f}" if gamma else "1.0:1.0:1.0"
+    run_cmd(["xrandr", "--output", "eDP-1", "--gamma", g_str])
 
 
 def set_screen_color_mode(mode_name: str, notify: bool = True) -> None:
@@ -987,10 +1014,9 @@ def set_screen_color_mode(mode_name: str, notify: bool = True) -> None:
     p = profiles[m_key]
     apply_display_color(temp_k=p["temp"], gamma=p["gamma"], is_identity=p["identity"])
     get_state_file("color_profile").write_text(m_key)
-    print(f"[✓] 机械革命屏幕色彩调教: {p['name']} ({p['desc']})")
-
     if notify:
         send_notification("★ 机械革命电竞控制台 ★", f"屏幕色彩已切换为：【{p['name']}】\n{p['desc']}", icon="video-display")
+    print(f"[✓] 机械革命屏幕色彩调教: {p['name']} ({p['desc']})")
 
 
 def get_screen_color_mode() -> str:
@@ -1025,7 +1051,7 @@ def set_screen_brightness(percent_str: str) -> None:
 
 def read_hwmon_sensors() -> dict:
     """Read temperatures and fan RPM from mechrevo_ec_sensors and coretemp."""
-    data = {"cpu_temp": "N/A", "gpu_temp": "N/A", "fan1_rpm": "0", "fan2_rpm": "0"}
+    data = {"cpu_temp": "N/A", "gpu_temp": "N/A", "fan1_rpm": "N/A", "fan2_rpm": "N/A"}
     hwmon_base = Path("/sys/class/hwmon")
     if hwmon_base.exists():
         for hw in hwmon_base.glob("hwmon*"):
