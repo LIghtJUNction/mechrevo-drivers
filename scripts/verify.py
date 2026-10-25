@@ -37,7 +37,7 @@ PATTERNS: dict[Domain, tuple[str, ...]] = {
     Domain.THERMALD: ("test_thermald_*.py",),
     Domain.DRIVER: ("test_uniwill_*.py", "test_clevo_ioctl_runtime.py", "test_nvidia_power_runtime.py",
                     "test_mechrevo_ec*.py", "test_compare_ec_paths.py", "test_factory_policy_probe.py"),
-    Domain.CONSOLE: ("test_console_*.py", "test_mechrevo_catalog.py"),
+    Domain.CONSOLE: ("test_console_*.py", "test_mechrevo_catalog.py", "test_mechrevo_hotkey.py"),
     Domain.FAN_AUDIO: ("test_analyze_fan_audio.py",),
     Domain.ALL: ("test_*.py",),
 }

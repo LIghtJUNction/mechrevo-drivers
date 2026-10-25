@@ -604,6 +604,7 @@ def cycle_mode(notify: bool = True) -> str:
     key_map = {
         "mechrevo_office": "office",
         "mechrevo_gaming": "gaming",
+        "mechrevo_gaming_quiet": "gaming-quiet",
         "mechrevo_turbo": "turbo",
     }
 
