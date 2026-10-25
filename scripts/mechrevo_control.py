@@ -547,6 +547,7 @@ def set_hardware_mode_led(mode_key: str) -> None:
     raw_mode_map = {
         "office": 0xa0,
         "gaming": 0x00,
+        "gaming-quiet": 0x00,
         "turbo": 0x10,
         "boost": 0x10,
     }

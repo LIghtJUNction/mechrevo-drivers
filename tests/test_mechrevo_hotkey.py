@@ -82,6 +82,17 @@ class ControlFailureTests(unittest.TestCase):
             control.set_hardware_mode_led("gaming")
         close.assert_called_once_with(7)
 
+    def test_gaming_quiet_uses_the_gaming_hardware_mode_request(self):
+        def ioctl(_fd, command, argument, *_):
+            if command == 0x8008EF14:
+                argument[:4] = struct.pack("i", 0)
+            return 0
+
+        with mock.patch.object(control.os, "open", return_value=7), \
+                mock.patch.object(control.os, "close"), \
+                mock.patch.object(control.fcntl, "ioctl", side_effect=ioctl):
+            control.set_hardware_mode_led("gaming-quiet")
+
     def test_notification_failure_is_visible(self):
         with mock.patch.object(control.shutil, "which", return_value=None), \
                 self.assertRaisesRegex(RuntimeError, "notify-send"):
