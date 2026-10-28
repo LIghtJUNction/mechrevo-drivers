@@ -1904,6 +1904,9 @@ struct uniwill_device_features_t *uniwill_get_device_features(void)
 
 	uw_feats->uniwill_custom_profile_mode_needed = false
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
+		/* sklynic's tested JIAOLONG 16 Pro 2025 adaptation; exact DMI. */
+		|| (dmi_match(DMI_SYS_VENDOR, "MECHREVO") &&
+		    dmi_match(DMI_BOARD_NAME, "JIAOLONG Series-X6xR55xK"))
 		|| dmi_match(DMI_PRODUCT_SKU, "STELLARIS16I06")
 		|| dmi_match(DMI_PRODUCT_SKU, "STELLARIS17I06")
 		|| dmi_match(DMI_PRODUCT_SKU, "STELLARIS16I07")
@@ -1930,6 +1933,12 @@ struct uniwill_device_features_t *uniwill_get_device_features(void)
 	uw_feats->uniwill_profile_v1 =
 		uw_feats->uniwill_profile_v1_two_profs ||
 		uw_feats->uniwill_profile_v1_three_profs;
+	/* GX4HRXL supports the same three mode values (mech-forza-kmod),
+	 * but has no evidence for the legacy fan-curve copy in probe. Advertise
+	 * modes after computing that legacy initialization flag. */
+	uw_feats->uniwill_profile_v1_three_profs |=
+		dmi_match(DMI_SYS_VENDOR, "MECHREVO") &&
+		dmi_match(DMI_BOARD_NAME, "GX4HRXL");
 
 	if (uw_has_charging_priority(&uw_feats->uniwill_has_charging_prio) != 0)
 		feats_loaded = false;

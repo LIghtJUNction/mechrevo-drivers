@@ -179,6 +179,35 @@ mod tests {
         }
     }
     #[test]
+    fn other_model_sources_never_claim_local_hardware_acceptance() {
+        for (board, product, model_id) in [
+            ("GX4HRXL", None, "gx4hrxl"),
+            ("JIAOLONG Series-X6xR55xK", None, "jiaolong-x6xr55xk"),
+            ("GM6BG0Q", Some("Jiaolong16K Series GM6BG0Q"), "gm6bg0q"),
+        ] {
+            let mut identity = Identity {
+                manufacturer: Some("MECHREVO".into()),
+                board_name: Some(board.into()),
+                product_name: product.map(str::to_owned),
+                bios_version: Some("N.1.19MRO15".into()),
+                ..Default::default()
+            };
+            let result = identify(&identity);
+            assert_eq!(result.status, "identified");
+            assert_eq!(result.matches.len(), 1);
+            assert_eq!(result.matches[0].model_id, model_id);
+            assert!(!result.matches[0].hardware_validated);
+            assert!(!result.matches[0].firmware_evidence_matches);
+            for vendor in [None, Some("Other MECHREVO".into())] {
+                identity.manufacturer = vendor;
+                assert_eq!(identify(&identity).status, "unknown");
+            }
+            identity.manufacturer = Some("MECHREVO".into());
+            identity.board_name = Some(format!("{board}-other"));
+            assert_eq!(identify(&identity).status, "unknown");
+        }
+    }
+    #[test]
     fn marketing_prefix_and_similar_board_do_not_match() {
         let mut identity = local();
         identity.board_name = Some("GM6PX0X-other".into());

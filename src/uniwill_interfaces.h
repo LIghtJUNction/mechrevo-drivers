@@ -154,6 +154,8 @@ struct uniwill_device_features_t {
 	 *   graphics card often called "power save", "balanced"
 	 *   and "enthusiast"
 	 */
+	/* Legacy fan-curve initialization; mode-only devices advertise counts
+	 * separately without enabling that probe-time EC table copy. */
 	bool uniwill_profile_v1;
 	bool uniwill_profile_v1_two_profs;
 	bool uniwill_profile_v1_three_profs;

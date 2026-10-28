@@ -253,6 +253,12 @@ static void uw_id_tdp(void)
 	} else if (dmi_match(DMI_BOARD_NAME, "X5KK45xS_X5SP45xS")) {
 		tdp_min_defs = tdp_min_xxxx45xs;
 		tdp_max_defs = tdp_max_xxxx45xs;
+	} else if (dmi_match(DMI_SYS_VENDOR, "MECHREVO") &&
+		   dmi_match(DMI_BOARD_NAME, "JIAOLONG Series-X6xR55xK")) {
+		/* Reuse the tested community mapping, not a marketing-name alias.
+		 * These are validation bounds, never automatically applied targets. */
+		tdp_min_defs = tdp_min_x6fr5xx;
+		tdp_max_defs = tdp_max_x6fr5xx;
 	} else if (dmi_match(DMI_BOARD_NAME, "X6AR55xU")) {
 		tdp_min_defs = tdp_min_x6ar55xu;
 		tdp_max_defs = tdp_max_x6ar55xu;
