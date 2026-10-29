@@ -37,7 +37,7 @@
     },
     {
       "model_id": "gm6bg0q",
-      "title": "蛟龙 16K GM6BG0Q（主线驱动资料）",
+      "title": "蛟龙 16K GM6BG0Q",
       "platform": "uniwill",
       "identity": {
         "manufacturer": "MECHREVO",
@@ -46,7 +46,26 @@
       },
       "qualified_bios": [],
       "evidence_level": "upstream-source",
-      "sources": ["https://lists.openwall.net/linux-kernel/2026/10/23/301"]
+      "sources": [
+        "https://lists.openwall.net/linux-kernel/2026/10/23/301",
+        "https://github.com/Wer-Wolf/uniwill-laptop/blob/a9e5ac3b10ed09c6d9aedd23288d3c7887afb450/uniwill-acpi.c"
+      ]
+    },
+    {
+      "model_id": "wujie-x5sp4nag",
+      "title": "无界 15X Pro X5SP4NAG",
+      "platform": "uniwill",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "board_name": "WUJIE Series-X5SP4NAG"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://lists.openwall.net/linux-kernel/2026/10/16/1522",
+        "https://lists.openwall.net/linux-kernel/2026/09/28/2519",
+        "https://github.com/Wer-Wolf/uniwill-laptop/blob/a9e5ac3b10ed09c6d9aedd23288d3c7887afb450/uniwill-acpi.c"
+      ]
     }
   ]
 }

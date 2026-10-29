@@ -38,8 +38,16 @@ class MechrevoModels(unittest.TestCase):
                                         ('struct', 'uniwill_device_features_t'),
                                         ('enum', 'uw_perf_profiles_v1')))
         constants = '\n'.join(re.findall(r'(?m)^#define UW_MODEL_.*$', interfaces))
+        constants += '\n' + '\n'.join(re.findall(
+            r'(?m)^#define UW_EC_REG_(?:AC_AUTO_BOOT_STATUS|USB_POWERSHARE_STATUS)\s+.*$',
+            interfaces))
         tables = ioctl[ioctl.index('static int tdp_min_ph4tux'):ioctl.index('static void uw_id_tdp')]
-        pieces = [function(keyboard, 'uniwill_get_device_features')]
+        pieces = [function(keyboard, name) for name in (
+            'is_auto_boot_and_powershare_supported', 'uw_has_ac_auto_boot',
+            'uw_has_usb_powershare', 'uniwill_get_device_features',
+            'uw_set_ac_auto_boot', 'uw_get_ac_auto_boot',
+            'uw_set_usb_powershare', 'uw_get_usb_powershare',
+            'uw_ac_auto_boot_init', 'uw_usb_powershare_init')]
         pieces += [function(ioctl, name) for name in (
             'uw_id_tdp', 'uw_get_tdp_min', 'uw_get_tdp_max', 'uw_get_tdp',
             'uw_set_tdp', 'uw_get_performance_profile_count',
@@ -50,12 +58,14 @@ class MechrevoModels(unittest.TestCase):
                         .replace('/* @TABLES@ */', tables)
                         .replace('/* @PRODUCTION@ */', '\n\n'.join(pieces)))
         cls.binaries = []
+        historical = 'MECHREVO_MODEL_KEYBOARD' in os.environ
         for version in ((4, 17, 0), (4, 18, 0), (7, 2, 11)):
             binary = Path(cls.temp.name) / ('runtime-' + '-'.join(map(str, version)))
             code = (version[0] << 16) | (version[1] << 8) | version[2]
             result = subprocess.run([
                 'cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
                 '-Wno-unused-variable', '-Wno-unused-const-variable',
+                *(['-Wno-error=maybe-uninitialized'] if historical else []),
                 '-DLINUX_VERSION_CODE=' + str(code), str(unit), '-o', str(binary)
             ], capture_output=True, text=True, timeout=60)
             if result.returncode:
@@ -85,6 +95,15 @@ class MechrevoModels(unittest.TestCase):
 
     def test_feature_read_failure_retries_without_hardware_writes(self):
         self.check_case('retry')
+
+    def test_new_model_settings_are_advertised_only_with_exact_identity_and_bios(self):
+        self.check_case('settings_identity')
+
+    def test_new_model_settings_preserve_all_unrelated_register_bits_and_errors(self):
+        self.check_case('settings_transactions')
+
+    def test_settings_initialization_never_publishes_an_unread_or_stale_state(self):
+        self.check_case('settings_init')
 
 
 if __name__ == '__main__':

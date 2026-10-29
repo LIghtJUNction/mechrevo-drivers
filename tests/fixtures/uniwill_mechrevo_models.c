@@ -11,19 +11,44 @@ typedef uint32_t u32;
 #define DMI_SYS_VENDOR 0
 #define DMI_BOARD_NAME 1
 #define DMI_PRODUCT_SKU 2
+#define DMI_PRODUCT_NAME 3
+#define DMI_BIOS_VERSION 4
 #define pr_debug(...) ((void)0)
+#define pr_err(...) ((void)0)
 /* @TYPES@ */
 static struct uniwill_device_features_t uniwill_device_features;
 static struct uniwill_device_features_t *uw_feats;
 static bool uw_feats_loaded;
-static const char *dmi[3];
+static const char *dmi[5];
 static int reads, writes, read_error, write_error;
 static bool double_pl4;
 static u8 ec[65536], written_index, written_value;
+static bool uw_ac_auto_boot_last_written_value, uw_usb_powershare_last_written_value;
+static bool uw_ac_auto_boot_loaded, uw_usb_powershare_loaded;
+struct platform_device { struct { int kobj; } dev; };
+static int uw_ac_auto_boot_attr_group, uw_usb_powershare_attr_group;
+static int group_calls, group_error;
+static int sysfs_create_group(int *kobj, int *group)
+{
+    assert(kobj);
+    assert(group == &uw_ac_auto_boot_attr_group || group == &uw_usb_powershare_attr_group);
+    group_calls++;
+    return group_error;
+}
 static bool dmi_match(int field, const char *value)
 { return dmi[field] && !strcmp(dmi[field], value); }
 static int uniwill_read_ec_ram(u16 addr, u8 *value)
 { reads++; if (read_error < 0) return read_error; *value = ec[addr]; return 0; }
+static int uniwill_update_ec_ram(u16 addr, u8 clear, u8 set)
+{
+    u8 value;
+    int result = uniwill_read_ec_ram(addr, &value);
+    if (result) return result;
+    writes++;
+    if (write_error) return write_error;
+    ec[addr] = (value & ~clear) | set;
+    return 0;
+}
 static int uw_update_mode(u8 clear, u8 set)
 { writes++; if (write_error) return write_error; ec[0x0751] = (ec[0x0751] & ~clear) | set; return 0; }
 static int uw_write_tdp(u8 index, u8 value)
@@ -33,8 +58,6 @@ static int has_double_pl4(bool *value)
 static int unavailable(bool *value) { *value = false; return 0; }
 #define uw_has_charging_priority unavailable
 #define uw_has_charging_profile unavailable
-#define uw_has_ac_auto_boot unavailable
-#define uw_has_usb_powershare unavailable
 #define uw_has_mini_led_local_dimming unavailable
 #define uw_has_hidden_bios_options unavailable
 static int has_universal_ec_fan_control(void) { return 0; }
@@ -52,7 +75,10 @@ static void detect(const char *vendor, const char *board, const char *sku)
 static void reset(void)
 {
     reads = writes = read_error = write_error = 0;
+    group_calls = group_error = 0;
+    uw_ac_auto_boot_loaded = uw_usb_powershare_loaded = false;
     double_pl4 = false;
+    dmi[3] = dmi[4] = NULL;
     memset(ec, 0, sizeof(ec));
 }
 static void gx4hrxl(void)
@@ -157,6 +183,109 @@ static void retry(void)
     assert(reads == 2 && writes == 0);
     assert(uniwill_get_device_features() == uw_feats && reads == 2);
 }
+static void settings_identity(void)
+{
+    const char *boards[] = {"WUJIE Series-X5SP4NAG", "GM6BG0Q"};
+    const char *good[] = {"MECHREVO", "GM6BG0Q", NULL,
+                         "Jiaolong16K Series GM6BG0Q", "N.1.19MRO15"};
+    for (int board = 0; board < 2; board++) {
+        reset();
+        dmi[3] = good[3]; dmi[4] = good[4];
+        detect("MECHREVO", boards[board], NULL);
+        assert(uw_feats->uniwill_has_ac_auto_boot && uw_feats->uniwill_has_usb_powershare);
+        assert(!uw_feats->uniwill_profile_v1 && !uw_feats->uniwill_custom_profile_mode_needed);
+        assert(uw_get_performance_profile_count() == 0);
+        assert(uw_set_tdp(0, 50) == -ENODEV && writes == 0);
+        for (int field = 0; field < 5; field++) {
+            if (field == DMI_PRODUCT_SKU || (board == 0 && field > DMI_BOARD_NAME)) continue;
+            for (int variant = 0; variant < 3; variant++) {
+                reset();
+                for (int i = 0; i < 5; i++) dmi[i] = good[i];
+                dmi[DMI_BOARD_NAME] = boards[board];
+                dmi[field] = variant == 0 ? NULL : variant == 1 ? "Other" : "MECHREVO extra";
+                detect(dmi[0], dmi[1], NULL);
+                assert(!uw_feats->uniwill_has_ac_auto_boot && !uw_feats->uniwill_has_usb_powershare);
+            }
+        }
+    }
+    const char *unknown[] = {"WUJIE Series-X5SP4NAG extra", "WUJIE", "GM6BG0Q extra",
+        "GM6BG5Q", "GM6PX0X", "GX4HRXL", "JIAOLONG Series-X6xR55xK"};
+    for (unsigned i = 0; i < sizeof(unknown)/sizeof(*unknown); i++) {
+        reset(); detect("MECHREVO", unknown[i], NULL);
+        assert(!uw_feats->uniwill_has_ac_auto_boot && !uw_feats->uniwill_has_usb_powershare);
+    }
+    reset(); detect("TUXEDO", "GXxHRXx", NULL);
+    assert(uw_feats->uniwill_has_ac_auto_boot && uw_feats->uniwill_has_usb_powershare);
+}
+static void settings_transactions(void)
+{
+    for (int model = 0; model < 2; model++) {
+        reset(); dmi[3] = "Jiaolong16K Series GM6BG0Q"; dmi[4] = "N.1.19MRO15";
+        detect("MECHREVO", model == 0 ? "WUJIE Series-X5SP4NAG" : "GM6BG0Q", NULL);
+        assert(uw_feats->uniwill_has_ac_auto_boot && uw_feats->uniwill_has_usb_powershare);
+        for (int initial = 0; initial <= 255; initial++) {
+            for (int enabled = 0; enabled < 2; enabled++) {
+                u8 value;
+                ec[0x0726] = initial;
+                assert(uw_set_ac_auto_boot(enabled) == 0);
+                assert(ec[0x0726] == ((initial & ~8) | (enabled << 3)));
+                assert(uw_get_ac_auto_boot(&value) == 0 && value == enabled);
+                ec[0x0767] = initial;
+                assert(uw_set_usb_powershare(enabled) == 0);
+                assert(ec[0x0767] == ((initial & ~16) | (enabled << 4)));
+                assert(uw_get_usb_powershare(&value) == 0 && value == enabled);
+            }
+        }
+        for (int setting = 0; setting < 2; setting++) {
+            int (*set)(u8) = setting ? uw_set_usb_powershare : uw_set_ac_auto_boot;
+            int (*get)(u8 *) = setting ? uw_get_usb_powershare : uw_get_ac_auto_boot;
+            for (int failure = 0; failure < 2; failure++) {
+                read_error = write_error = 0;
+                assert(set(0) == 0);
+                bool old_ac = uw_ac_auto_boot_last_written_value;
+                bool old_usb = uw_usb_powershare_last_written_value;
+                int before = writes;
+                if (failure) write_error = -EIO; else read_error = -ETIMEDOUT;
+                assert(set(1) == (failure ? -EIO : -ETIMEDOUT));
+                assert(writes == before + failure);
+                assert(uw_ac_auto_boot_last_written_value == old_ac);
+                assert(uw_usb_powershare_last_written_value == old_usb);
+                if (!failure) {
+                    u8 value = 99;
+                    assert(get(&value) == -ETIMEDOUT && value == 99);
+                }
+            }
+        }
+    }
+}
+static void settings_init(void)
+{
+    struct platform_device dev = {0};
+    for (int setting = 0; setting < 2; setting++) {
+        void (*init)(struct platform_device *) = setting ? uw_usb_powershare_init : uw_ac_auto_boot_init;
+        bool *loaded = setting ? &uw_usb_powershare_loaded : &uw_ac_auto_boot_loaded;
+        bool *cached = setting ? &uw_usb_powershare_last_written_value : &uw_ac_auto_boot_last_written_value;
+        bool *supported = setting ? &uniwill_device_features.uniwill_has_usb_powershare : &uniwill_device_features.uniwill_has_ac_auto_boot;
+        int address = setting ? 0x0767 : 0x0726, mask = setting ? 16 : 8;
+        for (int enabled = 0; enabled < 2; enabled++) {
+            reset(); *supported = true; *cached = !enabled; ec[address] = enabled ? mask : 0;
+            init(&dev);
+            assert(*loaded && *cached == enabled && reads == 1 && group_calls == 1 && writes == 0);
+        }
+        reset(); *supported = false; *loaded = true;
+        init(&dev);
+        assert(!*loaded && reads == 0 && group_calls == 0 && writes == 0);
+        reset(); *supported = true; *cached = true; read_error = -ETIMEDOUT;
+        init(&dev);
+        assert(!*loaded && *cached && reads == 1 && group_calls == 0 && writes == 0);
+        read_error = 0;
+        init(&dev); /* A later successful initialization can publish the state. */
+        assert(*loaded && !*cached && reads == 2 && group_calls == 1 && writes == 0);
+        reset(); *supported = true; group_error = -ENOMEM;
+        init(&dev);
+        assert(!*loaded && reads == 1 && group_calls == 1 && writes == 0);
+    }
+}
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -165,6 +294,9 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "identity")) identity();
     else if (!strcmp(argv[1], "existing")) existing();
     else if (!strcmp(argv[1], "retry")) retry();
+    else if (!strcmp(argv[1], "settings_identity")) settings_identity();
+    else if (!strcmp(argv[1], "settings_transactions")) settings_transactions();
+    else if (!strcmp(argv[1], "settings_init")) settings_init();
     else assert(false);
     return 0;
 }

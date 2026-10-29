@@ -46,6 +46,9 @@ DEBUG 任意地址 EC 写入不包含在这些同步保障中。
 其他机型的精确匹配、源码依据与待验证功能见[其他机型说明](hardware/OTHER-MODELS.md)。
 `GX4HRXL` 新增三档模式，不启用旧式风扇表复制；`JIAOLONG Series-X6xR55xK`
 按已公开实测补丁接入既有 TDP 表及 custom-profile 流程。只匹配 `MECHREVO` 厂商和完整板号。
+无界 15X Pro `WUJIE Series-X5SP4NAG` 和蛟龙 16K `GM6BG0Q` 增加接电开机、USB 供电开关；
+后者还要求已报告的完整产品名和 BIOS `N.1.19MRO15`。寄存器及位定义经过公开 Uniwill 实现核对，
+识别不修改开关值，本项目尚无新增型号的硬件验收。
 
 ## 能力与边界
 

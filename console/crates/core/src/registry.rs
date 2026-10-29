@@ -184,6 +184,7 @@ mod tests {
             ("GX4HRXL", None, "gx4hrxl"),
             ("JIAOLONG Series-X6xR55xK", None, "jiaolong-x6xr55xk"),
             ("GM6BG0Q", Some("Jiaolong16K Series GM6BG0Q"), "gm6bg0q"),
+            ("WUJIE Series-X5SP4NAG", None, "wujie-x5sp4nag"),
         ] {
             let mut identity = Identity {
                 manufacturer: Some("MECHREVO".into()),
