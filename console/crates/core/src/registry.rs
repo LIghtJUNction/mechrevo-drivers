@@ -185,6 +185,7 @@ mod tests {
             ("JIAOLONG Series-X6xR55xK", None, "jiaolong-x6xr55xk"),
             ("GM6BG0Q", Some("Jiaolong16K Series GM6BG0Q"), "gm6bg0q"),
             ("WUJIE Series-X5SP4NAG", None, "wujie-x5sp4nag"),
+            ("GM5HG0A", Some("Yilong15Pro Series GM5HG0A"), "gm5hg0a"),
         ] {
             let mut identity = Identity {
                 manufacturer: Some("MECHREVO".into()),
@@ -207,6 +208,29 @@ mod tests {
             identity.board_name = Some(format!("{board}-other"));
             assert_eq!(identify(&identity).status, "unknown");
         }
+    }
+    #[test]
+    fn mrid6_23_exact_identity_is_source_evidence_with_a_distinct_platform() {
+        let mut identity = Identity {
+            manufacturer: Some("MECHREVO".into()),
+            product_name: Some("Jiaolong Series MRID6".into()),
+            product_version: Some("1".into()),
+            board_name: Some("MRID6-23".into()),
+            bios_version: Some("MRID6_23_P_V35".into()),
+            ..Default::default()
+        };
+        let result = identify(&identity);
+        assert_eq!(result.status, "identified");
+        assert_eq!(result.matches[0].platform, "bitland-mifs-wmi");
+        assert!(!result.matches[0].hardware_validated);
+        assert!(!result.matches[0].firmware_evidence_matches);
+        for version in [None, Some("2".into())] {
+            identity.product_version = version;
+            assert_eq!(identify(&identity).status, "unknown");
+        }
+        identity.product_version = Some("1".into());
+        identity.board_name = Some("MRID6".into());
+        assert_eq!(identify(&identity).status, "unknown");
     }
     #[test]
     fn marketing_prefix_and_similar_board_do_not_match() {

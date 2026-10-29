@@ -66,6 +66,39 @@
         "https://lists.openwall.net/linux-kernel/2026/09/28/2519",
         "https://github.com/Wer-Wolf/uniwill-laptop/blob/a9e5ac3b10ed09c6d9aedd23288d3c7887afb450/uniwill-acpi.c"
       ]
+    },
+    {
+      "model_id": "mrid6-23",
+      "title": "蛟龙 16 Pro 2023 MRID6-23",
+      "platform": "bitland-mifs-wmi",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "Jiaolong Series MRID6",
+        "product_version": "1",
+        "board_name": "MRID6-23"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/hardware.md",
+        "https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/linux-stage3-results.md",
+        "https://github.com/torvalds/linux/blob/v7.2/drivers/platform/x86/bitland-mifs-wmi.c"
+      ]
+    },
+    {
+      "model_id": "gm5hg0a",
+      "title": "翼龙 15 Pro GM5HG0A",
+      "platform": "uniwill",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "Yilong15Pro Series GM5HG0A",
+        "board_name": "GM5HG0A"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://lore-kernel.gnuweeb.org/platform-driver-x86/tencent_36699D13D174660E0D76C4F5EFB825D86609%40qq.com/T/"
+      ]
     }
   ]
 }

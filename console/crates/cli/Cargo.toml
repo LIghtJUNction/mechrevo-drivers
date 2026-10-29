@@ -1,5 +1,6 @@
 [package]
 name = "mechrevo-console-cli"
+default-run = "mechrevo-console"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

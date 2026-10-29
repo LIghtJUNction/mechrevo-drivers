@@ -1159,7 +1159,12 @@ static int is_auto_boot_and_powershare_supported(bool *status)
 		   (dmi_match(DMI_BOARD_NAME, "WUJIE Series-X5SP4NAG") ||
 		    (dmi_match(DMI_BOARD_NAME, "GM6BG0Q") &&
 		     dmi_match(DMI_PRODUCT_NAME, "Jiaolong16K Series GM6BG0Q") &&
-		     dmi_match(DMI_BIOS_VERSION, "N.1.19MRO15"))));
+		     dmi_match(DMI_BIOS_VERSION, "N.1.19MRO15")) ||
+		    /* GM5HG0A owner report, LKML 2026-10-08: both switches
+		     * tested separately, with the other switch disabled. */
+		    (dmi_match(DMI_BOARD_NAME, "GM5HG0A") &&
+		     dmi_match(DMI_PRODUCT_NAME, "Yilong15Pro Series GM5HG0A") &&
+		     dmi_match(DMI_BIOS_VERSION, "N.1.09MRO19"))));
 
 	return 0;
 }

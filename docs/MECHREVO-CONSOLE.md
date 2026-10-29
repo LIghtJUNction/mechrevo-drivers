@@ -37,7 +37,7 @@ mechrevo-console status --json
 
 本轮源码已通过 146 项 Rust 测试、95 项 Python 检查、格式、Clippy 和 Windows 编译检查。本机四项控制完成 11 次可逆写入及 7 次写前拒绝，独立回读确认全部恢复原值，配置、服务与加载模块保持不变；候选原生窗口的概览和控制页已人工复核。[OEM 验收收据](verification/oem-controls.json)记录源码指纹、二进制摘要及具体边界。这些是 r160 构建前 debug 候选验收，18 次事务与已安装 release 的两次 Fn 验收分别记录；r158 历史基线不含这些新控制，当前 r160 已安装。完整 Windows／Linux 目标继续以 [OEM 功能覆盖](OEM-FEATURE-COVERAGE.md) 为准。
 
-核心、CLI 和 GUI 共用 OEM 后端。它只接入已加载 `tuxedo_keyboard` 驱动实际暴露并通过绑定校验的固定 sysfs 接口，不从相似型号推测寄存器。状态文档新增 `oem_controls`，逐项保留 ID、类型、当前值、允许范围、来源、驱动绑定、可写状态及 `readback_scope`。没有接口就不生成控制项，接口无效或权限不足也不伪造可用状态。
+核心、CLI 和 GUI 共用 OEM 后端。它接入已加载 `tuxedo_keyboard` 驱动实际暴露并通过绑定校验的固定 sysfs 接口；2026-10-29 源码另增加原生 `uniwill_laptop` / `bitland_mifs_wmi` 的[有限接入](hardware/NATIVE-KERNEL-CONTROLS.md)，尚未安装或实机验收。不从相似型号推测寄存器。状态文档的 `oem_controls` 逐项保留 ID、类型、当前值、允许范围、来源、驱动绑定、可写状态及 `readback_scope`。没有接口就不生成控制项，接口无效或权限不足也不伪造可用状态。原生 Uniwill 布尔控制 ID 含模块与实例后缀，CLI 使用枚举给出的完整 ID；充电档位与 RGB 不在原生接入范围内。
 
 | 控制项 | CLI 值与当前范围 | 回读边界 |
 | --- | --- | --- |

@@ -5,7 +5,7 @@
 基于 [TUXEDO `tuxedo-drivers`](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers) 的非官方维护分支，保留原始历史、模块名称及许可证。
 
 - **初始维护基线：上游 `v4.24.0`**，不是开发版 `v4.25.0_rc`。
-- **当前适配：** `MECHREVO` 品牌检查、Uniwill 错误传播与 WMI 响应校验；旷世 16 Pro `GM6PX0X` 加载时保留已有电源配置；无界 14X 三档模式、蛟龙 16 Pro 2025 精确板号功耗接口、无界 15X Pro / 蛟龙 16K 接电开机与 USB 供电适配。新增机型依据公开源码完成，尚未在本项目实机验收，精确板号、固件限制见[其他机型说明](docs/hardware/OTHER-MODELS.md)。保留原有 TUXEDO 匹配和旧平台逻辑。
+- **当前适配：** `MECHREVO` 品牌检查、Uniwill 错误传播与 WMI 响应校验；旷世 16 Pro `GM6PX0X` 加载时保留已有电源配置；无界 14X 三档模式、蛟龙 16 Pro 2025 精确板号功耗接口、无界 15X Pro / 蛟龙 16K / 翼龙 15 Pro 接电开机与 USB 供电适配。控制台另接入原生 Uniwill 的有限控制及蛟龙 16 Pro 2023 `MRID6-23` 的原生 Bitland 背光接口。新增机型尚未在本项目实机验收，精确板号、固件限制见[其他机型说明](docs/hardware/OTHER-MODELS.md)及[原生驱动接入范围](docs/hardware/NATIVE-KERNEL-CONTROLS.md)。保留原有 TUXEDO 匹配和旧平台逻辑。
 - **本机验证：** 旷世 16 Pro `GM6PX0X` 已安装、加载并完成部分接口验证，详见[验证记录](docs/hardware/GM6PX0X.md)；不代表完整功能认证。
 - **不是性能优化包：** 尚无机械革命型号专属风扇曲线、功耗调优或实机兼容性认证。品牌匹配不能保证 EC 操作安全。
 - **上游同步：** 每日镜像开发分支到 `upstream`，仅将正式版本合入自动更新 PR；`main` 不会被强推或自动合并。

@@ -586,7 +586,248 @@ mod linux_fixtures {
             symlink(&path, self.0.join("class/leds").join(name)).unwrap();
             path
         }
+        fn native(&self, bitland: bool) -> (PathBuf, PathBuf, String) {
+            let (module, driver, device, name, maximum) = if bitland {
+                (
+                    "bitland_mifs_wmi",
+                    "bus/wmi/drivers/bitland-mifs-wmi",
+                    "devices/platform/PNP0C14:00/wmi_bus/wmi_bus-PNP0C14:00/B60BFB48-3E5B-49E4-A0E9-8CFFE1B3434B-4",
+                    "bitland-mifs-wmi::kbd_backlight",
+                    "3\n",
+                )
+            } else {
+                (
+                    "uniwill_laptop",
+                    "bus/platform/drivers/uniwill-laptop",
+                    "devices/platform/INOU0000:00",
+                    "uniwill:white:kbd_backlight",
+                    "4\n",
+                )
+            };
+            self.put(&format!("module/{module}/srcversion"), "1234ABCD\n");
+            let driver = self.0.join(driver);
+            let device = self.0.join(device);
+            fs::create_dir_all(&driver).unwrap();
+            fs::create_dir_all(&device).unwrap();
+            symlink(self.0.join("module").join(module), driver.join("module")).unwrap();
+            symlink(&driver, device.join("driver")).unwrap();
+            symlink(&device, driver.join(device.file_name().unwrap())).unwrap();
+            self.put(
+                device
+                    .join("fn_lock")
+                    .strip_prefix(&self.0)
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "0\n",
+            );
+            let led = device.join("leds").join(name);
+            fs::create_dir_all(&led).unwrap();
+            fs::write(led.join("brightness"), "1\n").unwrap();
+            fs::write(led.join("max_brightness"), maximum).unwrap();
+            fs::create_dir_all(self.0.join("class/leds")).unwrap();
+            symlink(&led, self.0.join("class/leds").join(name)).unwrap();
+            (device, driver, format!("keyboard-brightness:{name}"))
+        }
     }
+
+    #[test]
+    fn native_bitland_keyboard_brightness_uses_the_bound_driver_and_advertised_range() {
+        let fixture = Fixture::new();
+        let (device, _, id) = fixture.native(true);
+        let service = fixture.service();
+        let control = fixture.control(OemControlKind::KeyboardBrightness);
+        assert_eq!(control.status, CapabilityStatus::Available);
+        assert_eq!(control.source.backend, "linux_bitland_sysfs");
+        assert_eq!(control.domain, OemDomain::Level { max: 3 });
+        assert_eq!(
+            control.source.device_id,
+            Some(fs::canonicalize(&device).unwrap().display().to_string())
+        );
+        assert!(service.plan_oem(&id, OemValue::Level(4)).is_err());
+        let plan = service.plan_oem(&id, OemValue::Level(2)).unwrap();
+        let path = device.join("leds/bitland-mifs-wmi::kbd_backlight/brightness");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "1\n");
+        assert_eq!(
+            service.apply_oem(&plan).unwrap().confirmed,
+            OemValue::Level(2)
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), "2\n");
+    }
+
+    #[test]
+    fn native_uniwill_boolean_controls_preview_then_apply_without_a_tuxedo_module() {
+        let fixture = Fixture::new();
+        let (device, _, _) = fixture.native(false);
+        fs::remove_file(fixture.0.join(MODULE)).unwrap();
+        fs::write(device.join("ac_auto_boot"), "0\n").unwrap();
+        fs::write(device.join("usb_powershare_high"), "0\n").unwrap();
+        for (kind, attribute) in [
+            (OemControlKind::FnLock, "fn_lock"),
+            (OemControlKind::AcAutoBoot, "ac_auto_boot"),
+            (OemControlKind::UsbPowerShare, "usb_powershare_high"),
+        ] {
+            let control = fixture.control(kind);
+            assert_eq!(control.status, CapabilityStatus::Available);
+            assert_eq!(control.source.backend, "linux_uniwill_sysfs");
+            let plan = fixture
+                .service()
+                .plan_oem(&control.id, OemValue::Boolean(true))
+                .unwrap();
+            assert_eq!(fs::read_to_string(device.join(attribute)).unwrap(), "0\n");
+            assert_eq!(
+                fixture.service().apply_oem(&plan).unwrap().confirmed,
+                OemValue::Boolean(true)
+            );
+        }
+        assert_eq!(
+            fixture.control(OemControlKind::KeyboardBrightness).domain,
+            OemDomain::Level { max: 4 }
+        );
+    }
+
+    #[test]
+    fn native_driver_rebinding_or_module_revision_change_invalidates_a_plan() {
+        for revision_change in [false, true] {
+            let fixture = Fixture::new();
+            let (device, _, id) = fixture.native(true);
+            let plan = fixture.service().plan_oem(&id, OemValue::Level(2)).unwrap();
+            if revision_change {
+                fixture.put("module/bitland_mifs_wmi/srcversion", "FFFF1234\n");
+            } else {
+                fs::remove_file(device.join("driver")).unwrap();
+                symlink(
+                    fixture.0.join("bus/wmi/drivers/redmi-wmi"),
+                    device.join("driver"),
+                )
+                .unwrap();
+            }
+            let error = fixture.service().apply_oem(&plan).unwrap_err();
+            assert_terminal_marker(&error, "oem_rejected_before_write");
+            assert_eq!(
+                fs::read_to_string(device.join("leds/bitland-mifs-wmi::kbd_backlight/brightness"))
+                    .unwrap(),
+                "1\n"
+            );
+        }
+    }
+
+    #[test]
+    fn native_driver_requires_its_own_loaded_module_and_device_ownership() {
+        for missing in [false, true] {
+            let fixture = Fixture::new();
+            let (_, driver, id) = fixture.native(true);
+            if missing {
+                fs::remove_file(fixture.0.join("module/bitland_mifs_wmi/srcversion")).unwrap();
+            } else {
+                fs::remove_file(driver.join("module")).unwrap();
+                symlink(
+                    fixture.0.join("module/tuxedo_keyboard"),
+                    driver.join("module"),
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                fixture.control(OemControlKind::KeyboardBrightness).status,
+                CapabilityStatus::Unavailable
+            );
+            assert!(fixture.service().plan_oem(&id, OemValue::Level(2)).is_err());
+        }
+    }
+
+    #[test]
+    fn native_color_does_not_inherit_the_tuxedo_255_channel_fallback() {
+        let fixture = Fixture::new();
+        let (device, _, _) = fixture.native(false);
+        let led = device.join("leds/uniwill:white:kbd_backlight");
+        fs::write(led.join("multi_index"), "red green blue\n").unwrap();
+        fs::write(led.join("multi_intensity"), "10 20 30\n").unwrap();
+        assert!(!fixture
+            .service()
+            .oem_controls()
+            .iter()
+            .any(|control| control.kind == OemControlKind::KeyboardColor));
+    }
+    #[test]
+    fn native_event_nodes_and_invalid_acpi_instances_never_authorize_controls() {
+        for (bitland, name, led) in [
+            (
+                true,
+                "46C93E13-EE9B-4262-8488-563BCA757FEF-0",
+                "bitland-mifs-wmi::kbd_backlight",
+            ),
+            (false, "INOU0000:ZZ", "uniwill:white:kbd_backlight"),
+        ] {
+            let fixture = Fixture::new();
+            let (device, driver, id) = fixture.native(bitland);
+            let renamed = device.with_file_name(name);
+            fs::rename(&device, &renamed).unwrap();
+            fs::remove_file(driver.join(device.file_name().unwrap())).unwrap();
+            symlink(&renamed, driver.join(name)).unwrap();
+            fs::remove_file(fixture.0.join("class/leds").join(led)).unwrap();
+            symlink(
+                renamed.join("leds").join(led),
+                fixture.0.join("class/leds").join(led),
+            )
+            .unwrap();
+            assert!(fixture.service().plan_oem(&id, OemValue::Level(2)).is_err());
+            assert!(!fixture
+                .service()
+                .oem_controls()
+                .iter()
+                .any(|control| control.source.backend != "linux_tuxedo_sysfs"
+                    && control.status == CapabilityStatus::Available));
+            assert_eq!(
+                fs::read_to_string(renamed.join("leds").join(led).join("brightness")).unwrap(),
+                "1\n"
+            );
+        }
+    }
+
+    #[test]
+    fn native_boolean_instances_have_distinct_plans_and_never_write_the_other_device() {
+        let fixture = Fixture::new();
+        let (device, driver, _) = fixture.native(false);
+        let second = device.with_file_name("INOU0000:01");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(second.join("fn_lock"), "1\n").unwrap();
+        symlink(&driver, second.join("driver")).unwrap();
+        symlink(&second, driver.join("INOU0000:01")).unwrap();
+        let controls: Vec<_> = fixture
+            .service()
+            .oem_controls()
+            .into_iter()
+            .filter(|control| {
+                control.kind == OemControlKind::FnLock
+                    && control.source.backend == "linux_uniwill_sysfs"
+            })
+            .collect();
+        assert_eq!(controls.len(), 2);
+        assert_ne!(controls[0].id, controls[1].id);
+        let control = controls
+            .iter()
+            .find(|control| {
+                control
+                    .source
+                    .device_id
+                    .as_ref()
+                    .unwrap()
+                    .ends_with("INOU0000:01")
+            })
+            .unwrap();
+        let plan = fixture
+            .service()
+            .plan_oem(&control.id, OemValue::Boolean(false))
+            .unwrap();
+        assert_eq!(fs::read_to_string(second.join("fn_lock")).unwrap(), "1\n");
+        assert_eq!(
+            fixture.service().apply_oem(&plan).unwrap().confirmed,
+            OemValue::Boolean(false)
+        );
+        assert_eq!(fs::read_to_string(device.join("fn_lock")).unwrap(), "0\n");
+        assert_eq!(fs::read_to_string(second.join("fn_lock")).unwrap(), "0\n");
+    }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             // Own fixture directories only. Directory permissions are never

@@ -185,10 +185,11 @@ static void retry(void)
 }
 static void settings_identity(void)
 {
-    const char *boards[] = {"WUJIE Series-X5SP4NAG", "GM6BG0Q"};
-    const char *good[] = {"MECHREVO", "GM6BG0Q", NULL,
-                         "Jiaolong16K Series GM6BG0Q", "N.1.19MRO15"};
-    for (int board = 0; board < 2; board++) {
+    const char *boards[] = {"WUJIE Series-X5SP4NAG", "GM6BG0Q", "GM5HG0A"};
+    const char *products[] = {NULL, "Jiaolong16K Series GM6BG0Q", "Yilong15Pro Series GM5HG0A"};
+    const char *bioses[] = {NULL, "N.1.19MRO15", "N.1.09MRO19"};
+    for (int board = 0; board < 3; board++) {
+        const char *good[] = {"MECHREVO", boards[board], NULL, products[board], bioses[board]};
         reset();
         dmi[3] = good[3]; dmi[4] = good[4];
         detect("MECHREVO", boards[board], NULL);
@@ -209,7 +210,7 @@ static void settings_identity(void)
         }
     }
     const char *unknown[] = {"WUJIE Series-X5SP4NAG extra", "WUJIE", "GM6BG0Q extra",
-        "GM6BG5Q", "GM6PX0X", "GX4HRXL", "JIAOLONG Series-X6xR55xK"};
+        "GM6BG5Q", "GM6PX0X", "GX4HRXL", "JIAOLONG Series-X6xR55xK", "GM5HG0A extra"};
     for (unsigned i = 0; i < sizeof(unknown)/sizeof(*unknown); i++) {
         reset(); detect("MECHREVO", unknown[i], NULL);
         assert(!uw_feats->uniwill_has_ac_auto_boot && !uw_feats->uniwill_has_usb_powershare);
@@ -219,9 +220,12 @@ static void settings_identity(void)
 }
 static void settings_transactions(void)
 {
-    for (int model = 0; model < 2; model++) {
-        reset(); dmi[3] = "Jiaolong16K Series GM6BG0Q"; dmi[4] = "N.1.19MRO15";
-        detect("MECHREVO", model == 0 ? "WUJIE Series-X5SP4NAG" : "GM6BG0Q", NULL);
+    const char *boards[] = {"WUJIE Series-X5SP4NAG", "GM6BG0Q", "GM5HG0A"};
+    const char *products[] = {NULL, "Jiaolong16K Series GM6BG0Q", "Yilong15Pro Series GM5HG0A"};
+    const char *bioses[] = {NULL, "N.1.19MRO15", "N.1.09MRO19"};
+    for (int model = 0; model < 3; model++) {
+        reset(); dmi[3] = products[model]; dmi[4] = bioses[model];
+        detect("MECHREVO", boards[model], NULL);
         assert(uw_feats->uniwill_has_ac_auto_boot && uw_feats->uniwill_has_usb_powershare);
         for (int initial = 0; initial <= 255; initial++) {
             for (int enabled = 0; enabled < 2; enabled++) {

@@ -626,93 +626,123 @@ mod tests {
     #[test]
     fn qualified_fake_oem_control_dry_run_status_export_and_selection() {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let base = std::env::var_os("MECHREVO_TEST_TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        let root = base.join(format!(
-            "mechrevo-cli-oem-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let module = root.join("module/tuxedo_keyboard");
-        let platform = root.join("devices/platform/tuxedo_keyboard");
-        std::fs::create_dir_all(&module).unwrap();
-        std::fs::create_dir_all(&platform).unwrap();
-        std::fs::write(module.join("srcversion"), "A1B2C3D4E5F6\n").unwrap();
-        let node = platform.join("fn_lock");
-        std::fs::write(&node, "0\n").unwrap();
-        let service = Service::with_linux_sysfs(&root);
-        let controls = service.oem_controls();
-        let selected = select_oem_control(&controls, "fn-lock").unwrap();
-        assert_eq!(selected.current, Some(OemValue::Boolean(false)));
-        assert_eq!(selected.kind, OemControlKind::FnLock);
-        assert!(!selected.binding.is_empty());
-        for id in ["fn", "FN-LOCK", "../fn_lock", "$(touch /tmp/invalid)"] {
+        for native in [false, true] {
+            let base = std::env::var_os("MECHREVO_TEST_TMPDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let root = base.join(format!(
+                "mechrevo-cli-oem-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let module = root.join(if native {
+                "module/uniwill_laptop"
+            } else {
+                "module/tuxedo_keyboard"
+            });
+            let platform = root.join(if native {
+                "devices/platform/INOU0000:00"
+            } else {
+                "devices/platform/tuxedo_keyboard"
+            });
+            std::fs::create_dir_all(&module).unwrap();
+            std::fs::create_dir_all(&platform).unwrap();
+            std::fs::write(module.join("srcversion"), "A1B2C3D4E5F6\n").unwrap();
+            if native {
+                let driver = root.join("bus/platform/drivers/uniwill-laptop");
+                std::fs::create_dir_all(&driver).unwrap();
+                std::os::unix::fs::symlink(&module, driver.join("module")).unwrap();
+                std::os::unix::fs::symlink(&driver, platform.join("driver")).unwrap();
+                std::os::unix::fs::symlink(&platform, driver.join("INOU0000:00")).unwrap();
+            }
+            let id = if native {
+                "fn-lock:uniwill_laptop:INOU0000:00"
+            } else {
+                "fn-lock"
+            };
+            let node = platform.join("fn_lock");
+            std::fs::write(&node, "0\n").unwrap();
+            let service = Service::with_linux_sysfs(&root);
+            let controls = service.oem_controls();
+            let selected = select_oem_control(&controls, id).unwrap();
             assert_eq!(
-                select_oem_control(&controls, id).unwrap_err().code,
-                "oem_control_unavailable"
+                selected.source.backend,
+                if native {
+                    "linux_uniwill_sysfs"
+                } else {
+                    "linux_tuxedo_sysfs"
+                }
             );
-        }
-        let duplicate = vec![selected.clone(), selected.clone()];
-        assert_eq!(
-            select_oem_control(&duplicate, "fn-lock").unwrap_err().code,
-            "oem_control_ambiguous"
-        );
-        let before = std::fs::read(&node).unwrap();
-        let before_modified = std::fs::metadata(&node).unwrap().modified().unwrap();
-        let dry = set_oem(&service, "fn-lock", "on", true).unwrap();
-        assert_eq!(dry["dry_run"], true);
-        assert_eq!(dry["plan"]["control_id"], "fn-lock");
-        assert_eq!(
-            dry["plan"]["previous"],
-            json!({"type":"boolean","value":false})
-        );
-        assert_eq!(
-            dry["plan"]["target"],
-            json!({"type":"boolean","value":true})
-        );
-        assert!(dry["plan"]["requires_privilege"].is_boolean());
-        assert_eq!(before, std::fs::read(&node).unwrap());
-        assert_eq!(
-            before_modified,
-            std::fs::metadata(&node).unwrap().modified().unwrap()
-        );
-        assert!(set_oem(&service, "fn-lock", "true", true).is_err());
-        assert_eq!(before, std::fs::read(&node).unwrap());
-        let instant = Instant::now();
-        let document = collect_status_json(
-            || {
-                let mut snapshot = fixture_snapshot();
-                snapshot.oem_controls = controls.clone();
-                snapshot
-            },
-            || UNIX_EPOCH + Duration::from_secs(1_800_000_000),
-            || instant,
-            json!({}),
-        )
-        .unwrap();
-        assert_eq!(document["oem_controls"], json!(controls));
-        let exported_control = document["oem_controls"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|control| control["id"] == "fn-lock")
+            assert_eq!(selected.current, Some(OemValue::Boolean(false)));
+            assert_eq!(selected.kind, OemControlKind::FnLock);
+            assert!(!selected.binding.is_empty());
+            for id in ["fn", "FN-LOCK", "../fn_lock", "$(touch /tmp/invalid)"] {
+                assert_eq!(
+                    select_oem_control(&controls, id).unwrap_err().code,
+                    "oem_control_unavailable"
+                );
+            }
+            let duplicate = vec![selected.clone(), selected.clone()];
+            assert_eq!(
+                select_oem_control(&duplicate, id).unwrap_err().code,
+                "oem_control_ambiguous"
+            );
+            let before = std::fs::read(&node).unwrap();
+            let before_modified = std::fs::metadata(&node).unwrap().modified().unwrap();
+            let dry = set_oem(&service, id, "on", true).unwrap();
+            assert_eq!(dry["dry_run"], true);
+            assert_eq!(dry["plan"]["control_id"], id);
+            assert_eq!(
+                dry["plan"]["previous"],
+                json!({"type":"boolean","value":false})
+            );
+            assert_eq!(
+                dry["plan"]["target"],
+                json!({"type":"boolean","value":true})
+            );
+            assert!(dry["plan"]["requires_privilege"].is_boolean());
+            assert_eq!(before, std::fs::read(&node).unwrap());
+            assert_eq!(
+                before_modified,
+                std::fs::metadata(&node).unwrap().modified().unwrap()
+            );
+            assert!(set_oem(&service, id, "true", true).is_err());
+            assert_eq!(before, std::fs::read(&node).unwrap());
+            let instant = Instant::now();
+            let document = collect_status_json(
+                || {
+                    let mut snapshot = fixture_snapshot();
+                    snapshot.oem_controls = controls.clone();
+                    snapshot
+                },
+                || UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+                || instant,
+                json!({}),
+            )
             .unwrap();
-        assert_eq!(
-            exported_control["current"],
-            json!({"type":"boolean","value":false})
-        );
-        assert!(exported_control["source"]["path"].is_string());
-        assert!(exported_control["readback_scope"].is_string());
-        let export_path = root.join("oem-status.json");
-        export(&export_path, &document).unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&std::fs::read(&export_path).unwrap()).unwrap(),
-            document
-        );
-        assert_eq!(before, std::fs::read(&node).unwrap());
-        std::fs::remove_dir_all(root).unwrap();
+            assert_eq!(document["oem_controls"], json!(controls));
+            let exported_control = document["oem_controls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|control| control["id"] == id)
+                .unwrap();
+            assert_eq!(
+                exported_control["current"],
+                json!({"type":"boolean","value":false})
+            );
+            assert!(exported_control["source"]["path"].is_string());
+            assert!(exported_control["readback_scope"].is_string());
+            let export_path = root.join("oem-status.json");
+            export(&export_path, &document).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&std::fs::read(&export_path).unwrap()).unwrap(),
+                document
+            );
+            assert_eq!(before, std::fs::read(&node).unwrap());
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     fn fixture_snapshot() -> Snapshot {
         Snapshot {

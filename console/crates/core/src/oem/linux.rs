@@ -24,6 +24,7 @@ const ATTRIBUTES: &[&str] = &[
     "charging_profiles_available",
     "ac_auto_boot",
     "usb_powershare",
+    "usb_powershare_high",
     "brightness",
     "max_brightness",
     "multi_index",
@@ -57,15 +58,17 @@ fn verify_sysfs(file: &File) -> Result<(), ControlError> {
     Ok(())
 }
 impl Device {
-    fn open(root: &Path, relative: &Path, led: bool) -> Result<Self, ControlError> {
+    fn open(root: &Path, relative: &Path, led_owner: Option<&Path>) -> Result<Self, ControlError> {
         let canonical = fs::canonicalize(root.join(relative))
             .map_err(|e| io_error("Cannot resolve OEM device", e))?;
-        let expected = root.join(PLATFORM);
-        if led {
+        if let Some(owner) = led_owner {
+            let expected = root.join(owner);
             if canonical.parent() != Some(expected.join("leds").as_path())
                 || canonical.file_name() != relative.file_name()
             {
-                return Err(invalid("Keyboard LED is not owned by tuxedo_keyboard"));
+                return Err(invalid(
+                    "Keyboard LED is not owned by the selected driver device",
+                ));
             }
         } else if canonical != root.join(relative) {
             return Err(invalid("Fixed OEM device path was replaced by a symlink"));
@@ -125,6 +128,7 @@ impl Device {
                         | "charging_profile"
                         | "ac_auto_boot"
                         | "usb_powershare"
+                        | "usb_powershare_high"
                         | "brightness"
                         | "multi_intensity"
                 ))
@@ -229,13 +233,111 @@ fn numeric(value: &str) -> Result<u32, ControlError> {
         .parse()
         .map_err(|e| invalid(format!("OEM numeric value is out of range: {e}")))
 }
-fn driver_binding(root: &Path) -> Result<String, ControlError> {
-    let module = Device::open(root, Path::new("module/tuxedo_keyboard"), false)?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Provider {
+    Tuxedo,
+    Uniwill,
+    Bitland,
+}
+impl Provider {
+    fn module(self) -> &'static str {
+        match self {
+            Self::Tuxedo => "tuxedo_keyboard",
+            Self::Uniwill => "uniwill_laptop",
+            Self::Bitland => "bitland_mifs_wmi",
+        }
+    }
+    fn driver(self) -> &'static str {
+        match self {
+            Self::Tuxedo => "bus/platform/drivers/tuxedo_keyboard",
+            Self::Uniwill => "bus/platform/drivers/uniwill-laptop",
+            Self::Bitland => "bus/wmi/drivers/bitland-mifs-wmi",
+        }
+    }
+    fn backend(self) -> &'static str {
+        match self {
+            Self::Tuxedo => "linux_tuxedo_sysfs",
+            Self::Uniwill => "linux_uniwill_sysfs",
+            Self::Bitland => "linux_bitland_sysfs",
+        }
+    }
+    fn accepts_device(self, name: &str) -> bool {
+        match self {
+            Self::Tuxedo => false,
+            Self::Uniwill => name.strip_prefix("INOU0000:").is_some_and(|suffix| {
+                suffix.len() == 2 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+            }),
+            // Only the control GUID owns controls; never the shared event GUID.
+            Self::Bitland => name
+                .strip_prefix("B60BFB48-3E5B-49E4-A0E9-8CFFE1B3434B-")
+                .is_some_and(|suffix| {
+                    !suffix.is_empty()
+                        && suffix.len() <= 8
+                        && suffix.bytes().all(|b| b.is_ascii_digit())
+                }),
+        }
+    }
+}
+
+fn native_owners(root: &Path) -> Vec<(Provider, PathBuf)> {
+    let mut result = vec![];
+    for provider in [Provider::Uniwill, Provider::Bitland] {
+        let driver = root.join(provider.driver());
+        let mut entries = fs::read_dir(&driver)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .take(64)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let name = entry.file_name();
+            if !name
+                .to_str()
+                .is_some_and(|name| provider.accepts_device(name))
+            {
+                continue;
+            }
+            let Ok(owner) = fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            if !owner.starts_with(root.join("devices"))
+                || owner.file_name() != Some(name.as_os_str())
+                || fs::canonicalize(owner.join("driver")).ok().as_ref() != Some(&driver)
+            {
+                continue;
+            }
+            if let Ok(relative) = owner.strip_prefix(root) {
+                result.push((provider, relative.to_owned()));
+            }
+        }
+    }
+    result
+}
+
+fn driver_binding(root: &Path, spec: &Spec) -> Result<String, ControlError> {
+    let module_path = PathBuf::from("module").join(spec.provider.module());
+    let module = Device::open(root, &module_path, None)?;
     let revision = module.read("srcversion")?;
     if revision.len() > 128 || !revision.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(invalid("The loaded tuxedo_keyboard srcversion is invalid"));
+        return Err(invalid("The loaded OEM driver srcversion is invalid"));
     }
-    Ok(format!("{}:srcversion={revision}", module.identity()?))
+    let mut binding = format!("{}:srcversion={revision}", module.identity()?);
+    if spec.provider != Provider::Tuxedo {
+        let owner = root.join(&spec.owner);
+        let driver = root.join(spec.provider.driver());
+        if fs::canonicalize(owner.join("driver")).ok().as_ref() != Some(&driver)
+            || fs::canonicalize(driver.join("module")).ok().as_ref()
+                != Some(&root.join(module_path))
+        {
+            return Err(invalid(
+                "Native OEM device is not bound to its expected driver/module",
+            ));
+        }
+        let owner_device = Device::open(root, &spec.owner, None)?;
+        binding.push_str(&format!("|owner={}", owner_device.identity()?));
+    }
+    Ok(binding)
 }
 #[derive(Clone)]
 struct Spec {
@@ -245,13 +347,17 @@ struct Spec {
     directory: PathBuf,
     attribute: &'static str,
     led: bool,
+    provider: Provider,
+    owner: PathBuf,
 }
 impl Spec {
     fn scope(&self) -> &'static str {
         if self.led {
             LED_SCOPE
-        } else {
+        } else if self.provider == Provider::Tuxedo {
             EC_SCOPE
+        } else {
+            "State reported by the bound native kernel driver; physical behavior and persistence require separate verification"
         }
     }
     fn fallback_domain(&self) -> OemDomain {
@@ -303,7 +409,49 @@ fn specs(root: &Path) -> Vec<Spec> {
                 directory: directory.into(),
                 attribute,
                 led: false,
+                provider: Provider::Tuxedo,
+                owner: PLATFORM.into(),
             });
+        }
+    }
+    let owners = native_owners(root);
+    for (provider, owner) in &owners {
+        for (id, kind, label, attribute) in [
+            ("fn-lock", OemControlKind::FnLock, "Fn 锁", "fn_lock"),
+            (
+                "ac-auto-boot",
+                OemControlKind::AcAutoBoot,
+                "接电开机",
+                "ac_auto_boot",
+            ),
+            (
+                "usb-power-share",
+                OemControlKind::UsbPowerShare,
+                "关机 USB 供电",
+                "usb_powershare_high",
+            ),
+        ] {
+            // These ABI attributes belong to uniwill-laptop. The Bitland
+            // driver currently provides keyboard brightness through LED class.
+            if *provider != Provider::Uniwill {
+                continue;
+            }
+            if fs::symlink_metadata(root.join(owner).join(attribute)).is_ok() {
+                result.push(Spec {
+                    id: format!(
+                        "{id}:{}:{}",
+                        provider.module(),
+                        owner.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    kind,
+                    label,
+                    directory: owner.clone(),
+                    attribute,
+                    led: false,
+                    provider: *provider,
+                    owner: owner.clone(),
+                });
+            }
         }
     }
     let mut leds = fs::read_dir(root.join("class/leds"))
@@ -325,6 +473,15 @@ fn specs(root: &Path) -> Vec<Spec> {
         {
             continue;
         }
+        let canonical = fs::canonicalize(led.path()).ok();
+        let (provider, owner) = owners
+            .iter()
+            .find(|(_, owner)| {
+                canonical.as_ref().and_then(|path| path.parent())
+                    == Some(root.join(owner).join("leds").as_path())
+            })
+            .cloned()
+            .unwrap_or((Provider::Tuxedo, PathBuf::from(PLATFORM)));
         for (id, kind, label, attribute) in [
             (
                 "keyboard-brightness",
@@ -339,6 +496,12 @@ fn specs(root: &Path) -> Vec<Spec> {
                 "multi_intensity",
             ),
         ] {
+            // Native Uniwill RGB uses a different channel range (50), and
+            // Bitland does not expose this multicolor ABI. Do not inherit the
+            // old tuxedo_keyboard fallback range of 255.
+            if provider != Provider::Tuxedo && kind == OemControlKind::KeyboardColor {
+                continue;
+            }
             if fs::symlink_metadata(led.path().join(attribute)).is_ok() {
                 result.push(Spec {
                     id: format!("{id}:{name}"),
@@ -347,6 +510,8 @@ fn specs(root: &Path) -> Vec<Spec> {
                     directory: PathBuf::from("class/leds").join(&name),
                     attribute,
                     led: true,
+                    provider,
+                    owner: owner.clone(),
                 });
             }
         }
@@ -426,8 +591,12 @@ fn read_rgb(device: &Device, order: [usize; 3]) -> Result<OemValue, ControlError
     ]))
 }
 fn inspect(root: &Path, spec: &Spec) -> Result<Inspected, ControlError> {
-    let driver = driver_binding(root)?;
-    let device = Device::open(root, &spec.directory, spec.led)?;
+    let driver = driver_binding(root, spec)?;
+    let device = Device::open(
+        root,
+        &spec.directory,
+        spec.led.then_some(spec.owner.as_path()),
+    )?;
     let mut order = None;
     let mut companion = None;
     let (domain, current) = match spec.kind {
@@ -503,9 +672,9 @@ fn inspect(root: &Path, spec: &Spec) -> Result<Inspected, ControlError> {
         status: CapabilityStatus::Available,
         writable,
         source: EvidenceSource {
-            backend: "linux_tuxedo_sysfs".into(),
+            backend: spec.provider.backend().into(),
             path: device.canonical.join(spec.attribute).display().to_string(),
-            device_id: Some(root.join(PLATFORM).display().to_string()),
+            device_id: Some(root.join(&spec.owner).display().to_string()),
         },
         binding: format!("{}|{driver}", device.identity()?),
         readback_scope: spec.scope().into(),
@@ -535,13 +704,13 @@ pub(super) fn controls(root: &Path) -> Vec<OemControl> {
                 status: CapabilityStatus::Unavailable,
                 writable: false,
                 source: EvidenceSource {
-                    backend: "linux_tuxedo_sysfs".into(),
+                    backend: spec.provider.backend().into(),
                     path: root
                         .join(&spec.directory)
                         .join(spec.attribute)
                         .display()
                         .to_string(),
-                    device_id: Some(root.join(PLATFORM).display().to_string()),
+                    device_id: Some(root.join(&spec.owner).display().to_string()),
                 },
                 binding: String::new(),
                 readback_scope: spec.scope().into(),
