@@ -12,6 +12,7 @@
 | 蛟龙 16 Pro 2023 | 厂商 `MECHREVO`、产品名 `Jiaolong Series MRID6`、产品版本 `1`、板号 `MRID6-23` | 控制台精确识别，并接入已加载原生 `bitland_mifs_wmi` 的键盘背光亮度 | [机主硬件记录](https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/hardware.md)、[原生驱动测试记录](https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/linux-stage3-results.md)及 Linux v7.2 驱动；记录 BIOS 为 `MRID6_23_P_V35`，本项目未实测；不复制 Uniwill EC 路径、功耗表、风扇或 MUX 控制 |
 | 无界 15 Pro HPT | 厂商 `MECHREVO`、产品 `WUJIE15 PRO`、板号 `WUJIE15 Series-HPT` | 精确识别、Bitland 背光接入、F2/F1 读数标注；拒绝旧内核的错误四档映射，标记不存在的温度和第三风扇 | 与 X5SP4NAG 为不同平台；[机主依据与内核修正要求](WUJIE-HPT-P916F.md)，未本项目实机验收 |
 | 星耀 P916F HPT-R | 厂商 `MECHREVO`、产品 `XINGYAO Series`、板号 `XINGYAO Series-P916F-HPT-R` | 精确识别及实际存在的标准监测/性能档位接口；不新增 OEM 控制 | [固定源码与适配边界](WUJIE-HPT-P916F.md#p916f-证据与限制)；只读热键模块不等于背光、风扇或充电可控，不扩展到 STX/ARL |
+| 无界 14SAH P4HPLNAV | 厂商 `MECHREVO`、产品 `WUJIE Series`、板号 `WUJIE Series-P4HPLNAV` | 新增控制台精确识别；记录原生 AMD ACP6.3 / ES9356 声卡路径，不增加 EC、风扇或功耗写入 | [机型身份与 Linux 音频边界](WUJIE14SAH.md)；本项目未在该机上实测 |
 
 厂商、板号使用完整字段相等比较。类似前缀、后缀、缺失字段和其他厂商不会获得新增能力。控制台的匹配仍是 `upstream-source`，不会显示为本项目实机通过；GM6BG0Q 也不会继承蛟龙 16 Pro 的 CPU 功耗接口。
 

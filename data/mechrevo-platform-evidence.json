@@ -132,6 +132,23 @@
         "https://github.com/longwudf/mechrevo-p916f-linux/blob/1168e9c4dce3a0a63bac71a54b9e08ceb1c1a273/README.md",
         "https://github.com/longwudf/mechrevo-p916f-linux/blob/1168e9c4dce3a0a63bac71a54b9e08ceb1c1a273/mechrevo-p916f-wmi.c"
       ]
+    },
+    {
+      "model_id": "wujie14sah-p4hplnav",
+      "title": "无界 14SAH P4HPLNAV",
+      "platform": "amd-acp63-soundwire",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "WUJIE Series",
+        "board_name": "WUJIE Series-P4HPLNAV"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://www.mail-archive.com/ubuntu-bugs%40lists.ubuntu.com/msg6319052.html",
+        "https://lists.openwall.net/linux-kernel/2026/10/23/536",
+        "https://www.mail-archive.com/ubuntu-bugs%40lists.ubuntu.com/msg6319765.html"
+      ]
     }
   ]
 }

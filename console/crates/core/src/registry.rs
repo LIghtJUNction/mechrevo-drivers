@@ -192,6 +192,11 @@ mod tests {
                 Some("XINGYAO Series"),
                 "p916f-hpt-r",
             ),
+            (
+                "WUJIE Series-P4HPLNAV",
+                Some("WUJIE Series"),
+                "wujie14sah-p4hplnav",
+            ),
         ] {
             let mut identity = Identity {
                 manufacturer: Some("MECHREVO".into()),
@@ -206,10 +211,19 @@ mod tests {
             assert_eq!(result.matches[0].model_id, model_id);
             assert!(!result.matches[0].hardware_validated);
             assert!(!result.matches[0].firmware_evidence_matches);
+            if model_id == "wujie14sah-p4hplnav" {
+                assert_eq!(result.matches[0].platform, "amd-acp63-soundwire");
+                assert_eq!(result.matches[0].evidence_level, "upstream-source");
+            }
             if let Some(product) = product {
                 identity.product_name = Some(format!("{product} extra"));
                 assert_eq!(identify(&identity).status, "unknown");
                 identity.product_name = Some(product.into());
+                if model_id == "wujie14sah-p4hplnav" {
+                    identity.product_name = None;
+                    assert_eq!(identify(&identity).status, "unknown");
+                    identity.product_name = Some(product.into());
+                }
             }
             for vendor in [None, Some("Other MECHREVO".into())] {
                 identity.manufacturer = vendor;
