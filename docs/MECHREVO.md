@@ -55,6 +55,10 @@ DEBUG 任意地址 EC 写入不包含在这些同步保障中。
 另接入原生 Uniwill 已暴露的 Fn、接电开机、USB 供电和背光接口，详见[原生驱动范围](hardware/NATIVE-KERNEL-CONTROLS.md)。
 这些控制不依赖型号目录授权，不自动加载驱动或移植其他机型的 EC 参数。
 
+另增加无界 15 Pro HPT 和星耀 P916F HPT-R 的精确身份与控制台适配，及新版内核性能档位 class 接口。
+HPT 旧内核的错误档位映射会被拒绝，不存在的 MIFS 温度/第三风扇显示未知；P916F 不开放未经确认的 OEM 控制。
+[板号、公开依据及验证边界](hardware/WUJIE-HPT-P916F.md)。
+
 ## 能力与边界
 
 上游包括 Clevo、Uniwill、ITE 等平台模块，可能提供 Fn 键、键盘背光、传感器、风扇和功耗接口。

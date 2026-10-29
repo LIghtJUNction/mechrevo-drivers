@@ -4,6 +4,8 @@
 
 r160 历史基线通过 146 项 Rust 测试、95 项 Python 检查、Clippy 与 Windows 编译检查；当时本机四项 OEM 控制完成 11 次可逆写入及 7 次写前拒绝验收，全部恢复原值。范围见 [OEM 验收收据](../docs/verification/oem-controls.json)，安装版本另以[部署记录](../docs/MECHREVO-CONSOLE.md)为准。2026-10-29 新增原生 Uniwill / Bitland 有限接口，范围及本轮验证见[原生驱动说明](../docs/hardware/NATIVE-KERNEL-CONTROLS.md)，未安装或实机验收。驱动回读不等于实体按键、停充或灯光测量。
 
+后续源码补上新版内核单处理器 `platform-profile` 接口，以及无界 HPT / 星耀 P916F HPT-R 的[精确范围与固件差异](../docs/hardware/WUJIE-HPT-P916F.md)。旧聚合接口继续优先，多处理器不自动选第一个。
+
 ```sh
 cargo run --manifest-path console/Cargo.toml -p mechrevo-console-cli -- status --json
 cargo run --manifest-path console/Cargo.toml -p mechrevo-console-cli -- export --output /tmp/mechrevo-status.json

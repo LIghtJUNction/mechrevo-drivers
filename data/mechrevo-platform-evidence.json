@@ -99,6 +99,39 @@
       "sources": [
         "https://lore-kernel.gnuweeb.org/platform-driver-x86/tencent_36699D13D174660E0D76C4F5EFB825D86609%40qq.com/T/"
       ]
+    },
+    {
+      "model_id": "wujie15-hpt",
+      "title": "无界 15 Pro HPT",
+      "platform": "bitland-mifs-wmi",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "WUJIE15 PRO",
+        "board_name": "WUJIE15 Series-HPT"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://lists.openwall.net/linux-kernel/2026/09/14/65",
+        "https://lkml.iu.edu/hypermail/linux/kernel/2609.2/19484.html",
+        "https://lkml.iu.edu/2610.2/04186.html"
+      ]
+    },
+    {
+      "model_id": "p916f-hpt-r",
+      "title": "星耀 P916F HPT-R",
+      "platform": "acpi-p916f",
+      "identity": {
+        "manufacturer": "MECHREVO",
+        "product_name": "XINGYAO Series",
+        "board_name": "XINGYAO Series-P916F-HPT-R"
+      },
+      "qualified_bios": [],
+      "evidence_level": "upstream-source",
+      "sources": [
+        "https://github.com/longwudf/mechrevo-p916f-linux/blob/1168e9c4dce3a0a63bac71a54b9e08ceb1c1a273/README.md",
+        "https://github.com/longwudf/mechrevo-p916f-linux/blob/1168e9c4dce3a0a63bac71a54b9e08ceb1c1a273/mechrevo-p916f-wmi.c"
+      ]
     }
   ]
 }

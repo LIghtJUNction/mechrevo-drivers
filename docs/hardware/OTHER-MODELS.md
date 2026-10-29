@@ -10,6 +10,8 @@
 | 无界 15X Pro | 厂商 `MECHREVO`、板号 `WUJIE Series-X5SP4NAG` | 接电开机、USB 供电开关及控制台精确识别 | 投稿者的[实测说明](https://lists.openwall.net/linux-kernel/2026/09/28/2519)、[v4 补丁](https://lists.openwall.net/linux-kernel/2026/10/16/1522) 与上述 Uniwill 原始实现；投稿未限定 BIOS，不能据此认证所有固件；不启用其他机型功耗表、风扇曲线或 NVIDIA 控制 |
 | 翼龙 15 Pro | 厂商 `MECHREVO`、产品名 `Yilong15Pro Series GM5HG0A`、板号 `GM5HG0A`；本分支新增开关另要求 BIOS `N.1.09MRO19` | 接电开机、USB 供电开关及控制台精确识别；也可使用已加载原生 Uniwill 的有限接口 | [机主与维护者测试讨论](https://lore-kernel.gnuweeb.org/platform-driver-x86/tencent_36699D13D174660E0D76C4F5EFB825D86609%40qq.com/T/)中报告两个开关分别测试有效；不扩展触控板、充电档位或 USB-C 功率分配声明；本项目实机验收待完成 |
 | 蛟龙 16 Pro 2023 | 厂商 `MECHREVO`、产品名 `Jiaolong Series MRID6`、产品版本 `1`、板号 `MRID6-23` | 控制台精确识别，并接入已加载原生 `bitland_mifs_wmi` 的键盘背光亮度 | [机主硬件记录](https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/hardware.md)、[原生驱动测试记录](https://github.com/Tanpinsary/JiaoLongOnArch/blob/f75e2522ab6cda6fd6990a3d8468cf0d27d067dd/docs/linux-stage3-results.md)及 Linux v7.2 驱动；记录 BIOS 为 `MRID6_23_P_V35`，本项目未实测；不复制 Uniwill EC 路径、功耗表、风扇或 MUX 控制 |
+| 无界 15 Pro HPT | 厂商 `MECHREVO`、产品 `WUJIE15 PRO`、板号 `WUJIE15 Series-HPT` | 精确识别、Bitland 背光接入、F2/F1 读数标注；拒绝旧内核的错误四档映射，标记不存在的温度和第三风扇 | 与 X5SP4NAG 为不同平台；[机主依据与内核修正要求](WUJIE-HPT-P916F.md)，未本项目实机验收 |
+| 星耀 P916F HPT-R | 厂商 `MECHREVO`、产品 `XINGYAO Series`、板号 `XINGYAO Series-P916F-HPT-R` | 精确识别及实际存在的标准监测/性能档位接口；不新增 OEM 控制 | [固定源码与适配边界](WUJIE-HPT-P916F.md#p916f-证据与限制)；只读热键模块不等于背光、风扇或充电可控，不扩展到 STX/ARL |
 
 厂商、板号使用完整字段相等比较。类似前缀、后缀、缺失字段和其他厂商不会获得新增能力。控制台的匹配仍是 `upstream-source`，不会显示为本项目实机通过；GM6BG0Q 也不会继承蛟龙 16 Pro 的 CPU 功耗接口。
 
@@ -32,11 +34,13 @@ python -B scripts/verify.py --domain driver
 cargo test --manifest-path console/Cargo.toml --workspace --locked
 ```
 
-旧源码不能通过新增功能用例；独立替换旧 ioctl 源码也应无法通过蛟龙功耗范围用例。新增设置项的回归通过实际 feature 检测、开关读写辅助函数和初始化函数验证：严格身份和 BIOS、两个寄存器全部 256 种原值的位保留、原错误码传播、缓存不误更新、读取或注册失败不发布已加载状态、成功重试，以及识别过程零写入。开关身份与事务用例已扩展到 GM5HG0A；仅替回本轮修改前的 keyboard 头文件就会失败。控制台回归检查六个其他型号的精确身份和未实机验收状态，以及新增原生后端的有效写入、失败拒绝与设备隔离。
+旧源码不能通过新增功能用例；独立替换旧 ioctl 源码也应无法通过蛟龙功耗范围用例。新增设置项的回归通过实际 feature 检测、开关读写辅助函数和初始化函数验证：严格身份和 BIOS、两个寄存器全部 256 种原值的位保留、原错误码传播、缓存不误更新、读取或注册失败不发布已加载状态、成功重试，以及识别过程零写入。开关身份与事务用例已扩展到 GM5HG0A；仅替回本轮修改前的 keyboard 头文件就会失败。控制台回归检查八个其他型号的精确身份和未实机验收状态，以及新增原生后端的有效写入、失败拒绝与设备隔离。
 
-本轮本地结果：驱动 506 项、控制台 Python 105 项、Rust 工作区默认功能 138 项（核心 98、CLI 15、GUI 状态逻辑 25）全部通过，无跳过；默认功能全部目标的 clippy、核心文档生成、工作区格式检查通过。`7.2.11-arch1-1` headers 下 28 个模块以 `W=1 -j1` 编译成功，57 份源码输入与当前文件逐字一致，28 个 vermagic 均对应该内核；未修改的 Clevo/NB04/NB05/TUXI 文件仍有 5 处未使用变量告警，未隐藏。按单线程、低 CPU/I/O 优先级依次构建，没有触发远程 CI，也没有安装或加载新模块。本轮未重新验收 GUI 窗口或 Windows。
+原生接口轮次 `d99c13e` 的本地结果：驱动 506 项、控制台 Python 105 项、Rust 工作区默认功能 138 项（核心 98、CLI 15、GUI 状态逻辑 25）全部通过，无跳过；默认功能全部目标的 clippy、核心文档生成、工作区格式检查通过。`7.2.11-arch1-1` headers 下 28 个模块以 `W=1 -j1` 编译成功，57 份源码输入与当前文件逐字一致，28 个 vermagic 均对应该内核；未修改的 Clevo/NB04/NB05/TUXI 文件仍有 5 处未使用变量告警，未隐藏。按单线程、低 CPU/I/O 优先级依次构建，没有触发远程 CI，也没有安装或加载新模块。本轮未重新验收 GUI 窗口或 Windows。
 
 新源码 CLI 在开发机 GM6PX0X 上完成只读枚举：原有 Fn 锁、充电档位、背光亮度和 RGB 四项接口均为 `available`。只读取接口，没有应用计划或写入；这不增加新增型号的硬件验收数量。
+
+后续 HPT / P916F 轮次新增标准性能档位 class 接口兼容及 HPT 已知固件差异处理，Rust 146 项、控制台 Python 105 项通过，无跳过。该轮没有改动内核模块源码，没有重新编译或安装模块；[具体行为与验证范围](WUJIE-HPT-P916F.md)。
 
 ## 新机验收仍需完成
 

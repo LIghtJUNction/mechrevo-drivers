@@ -1,8 +1,12 @@
 use crate::*;
 use std::{
     collections::HashSet,
-    fs::{self, File},
-    io::Read,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
 };
 
@@ -87,18 +91,183 @@ fn reading(
             .then(|| "Missing, unreadable or invalid sensor value; not reported as zero".into()),
     }
 }
-pub(crate) fn policy(root: &Path) -> PowerPolicy {
-    let path = root.join("firmware/acpi/platform_profile");
-    let choices = root.join("firmware/acpi/platform_profile_choices");
-    let options = read(&choices)
-        .map(|v| v.split_whitespace().map(str::to_owned).collect())
-        .unwrap_or_default();
-    PowerPolicy {
-        scope: "Linux ACPI platform profile (not OEM preset or GPU tuning)".into(),
-        current: read(&path),
-        options,
-        source: Some(source(&path, "acpi_platform_profile")),
+const PROFILE_SCOPE: &str = "Linux ACPI platform profile (not OEM preset or GPU tuning)";
+fn is_wujie_hpt(root: &Path) -> bool {
+    let dmi = root.join("class/dmi/id");
+    read(&dmi.join("sys_vendor")).as_deref() == Some("MECHREVO")
+        && read(&dmi.join("product_name")).as_deref() == Some("WUJIE15 PRO")
+        && read(&dmi.join("board_name")).as_deref() == Some("WUJIE15 Series-HPT")
+}
+fn hpt_profile_needs_quirk(root: &Path) -> bool {
+    // HPT uses 0/1/2 = performance/balanced/quiet, unlike the generic
+    // Bitland four-mode map. The corrected driver omits balanced-performance.
+    is_wujie_hpt(root)
+        && paths(&root.join("class/platform-profile"))
+            .iter()
+            .any(|handler| {
+                read(&handler.join("name")).as_deref() == Some("bitland-mifs-wmi")
+                    && read(&handler.join("choices")).is_some_and(|v| {
+                        v.split_whitespace()
+                            .any(|choice| choice == "balanced-performance")
+                    })
+            })
+}
+struct ProfileInterface {
+    path: PathBuf,
+    choices: PathBuf,
+    source: EvidenceSource,
+    identity: Option<(u64, u64)>,
+    require_sysfs: bool,
+}
+impl ProfileInterface {
+    fn discover(root: &Path) -> Option<Self> {
+        if hpt_profile_needs_quirk(root) {
+            return None;
+        }
+        let path = root.join("firmware/acpi/platform_profile");
+        let choices = root.join("firmware/acpi/platform_profile_choices");
+        // The legacy interface coordinates all handlers. Never bypass a
+        // present, broken or inaccessible aggregate by selecting one driver.
+        if [&path, &choices].iter().any(|path| {
+            !fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        }) {
+            return Some(Self {
+                source: source(&path, "acpi_platform_profile"),
+                path,
+                choices,
+                identity: None,
+                require_sysfs: false,
+            });
+        }
+        let root = fs::canonicalize(root).ok()?;
+        let entries = fs::read_dir(root.join("class/platform-profile"))
+            .ok()?
+            .take(257)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        if entries.len() > 256 {
+            return None;
+        }
+        let mut handlers = entries.into_iter().filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.strip_prefix("platform-profile-")
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty()
+                            && suffix.len() <= 8
+                            && suffix.bytes().all(|c| c.is_ascii_digit())
+                    })
+            })
+        });
+        let entry = handlers.next()?;
+        if handlers.next().is_some() {
+            return None;
+        }
+        let device = fs::canonicalize(entry.path()).ok()?;
+        if !device.starts_with(root.join("devices"))
+            || device.file_name() != Some(entry.file_name().as_os_str())
+        {
+            return None;
+        }
+        // All attributes are fixed regular files on the selected device.
+        // Count unreadable handlers before validation to avoid first-match fallback.
+        for attribute in ["profile", "choices", "name"] {
+            if !fs::symlink_metadata(device.join(attribute)).ok()?.is_file() {
+                return None;
+            }
+        }
+        let name = read(&device.join("name"))?;
+        if name.len() > 128 || name.contains(['\n', '\r', '\0']) {
+            return None;
+        }
+        let metadata = fs::metadata(&device).ok()?;
+        let path = device.join("profile");
+        let attribute = fs::symlink_metadata(&path).ok()?;
+        let binding = format!(
+            "{}|name={name}|device={}:{}|profile={}:{}",
+            device.display(),
+            metadata.dev(),
+            metadata.ino(),
+            attribute.dev(),
+            attribute.ino()
+        );
+        Some(Self {
+            source: EvidenceSource {
+                backend: "linux_platform_profile_class".into(),
+                path: path.display().to_string(),
+                device_id: Some(binding),
+            },
+            path,
+            choices: device.join("choices"),
+            identity: Some((attribute.dev(), attribute.ino())),
+            require_sysfs: root == Path::new("/sys"),
+        })
     }
+    fn state(&self) -> PowerPolicy {
+        PowerPolicy {
+            scope: if self.identity.is_some() {
+                "Linux single-driver platform profile (not OEM preset or GPU tuning)"
+            } else {
+                PROFILE_SCOPE
+            }
+            .into(),
+            current: read(&self.path),
+            options: read(&self.choices)
+                .map(|v| v.split_whitespace().map(str::to_owned).collect())
+                .unwrap_or_default(),
+            source: Some(self.source.clone()),
+        }
+    }
+    fn open_class_attribute(&self) -> Result<File, ControlError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&self.path)
+            .map_err(|e| {
+                ControlError::new(
+                    "profile_write_failed",
+                    format!("Cannot open selected profile: {e}; no automatic sudo"),
+                )
+            })?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| ControlError::new("profile_unavailable", e.to_string()))?;
+        if !metadata.is_file() || self.identity != Some((metadata.dev(), metadata.ino())) {
+            return Err(ControlError::new(
+                "stale_plan",
+                "Selected profile attribute was replaced",
+            ));
+        }
+        if self.require_sysfs {
+            let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+            // SAFETY: live descriptor and writable storage for one statfs.
+            let result = unsafe { libc::fstatfs(file.as_raw_fd(), info.as_mut_ptr()) };
+            if result != 0 {
+                return Err(ControlError::new(
+                    "profile_unavailable",
+                    std::io::Error::last_os_error().to_string(),
+                ));
+            }
+            // SAFETY: successful fstatfs initialized the structure.
+            if unsafe { info.assume_init() }.f_type != libc::SYSFS_MAGIC {
+                return Err(ControlError::new(
+                    "profile_unavailable",
+                    "Selected /sys profile is not on sysfs",
+                ));
+            }
+        }
+        Ok(file)
+    }
+}
+pub(crate) fn policy(root: &Path) -> PowerPolicy {
+    ProfileInterface::discover(root)
+        .map(|interface| interface.state())
+        .unwrap_or(PowerPolicy {
+            scope: PROFILE_SCOPE.into(),
+            current: None,
+            options: vec![],
+            source: None,
+        })
 }
 // @mark mechrevo.telemetry role=implementation
 pub(crate) fn snapshot(root: &Path) -> Snapshot {
@@ -114,6 +283,14 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
     identity.qualify();
     let mut telemetry = Vec::new();
     let mut diagnostics = Vec::new();
+    let hpt = is_wujie_hpt(root);
+    let hpt_mapping_unsupported = hpt_profile_needs_quirk(root);
+    if hpt_mapping_unsupported {
+        diagnostics.push(Diagnostic {
+            code: "bitland_hpt_kernel_quirk_required".into(),
+            message: "WUJIE15 PRO HPT firmware has three profiles; the loaded Bitland handler still advertises the incompatible four-mode map. Profile writes are disabled until the kernel HPT correction is present.".into(),
+        });
+    }
     let mut sensor_sources = HashSet::new();
     if identity.product_name.is_none() {
         diagnostics.push(Diagnostic {
@@ -156,6 +333,17 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
                 });
                 continue;
             }
+            if hpt
+                && chip == "bitland_mifs"
+                && !matches!(filename.as_ref(), "fan1_input" | "fan2_input")
+            {
+                telemetry.push(SensorReading {
+                    id, label: format!("{chip}: {stem}"), device_id: device.clone(), kind: kind.into(), value: None, unit: unit.into(),
+                    source: source(&input, &device), status: CapabilityStatus::Unavailable,
+                    reason: Some("WUJIE15 PRO HPT MIFS firmware has only F2/F1 fan readings, no CPU temperature or third fan. Unsupported GETs may return zero; correct the kernel capability map.".into()),
+                });
+                continue;
+            }
             if suspended {
                 telemetry.push(SensorReading {
                     id,
@@ -173,7 +361,16 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
                 });
                 continue;
             }
-            let label = read(&hwmon.join(format!("{stem}_label"))).unwrap_or_else(|| stem.into());
+            let label = if hpt && chip == "bitland_mifs" {
+                if filename == "fan1_input" {
+                    "Fan 2"
+                } else {
+                    "Fan 1"
+                }
+                .into()
+            } else {
+                read(&hwmon.join(format!("{stem}_label"))).unwrap_or_else(|| stem.into())
+            };
             // Keep the chip and its own label. An EC temperature is not a CPU core.
             telemetry.push(reading(
                 &input,
@@ -238,7 +435,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
         .is_some_and(|v| power_policy.options.contains(v))
         && !power_policy.options.is_empty();
     let mut capabilities = proprietary_capabilities();
-    capabilities.push(Capability{id:"power_profile".into(),label:"OS platform power profile".into(),status:if profile_available{CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:if profile_available{"Kernel exposes current platform profile and enumerated choices. Write permission and readback are checked on apply."}else{"Missing/unreadable current platform_profile or choices; no OEM profile guessed."}.into(),source:power_policy.source.clone(),options:power_policy.options.clone()});
+    capabilities.push(Capability{id:"power_profile".into(),label:"OS platform power profile".into(),status:if profile_available{CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:if profile_available{"Kernel exposes current platform profile and enumerated choices. Write permission and readback are checked on apply."}else if hpt_mapping_unsupported{"The loaded kernel has the incompatible Bitland profile map for HPT firmware; profile writes are disabled."}else{"Missing, invalid or ambiguous platform-profile interfaces; no OEM profile guessed."}.into(),source:power_policy.source.clone(),options:power_policy.options.clone()});
     capabilities.push(Capability{id:"telemetry".into(),label:"OS sensor telemetry".into(),status:if telemetry.iter().any(|r|r.value.is_some()){CapabilityStatus::Available}else{CapabilityStatus::Unavailable},reason:"Each sensor retains its device identity, label, unit and sysfs source; missing values are unknown.".into(),source:None,options:vec![]});
     if batteries == 0 {
         diagnostics.push(Diagnostic {
@@ -259,7 +456,19 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
 }
 // @mark mechrevo.os_power_policy role=implementation
 pub(crate) fn plan(root: &Path, requested: PowerProfile) -> Result<ProfilePlan, ControlError> {
-    let state = policy(root);
+    let interface = ProfileInterface::discover(root).ok_or_else(|| {
+        ControlError::new(
+            "profile_unavailable",
+            "No unambiguous Linux platform-profile interface",
+        )
+    })?;
+    plan_for(&interface, requested)
+}
+fn plan_for(
+    interface: &ProfileInterface,
+    requested: PowerProfile,
+) -> Result<ProfilePlan, ControlError> {
+    let state = interface.state();
     let previous = state.current.ok_or_else(|| {
         ControlError::new(
             "profile_unavailable",
@@ -285,7 +494,13 @@ pub(crate) fn plan(root: &Path, requested: PowerProfile) -> Result<ProfilePlan, 
     })
 }
 pub(crate) fn apply(root: &Path, requested: &ProfilePlan) -> Result<ApplyResult, ControlError> {
-    let fresh = plan(root, requested.requested)?;
+    let interface = ProfileInterface::discover(root).ok_or_else(|| {
+        ControlError::new(
+            "profile_unavailable",
+            "No unambiguous Linux platform-profile interface",
+        )
+    })?;
+    let fresh = plan_for(&interface, requested.requested)?;
     if fresh.target != requested.target
         || fresh.previous != requested.previous
         || fresh.scope != requested.scope
@@ -296,16 +511,63 @@ pub(crate) fn apply(root: &Path, requested: &ProfilePlan) -> Result<ApplyResult,
             "Profile state, backend or target changed; create a new plan",
         ));
     }
-    let path = root.join("firmware/acpi/platform_profile");
+    if interface.identity.is_some() {
+        // Hold one validated attribute for the write, readback and any restore;
+        // a later class alias or directory change cannot redirect the store.
+        let file = interface.open_class_attribute()?;
+        return apply_verified(
+            requested,
+            || {
+                let mut handle = &file;
+                handle
+                    .seek(SeekFrom::Start(0))
+                    .map_err(|e| ControlError::new("readback_failed", e.to_string()))?;
+                let mut value = String::new();
+                handle
+                    .take(8193)
+                    .read_to_string(&mut value)
+                    .map_err(|e| ControlError::new("readback_failed", e.to_string()))?;
+                if value.len() > 8192 || value.trim().is_empty() || value.contains('\0') {
+                    return Err(ControlError::new(
+                        "readback_failed",
+                        "Invalid selected profile value",
+                    ));
+                }
+                Ok(value.trim().into())
+            },
+            |value| {
+                let mut handle = &file;
+                let payload = format!("{value}\n");
+                handle
+                    .seek(SeekFrom::Start(0))
+                    .map_err(|e| ControlError::new("profile_write_failed", e.to_string()))?;
+                let written = handle
+                    .write(payload.as_bytes())
+                    .map_err(|e| ControlError::new("profile_write_failed", e.to_string()))?;
+                if written != payload.len() {
+                    return Err(ControlError::new(
+                        "profile_write_failed",
+                        "Short profile store",
+                    ));
+                }
+                if !interface.require_sysfs {
+                    file.set_len(payload.len() as u64)
+                        .map_err(|e| ControlError::new("profile_write_failed", e.to_string()))?;
+                }
+                Ok(())
+            },
+        );
+    }
+    let path = &interface.path;
     apply_verified(
         requested,
         || {
-            read(&path).ok_or_else(|| {
+            read(path).ok_or_else(|| {
                 ControlError::new("readback_failed", "Cannot read current platform profile")
             })
         },
         |value| {
-            fs::write(&path, format!("{value}\n")).map_err(|e| {
+            fs::write(path, format!("{value}\n")).map_err(|e| {
                 ControlError::new(
                     "profile_write_failed",
                     format!(
@@ -649,5 +911,264 @@ mod tests {
         put(&root, "firmware/acpi/platform_profile_choices", "balanced");
         assert!(plan(&root, PowerProfile::PowerSaver).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn hpt_identity(root: &Path) {
+        put(root, "class/dmi/id/sys_vendor", "MECHREVO");
+        put(root, "class/dmi/id/product_name", "WUJIE15 PRO");
+        put(root, "class/dmi/id/board_name", "WUJIE15 Series-HPT");
+    }
+
+    #[test]
+    fn class_profile_read_only_attribute_can_be_previewed_but_never_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = fixture();
+        let device = class_profile(&root, 0, "amd-pmf");
+        let preview = plan(&root, PowerProfile::Performance).unwrap();
+        fs::set_permissions(device.join("profile"), fs::Permissions::from_mode(0o444)).unwrap();
+        assert_eq!(
+            apply(&root, &preview).unwrap_err().code,
+            "profile_write_failed"
+        );
+        assert_eq!(read(&device.join("profile")).as_deref(), Some("balanced"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hpt_rejects_the_old_bitland_mapping_but_accepts_the_corrected_three_choices() {
+        let root = fixture();
+        hpt_identity(&root);
+        let device = class_profile(&root, 0, "bitland-mifs-wmi");
+        fs::write(
+            device.join("choices"),
+            "low-power balanced balanced-performance performance",
+        )
+        .unwrap();
+        put(&root, "firmware/acpi/platform_profile", "balanced");
+        put(
+            &root,
+            "firmware/acpi/platform_profile_choices",
+            "low-power balanced balanced-performance performance",
+        );
+        assert!(plan(&root, PowerProfile::Balanced).is_err());
+        assert!(snapshot(&root)
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "bitland_hpt_kernel_quirk_required"));
+        assert_eq!(read(&device.join("profile")).as_deref(), Some("balanced"));
+        fs::write(device.join("choices"), "low-power balanced performance").unwrap();
+        plan(&root, PowerProfile::Balanced).unwrap();
+        fs::write(
+            device.join("choices"),
+            "low-power balanced balanced-performance performance",
+        )
+        .unwrap();
+        put(&root, "class/dmi/id/board_name", "WUJIE15 Series-HPT-other");
+        plan(&root, PowerProfile::Balanced).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hpt_mifs_uses_f2_f1_labels_and_marks_nonexistent_sensors_unknown() {
+        let root = fixture();
+        hpt_identity(&root);
+        let hwmon = linked_hwmon(&root, "hwmon0", "bitland_mifs");
+        fs::write(hwmon.join("name"), "bitland_mifs").unwrap();
+        fs::write(hwmon.join("fan1_label"), "CPU").unwrap();
+        fs::write(hwmon.join("fan1_input"), "2280").unwrap();
+        fs::write(hwmon.join("fan2_label"), "GPU").unwrap();
+        fs::write(hwmon.join("fan2_input"), "0").unwrap();
+        fs::write(hwmon.join("fan3_input"), "0").unwrap();
+        fs::write(hwmon.join("temp1_input"), "0").unwrap();
+        let state = snapshot(&root);
+        for (attribute, value, label) in
+            [("fan1_input", 2280., "Fan 2"), ("fan2_input", 0., "Fan 1")]
+        {
+            let sensor = state
+                .telemetry
+                .iter()
+                .find(|s| s.source.path.ends_with(attribute))
+                .unwrap();
+            assert_eq!(sensor.value, Some(value));
+            assert_eq!(sensor.label, format!("bitland_mifs: {label}"));
+        }
+        for attribute in ["fan3_input", "temp1_input"] {
+            let sensor = state
+                .telemetry
+                .iter()
+                .find(|s| s.source.path.ends_with(attribute))
+                .unwrap();
+            assert_eq!(sensor.value, None);
+            assert_eq!(sensor.status, CapabilityStatus::Unavailable);
+        }
+        put(&root, "class/dmi/id/board_name", "WUJIE Series-X5SP4NAG");
+        assert!(snapshot(&root).telemetry.iter().all(|s| s.value.is_some()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn class_profile(root: &Path, index: u32, driver: &str) -> PathBuf {
+        use std::os::unix::fs::symlink;
+        let relative =
+            format!("devices/platform/{driver}/platform-profile/platform-profile-{index}");
+        put(root, &format!("{relative}/name"), driver);
+        put(
+            root,
+            &format!("{relative}/choices"),
+            "low-power balanced performance",
+        );
+        put(root, &format!("{relative}/profile"), "balanced");
+        fs::create_dir_all(root.join("class/platform-profile")).unwrap();
+        let device = root.join(relative);
+        symlink(
+            &device,
+            root.join(format!("class/platform-profile/platform-profile-{index}")),
+        )
+        .unwrap();
+        device
+    }
+
+    #[test]
+    fn single_class_profile_is_discovered_planned_applied_and_read_back() {
+        let root = fixture();
+        let device = class_profile(&root, 0, "amd-pmf");
+        let service = Service::with_linux_sysfs(&root);
+        let state = service.snapshot();
+        assert_eq!(state.power_policy.current.as_deref(), Some("balanced"));
+        assert_eq!(
+            state
+                .capabilities
+                .iter()
+                .find(|c| c.id == "power_profile")
+                .unwrap()
+                .status,
+            CapabilityStatus::Available
+        );
+        let plan = service.plan_profile(PowerProfile::Performance).unwrap();
+        assert_eq!(read(&device.join("profile")).as_deref(), Some("balanced"));
+        assert_eq!(
+            plan.source.path,
+            device.join("profile").display().to_string()
+        );
+        assert_eq!(
+            service.apply_profile(&plan).unwrap().confirmed,
+            "performance"
+        );
+        assert_eq!(
+            read(&device.join("profile")).as_deref(),
+            Some("performance")
+        );
+        assert_eq!(service.apply_profile(&plan).unwrap_err().code, "stale_plan");
+        put(
+            &root,
+            &device
+                .join("choices")
+                .strip_prefix(&root)
+                .unwrap()
+                .display()
+                .to_string(),
+            "balanced",
+        );
+        assert!(service.plan_profile(PowerProfile::PowerSaver).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_profile_remains_authoritative_even_with_multiple_class_handlers() {
+        let root = fixture();
+        let first = class_profile(&root, 0, "amd-pmf");
+        let second = class_profile(&root, 1, "bitland-mifs-wmi");
+        put(&root, "firmware/acpi/platform_profile", "balanced");
+        put(
+            &root,
+            "firmware/acpi/platform_profile_choices",
+            "low-power balanced performance",
+        );
+        let plan = plan(&root, PowerProfile::Performance).unwrap();
+        apply(&root, &plan).unwrap();
+        assert_eq!(read(&first.join("profile")).as_deref(), Some("balanced"));
+        assert_eq!(read(&second.join("profile")).as_deref(), Some("balanced"));
+        fs::remove_file(root.join("firmware/acpi/platform_profile_choices")).unwrap();
+        assert!(super::plan(&root, PowerProfile::PowerSaver).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn multiple_class_handlers_never_select_the_first_even_if_one_is_unreadable() {
+        let root = fixture();
+        class_profile(&root, 0, "amd-pmf");
+        let second = class_profile(&root, 1, "bitland-mifs-wmi");
+        for remove in [false, true] {
+            if remove {
+                fs::remove_file(second.join("profile")).unwrap();
+            }
+            assert!(policy(&root).current.is_none());
+            assert!(plan(&root, PowerProfile::Performance).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn class_profile_rejects_external_devices_and_symlinked_attributes() {
+        use std::os::unix::fs::symlink;
+        let root = fixture();
+        let foreign = fixture();
+        let device = class_profile(&foreign, 0, "amd-pmf");
+        fs::create_dir_all(root.join("class/platform-profile")).unwrap();
+        symlink(
+            &device,
+            root.join("class/platform-profile/platform-profile-0"),
+        )
+        .unwrap();
+        assert!(plan(&root, PowerProfile::Performance).is_err());
+        fs::remove_file(root.join("class/platform-profile/platform-profile-0")).unwrap();
+        let device = class_profile(&root, 0, "amd-pmf");
+        for attribute in ["profile", "choices", "name"] {
+            let original = fs::read(device.join(attribute)).unwrap();
+            fs::remove_file(device.join(attribute)).unwrap();
+            symlink(
+                foreign
+                    .join("devices/platform/amd-pmf/platform-profile/platform-profile-0")
+                    .join(attribute),
+                device.join(attribute),
+            )
+            .unwrap();
+            assert!(plan(&root, PowerProfile::Performance).is_err());
+            fs::remove_file(device.join(attribute)).unwrap();
+            fs::write(device.join(attribute), original).unwrap();
+        }
+        assert_eq!(
+            read(
+                &foreign
+                    .join("devices/platform/amd-pmf/platform-profile/platform-profile-0/profile")
+            )
+            .as_deref(),
+            Some("balanced")
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(foreign).unwrap();
+    }
+
+    #[test]
+    fn class_profile_device_name_and_attribute_replacement_invalidate_old_plans() {
+        for change in ["device", "name", "attribute"] {
+            let root = fixture();
+            let device = class_profile(&root, 0, "amd-pmf");
+            let preview = plan(&root, PowerProfile::Performance).unwrap();
+            match change {
+                "device" => {
+                    fs::remove_file(root.join("class/platform-profile/platform-profile-0"))
+                        .unwrap();
+                    class_profile(&root, 0, "other-driver");
+                }
+                "name" => fs::write(device.join("name"), "other-driver").unwrap(),
+                _ => {
+                    fs::write(device.join("replacement"), "balanced").unwrap();
+                    fs::rename(device.join("replacement"), device.join("profile")).unwrap();
+                }
+            }
+            assert_eq!(apply(&root, &preview).unwrap_err().code, "stale_plan");
+            assert_eq!(read(&device.join("profile")).as_deref(), Some("balanced"));
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 }

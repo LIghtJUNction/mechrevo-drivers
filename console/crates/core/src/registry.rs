@@ -186,6 +186,12 @@ mod tests {
             ("GM6BG0Q", Some("Jiaolong16K Series GM6BG0Q"), "gm6bg0q"),
             ("WUJIE Series-X5SP4NAG", None, "wujie-x5sp4nag"),
             ("GM5HG0A", Some("Yilong15Pro Series GM5HG0A"), "gm5hg0a"),
+            ("WUJIE15 Series-HPT", Some("WUJIE15 PRO"), "wujie15-hpt"),
+            (
+                "XINGYAO Series-P916F-HPT-R",
+                Some("XINGYAO Series"),
+                "p916f-hpt-r",
+            ),
         ] {
             let mut identity = Identity {
                 manufacturer: Some("MECHREVO".into()),
@@ -200,6 +206,11 @@ mod tests {
             assert_eq!(result.matches[0].model_id, model_id);
             assert!(!result.matches[0].hardware_validated);
             assert!(!result.matches[0].firmware_evidence_matches);
+            if let Some(product) = product {
+                identity.product_name = Some(format!("{product} extra"));
+                assert_eq!(identify(&identity).status, "unknown");
+                identity.product_name = Some(product.into());
+            }
             for vendor in [None, Some("Other MECHREVO".into())] {
                 identity.manufacturer = vendor;
                 assert_eq!(identify(&identity).status, "unknown");
