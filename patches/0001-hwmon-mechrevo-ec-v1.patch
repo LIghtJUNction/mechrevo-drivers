@@ -21,7 +21,18 @@ unloaded without removing the existing module. Other systems and BIOS
 versions have not been tested.
 
 Assisted-by: Codex:GPT-6
+Signed-off-by: LIghtJUNction <lightjunction.me@gmail.com>
 ---
+AI assistance: Codex was used to draft the read-only driver, its Kconfig
+and Makefile integration, documentation, and commit message. The request
+was to prepare a hwmon submission for the locally verified GM6PX0X using
+the firmware read interface and no EC writes.
+
+Validation is limited to an external-module W=1 build and runtime reads on
+the laptop and BIOS listed above; no full kernel-tree build was performed.
+checkpatch --strict reports no errors and one advisory about a new
+MAINTAINERS entry. The general HWMON entry covers these paths.
+
  Documentation/hwmon/index.rst       |   1 +
  Documentation/hwmon/mechrevo-ec.rst |  31 +++
  drivers/hwmon/Kconfig               |  11 ++
