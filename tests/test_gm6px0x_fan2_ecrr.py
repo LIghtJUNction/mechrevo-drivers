@@ -91,6 +91,14 @@ class Fan2ComparisonTests(unittest.TestCase):
         self.assertEqual(outcome["low_d_distinct_values"], 1)
         self.assertIsNone(outcome["pearson_correlation"])
 
+    def test_constant_low_d_is_detected_even_when_high_changes(self):
+        rows = [fan2.sample_row(i, attempt(hi0=0x13 + i // 10,
+                                           b=40 + 3*i, d=0xff))
+                for i in range(1, 31)]
+        self.assertEqual(fan2.summarize(rows)["low_d_distinct_values"], 1)
+        self.assertEqual(fan2.summarize(rows)["finding"],
+                         "different_in_observed_range")
+
     def test_collect_limits_and_checkpoint_on_read_error(self):
         for count, interval in ((0, 1), (61, 1), (True, 1), (1, 0),
                                 (1, float("nan")), (1, float("inf")), (1, True)):
