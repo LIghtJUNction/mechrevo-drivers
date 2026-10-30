@@ -107,15 +107,17 @@ def summarize(rows):
     sentinel_d = sum(x in (0, 0xffff) for x in d)
     b_low_ff = sum((x & 0xff) == 0xff for x in b)
     d_low_ff = sum((x & 0xff) == 0xff for x in d)
+    b_low_distinct = len(set(x & 0xff for x in b))
+    d_low_distinct = len(set(x & 0xff for x in d))
 
     # Diagnostic hints only. There is no independent tachometer reference.
-    if len(stable) < 20 or b_span < 64 or len(set(b)) < 3:
+    if len(stable) < 20 or b_span < 64 or b_low_distinct < 3:
         finding = "insufficient_observed_variation"
-    elif (len(set(d)) >= 3 and near / len(stable) >= 0.95
+    elif (d_low_distinct >= 3 and near / len(stable) >= 0.95
           and corr is not None and corr >= 0.95
           and not sentinel_b and not sentinel_d):
         finding = "closely_tracking_in_observed_range"
-    elif near / len(stable) < 0.5 or (len(set(d)) == 1 and len(set(b)) > 2):
+    elif near / len(stable) < 0.5 or (d_low_distinct == 1 and b_low_distinct > 2):
         finding = "different_in_observed_range"
     else:
         finding = "mixed_or_inconclusive"
@@ -128,8 +130,8 @@ def summarize(rows):
         "discarded_high_rollovers": total,
         "exact_pair_matches": exact,
         "within_1pct_pair_matches": near,
-        "low_b_distinct_values": len(set(x & 0xff for x in b)),
-        "low_d_distinct_values": len(set(x & 0xff for x in d)),
+        "low_b_distinct_values": b_low_distinct,
+        "low_d_distinct_values": d_low_distinct,
         "b_count_range": [min(b), max(b)] if b else None,
         "d_count_range": [min(d), max(d)] if d else None,
         "d_count_span": d_span,
