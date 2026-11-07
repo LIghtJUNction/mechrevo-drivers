@@ -9,10 +9,11 @@
 #include <string.h>
 #include <unistd.h>
 
+typedef uint8_t u8;
 typedef uint32_t u32;
 
 struct uniwill_device_features_t {
-	int unused;
+	unsigned int model;
 };
 
 static struct uniwill_device_features_t *uw_feats;
@@ -27,7 +28,7 @@ static void mutex_unlock(pthread_mutex_t *lock)
 }
 
 static struct uniwill_device_features_t mock_features;
-static int interface_ready, feature_available;
+static int interface_ready, feature_available, features_ready;
 static int identify_calls, feature_reads, tdp_calls;
 static int sleep_first_identify;
 
@@ -48,8 +49,17 @@ static struct uniwill_device_features_t *uniwill_get_device_features(void)
 	return feature_available ? &mock_features : NULL;
 }
 
-static void uw_id_tdp(void)
+static bool uniwill_device_features_ready(void)
 {
+	return features_ready;
+}
+
+static void uw_id_tdp(u8 model)
+{
+	assert(model == mock_features.model);
+	/* Production publishes uw_feats only after this call returns. */
+	if (tdp_calls == 0)
+		assert(uw_feats == NULL);
 	tdp_calls++;
 }
 
@@ -58,7 +68,8 @@ static void uw_id_tdp(void)
 static void reset(void)
 {
 	uw_feats = NULL;
-	interface_ready = feature_available = 0;
+	interface_ready = feature_available = features_ready = 0;
+	mock_features.model = 0x10;
 	identify_calls = feature_reads = tdp_calls = 0;
 	sleep_first_identify = 0;
 	assert(pthread_mutex_trylock(&uniwill_identify_lock) == 0);
@@ -77,7 +88,7 @@ static void load_order_case(void)
 	assert(uw_feats == NULL && tdp_calls == 0);
 
 	/* Provider appears later: the next user identifies successfully. */
-	interface_ready = feature_available = 1;
+	interface_ready = feature_available = features_ready = 1;
 	uw_ensure_identified();
 	assert(identify_calls == 3 && feature_reads == 1);
 	assert(uw_feats == &mock_features && tdp_calls == 1);
@@ -99,10 +110,29 @@ static void feature_failure_case(void)
 	assert(identify_calls == 1 && feature_reads == 1);
 	assert(uw_feats == NULL && tdp_calls == 0 && uniwill_identify() == 0);
 	assert(identify_calls == 2 && feature_reads == 2 && tdp_calls == 0);
-	feature_available = 1;
+	feature_available = features_ready = 1;
 	uw_ensure_identified();
 	assert(identify_calls == 3 && feature_reads == 3);
 	assert(uw_feats == &mock_features && tdp_calls == 1);
+}
+
+static void feature_not_ready_case(void)
+{
+	reset();
+	interface_ready = feature_available = 1;
+	features_ready = 0;
+	/* A non-NULL feature pointer with an incomplete probe must not be cached. */
+	uw_ensure_identified();
+	assert(identify_calls == 1 && feature_reads == 1 && tdp_calls == 0);
+	assert(uw_feats == NULL);
+	uw_ensure_identified();
+	assert(identify_calls == 2 && feature_reads == 2 && tdp_calls == 0);
+	features_ready = 1;
+	uw_ensure_identified();
+	assert(identify_calls == 3 && feature_reads == 3 && tdp_calls == 1);
+	assert(uw_feats == &mock_features);
+	uw_ensure_identified();
+	assert(identify_calls == 3 && feature_reads == 3 && tdp_calls == 1);
 }
 
 static void *ensure_thread(void *unused)
@@ -117,7 +147,7 @@ static void concurrency_case(void)
 	pthread_t first, second;
 
 	reset();
-	interface_ready = feature_available = 1;
+	interface_ready = feature_available = features_ready = 1;
 	sleep_first_identify = 1;
 	assert(pthread_create(&first, NULL, ensure_thread, NULL) == 0);
 	assert(pthread_create(&second, NULL, ensure_thread, NULL) == 0);
@@ -137,6 +167,8 @@ int main(int argc, char **argv)
 		load_order_case();
 	else if (!strcmp(argv[1], "feature_failure"))
 		feature_failure_case();
+	else if (!strcmp(argv[1], "feature_not_ready"))
+		feature_not_ready_case();
 	else if (!strcmp(argv[1], "concurrency"))
 		concurrency_case();
 	else

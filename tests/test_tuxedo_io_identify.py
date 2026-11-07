@@ -58,6 +58,9 @@ class TuxedoIoIdentify(unittest.TestCase):
     def test_feature_failure_keeps_retrying_without_caching(self):
         self.check_case("feature_failure")
 
+    def test_incomplete_feature_probe_is_not_cached_as_ready(self):
+        self.check_case("feature_not_ready")
+
     def test_concurrent_first_users_identify_exactly_once(self):
         self.check_case("concurrency")
 

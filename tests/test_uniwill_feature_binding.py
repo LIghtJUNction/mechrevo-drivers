@@ -115,6 +115,9 @@ class UniwillFeatureBinding(unittest.TestCase):
     def test_absent_interface_identification_leaves_features_unbound(self):
         self.check_case("identify_absent")
 
+    def test_incomplete_feature_probe_is_not_published_or_used_for_tdp_mapping(self):
+        self.check_case("identify_not_ready")
+
     def test_null_provider_result_is_not_published_or_used_for_tdp_mapping(self):
         self.check_case("identify_null_provider")
 

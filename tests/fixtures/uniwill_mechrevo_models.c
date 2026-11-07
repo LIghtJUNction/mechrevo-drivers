@@ -69,7 +69,7 @@ static void detect(const char *vendor, const char *board, const char *sku)
     uw_feats_loaded = false;
     dmi[0] = vendor; dmi[1] = board; dmi[2] = sku;
     uw_feats = uniwill_get_device_features();
-    uw_id_tdp();
+    uw_id_tdp(uw_feats->model);
     assert(writes == 0); /* Identification must never apply a power target. */
 }
 static void reset(void)

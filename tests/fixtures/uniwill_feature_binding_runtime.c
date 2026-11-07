@@ -19,6 +19,7 @@ typedef uint32_t u32;
 static struct uniwill_device_features_t features;
 static struct uniwill_device_features_t *uw_feats;
 static struct uniwill_device_features_t *provider_features = &features;
+static bool features_ready;
 static int minimums[] = { 5, 6, 7 };
 static int maximums[] = { 80, 90, 200 };
 static int *tdp_min_defs;
@@ -48,11 +49,16 @@ static struct uniwill_device_features_t *uniwill_get_device_features(void)
 	return provider_features;
 }
 
-/* TDP model mapping itself is unchanged. This spy verifies that the actual
- * identify function never calls it with a NULL feature pointer. */
-static void uw_id_tdp(void)
+static bool uniwill_device_features_ready(void)
 {
-	assert(uw_feats != NULL);
+	return features_ready;
+}
+
+/* TDP model mapping itself is unchanged. The actual identify function passes
+ * the model before publishing uw_feats. */
+static void uw_id_tdp(u8 model)
+{
+	assert(model == features.model);
 	++table_calls;
 	tdp_min_defs = minimums;
 	tdp_max_defs = maximums;
@@ -185,6 +191,7 @@ static void bind(void)
 
 	interface_status = 0;
 	features.model = 42;
+	features_ready = true;
 	features.uniwill_has_double_pl4 = true;
 	features.uniwill_has_universal_ec_fan_control = true;
 	features.uniwill_profile_v1_three_profs = true;
@@ -347,6 +354,19 @@ static void identify_absent(void)
 	no_hardware_or_binding();
 }
 
+static void identify_not_ready(void)
+{
+	u32 value = 0xdeadbeef;
+	interface_status = 0;
+	features.model = 42;
+	features_ready = false;
+	assert(IOCTL(R_HWCHECK_UW, value) == 0 && value == 0);
+	assert(uw_feats == NULL && feature_calls == 1 && table_calls == 0);
+	features_ready = true;
+	assert(IOCTL(R_HWCHECK_UW, value) == 0 && value == 1);
+	assert(uw_feats == &features && feature_calls == 2 && table_calls == 1);
+}
+
 static void identify_null_provider(void)
 {
 	u32 value = 0xdeadbeef;
@@ -467,6 +487,7 @@ int main(int argc, char **argv)
 	CASE(independent_commands)
 	CASE(unknown_commands)
 	CASE(identify_absent)
+	CASE(identify_not_ready)
 	CASE(identify_null_provider)
 	CASE(late_binding)
 	CASE(disconnect)
