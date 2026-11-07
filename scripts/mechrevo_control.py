@@ -537,6 +537,51 @@ def get_current_mode() -> str:
     return get_current_mode_info()[0]
 
 
+EC_MODE_BYTES = {
+    "office": 0xa0,
+    "gaming": 0x00,
+    "gaming-quiet": 0x00,
+    "turbo": 0x10,
+    "boost": 0x10,
+}
+# Hardware cycle order used by the physical key when tccd is not involved.
+EC_MODE_CYCLE = (("office", 0xa0), ("gaming", 0x00), ("turbo", 0x10))
+EC_CONTROL_DEVICE = Path("/dev/tuxedo_io")
+W_UW_MODE = 0x4008f012
+R_UW_MODE = 0x8008ef14
+
+
+def read_hardware_mode() -> int:
+    """Read the EC mode byte through tuxedo_io."""
+    if not EC_CONTROL_DEVICE.exists():
+        raise RuntimeError(f"Uniwill control device is unavailable: {EC_CONTROL_DEVICE}")
+    fd = os.open(EC_CONTROL_DEVICE, os.O_RDWR)
+    try:
+        readback = bytearray(8)
+        fcntl.ioctl(fd, R_UW_MODE, readback, True)
+        return struct.unpack("i", readback[:4])[0] & 0xff
+    finally:
+        os.close(fd)
+
+
+def write_hardware_mode(value: int) -> int:
+    """Request an EC mode byte and verify the readback."""
+    if not EC_CONTROL_DEVICE.exists():
+        raise RuntimeError(f"Uniwill control device is unavailable: {EC_CONTROL_DEVICE}")
+    value &= 0xff
+    fd = os.open(EC_CONTROL_DEVICE, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, W_UW_MODE, struct.pack("i", value))
+        readback = bytearray(8)
+        fcntl.ioctl(fd, R_UW_MODE, readback, True)
+        actual = struct.unpack("i", readback[:4])[0] & 0xff
+    finally:
+        os.close(fd)
+    if actual != value:
+        raise RuntimeError(f"EC mode readback mismatch: requested 0x{value:02x}, got 0x{actual:02x}")
+    return actual
+
+
 def set_hardware_mode_led(mode_key: str) -> None:
     """Request a mode byte and require the EC readback to match it.
 
@@ -544,31 +589,22 @@ def set_hardware_mode_led(mode_key: str) -> None:
     readback for this machine. A matching EC readback therefore proves only
     that the request reached the driver, not that a chassis lamp is illuminated.
     """
-    raw_mode_map = {
-        "office": 0xa0,
-        "gaming": 0x00,
-        "gaming-quiet": 0x00,
-        "turbo": 0x10,
-        "boost": 0x10,
-    }
-    if mode_key not in raw_mode_map:
+    if mode_key not in EC_MODE_BYTES:
         raise ValueError(f"Unknown hardware mode key: {mode_key}")
-    val = raw_mode_map[mode_key]
-    dev_path = Path("/dev/tuxedo_io")
-    if not dev_path.exists():
-        raise RuntimeError(f"Uniwill control device is unavailable: {dev_path}")
-    fd = os.open(dev_path, os.O_RDWR)
-    W_UW_MODE = 0x4008f012
-    R_UW_MODE = 0x8008ef14
-    try:
-        fcntl.ioctl(fd, W_UW_MODE, struct.pack("i", val))
-        readback = bytearray(8)
-        fcntl.ioctl(fd, R_UW_MODE, readback, True)
-        actual = struct.unpack("i", readback[:4])[0] & 0xff
-    finally:
-        os.close(fd)
-    if actual != val:
-        raise RuntimeError(f"EC mode readback mismatch: requested 0x{val:02x}, got 0x{actual:02x}")
+    write_hardware_mode(EC_MODE_BYTES[mode_key])
+
+
+def cycle_hardware_mode() -> str:
+    """Cycle the EC mode without tccd: office -> gaming -> turbo -> office."""
+    current = read_hardware_mode()
+    values = [value for _, value in EC_MODE_CYCLE]
+    if current in values:
+        next_name, next_value = EC_MODE_CYCLE[(values.index(current) + 1) % len(EC_MODE_CYCLE)]
+    else:
+        # Unknown mode byte: request the known Gaming value instead of guessing.
+        next_name, next_value = EC_MODE_CYCLE[1]
+    write_hardware_mode(next_value)
+    return next_name
 
 
 PROFILE_MODE_KEYS = {
@@ -667,9 +703,14 @@ def toggle_touchpad() -> None:
         raise RuntimeError("No supported touchpad toggle command is available")
 
 
-def run_daemon() -> None:
-    """Listen to physical hotkey events (Mode button, Fn+Esc, Touchpad F21, Backlight)."""
-    import struct
+def run_daemon(ec_only: bool = False) -> None:
+    """Listen to physical hotkey events.
+
+    With ``ec_only`` the daemon deliberately avoids tccd and D-Bus: it writes
+    the mode byte through /dev/tuxedo_io and ignores all other keys. This mode
+    is intended for the root system service, which can access the 0600 control
+    device and the root:input event node.
+    """
     import select
 
     dev_paths = [
@@ -690,9 +731,18 @@ def run_daemon() -> None:
         print("错误: 找不到 tuxedo-keyboard 物理按键事件输入节点", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
-    sync_oem_profiles()
-    last_profile_id = sync_mode_led_from_profile()
+    if ec_only:
+        print(f"[*] MECHREVO EC-only 热键守护进程启动，监听设备: {target_dev}")
+        # Fail fast when the kernel control node is absent; systemd restarts us
+        # after the module/device appears.
+        initial_mode = read_hardware_mode()
+        print(f"[*] 当前 EC 模式字节: 0x{initial_mode:02x}（不依赖 tccd）")
+        last_profile_id = None
+    else:
+        print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
+        sync_oem_profiles()
+        last_profile_id = sync_mode_led_from_profile()
+
     last_mode_trigger = 0.0
     last_fn_trigger = 0.0
     last_tp_trigger = 0.0
@@ -706,6 +756,8 @@ def run_daemon() -> None:
         while True:
             ready, _, _ = select.select([f], [], [], 1.0)
             if not ready:
+                if ec_only:
+                    continue
                 current_profile_id = get_current_mode_info()[1]
                 if current_profile_id != last_profile_id:
                     last_profile_id = sync_mode_led_from_profile(current_profile_id)
@@ -723,9 +775,18 @@ def run_daemon() -> None:
                 if ev_code == 64:
                     if now - last_mode_trigger >= 0.35:  # 350ms debounce
                         last_mode_trigger = now
-                        print("[*] 捕捉到机身实体模式按键触发！执行模式切换...")
-                        cycle_mode(notify=True)
-                        last_profile_id = sync_mode_led_from_profile()
+                        if ec_only:
+                            mode = cycle_hardware_mode()
+                            print(f"[*] 实体模式键 -> EC 模式 {mode}")
+                        else:
+                            print("[*] 捕捉到机身实体模式按键触发！执行模式切换...")
+                            cycle_mode(notify=True)
+                            last_profile_id = sync_mode_led_from_profile()
+
+                elif ec_only:
+                    # The root EC-only service must not duplicate the user
+                    # daemon's Fn-lock/touchpad/backlight actions.
+                    continue
 
                 # 2. Fn Lock toggle key (KEY_FN_ESC = 465)
                 elif ev_code == 465:
@@ -1158,7 +1219,12 @@ def main() -> int:
     p_bright.add_argument("percent", help="亮度百分比 (例如 80%% 或 80)")
 
     # daemon
-    subparsers.add_parser("daemon", help="启动机身模式物理按键监听守护进程")
+    p_daemon = subparsers.add_parser("daemon", help="启动机身模式物理按键监听守护进程")
+    p_daemon.add_argument(
+        "--ec-only",
+        action="store_true",
+        help="不依赖 tccd，直接用 /dev/tuxedo_io 切换 EC 模式（需要 root；供系统服务使用）",
+    )
 
     # fan
     p_fan = subparsers.add_parser("fan", help="风扇控制 (auto, boost, quiet)")
@@ -1213,7 +1279,7 @@ def main() -> int:
         elif args.command == "brightness":
             set_screen_brightness(args.percent)
         elif args.command == "daemon":
-            run_daemon()
+            run_daemon(ec_only=args.ec_only)
         elif args.command == "fan":
             set_fan(args.action)
         elif args.command == "win-lock":
