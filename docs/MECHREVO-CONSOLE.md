@@ -18,6 +18,29 @@ mechrevo-console oem set mechrevo-performance-profile mechrevo_turbo --dry-run
 
 候选 root 事务完成五档真实切换并逐档回读 tccd ID 和 CPU policy0：办公为 `balance_power`、0.8–3.2 GHz；游戏、低噪和强冷为 `balance_performance`、0.8–4.9 GHz；狂暴为 `performance`、0.8–4.9 GHz，结束恢复狂暴。这是配置及频率边界回读，不是持续运行频率、固定瓦数、灯光、实际 RPM、噪声或游戏帧率验收；普通用户认证弹窗与 Windows 硬件也不在本次证明范围内。打包固定提交与本地安装状态见 [Arch 配方](../packaging/arch/mechrevo-console/README.md)，不表示 AUR 发布。
 
+## 无 tccd 的 EC-only 模式键（2026-11-07）
+
+GM6BG0Q 的实体模式键已经由 `tuxedo_keyboard` 驱动确认为 WMI `0xB0`，驱动会合成
+`Meta+Alt+F6`。原先的用户级 `mechrevo-gaming-hotkey.service` 在启动时调用
+`com.tuxedocomputers.tccd.GetActiveProfileJSON`；本机没有运行 tccd，服务因此直接退出，
+表现为按键无反应、模式灯不变。这不是 EC 未发事件，也不是 `0x782` 未使能。
+
+新增 root 系统服务 `mechrevo-ec-hotkey.service`，执行
+`mechrevo-control daemon --ec-only`：只监听 F6，通过 `/dev/tuxedo_io` 的
+`W_UW_MODE`/`R_UW_MODE` 在办公 `0xA0` → 游戏 `0x00` → Turbo `0x10` 之间循环，
+并逐次回读 EC 模式字节；不调用 tccd、D-Bus、TCC profile 或 PL/fan 策略。root 权限是必要的：
+`/dev/tuxedo_io` 为 `0600 root:root`，输入节点为 `0660 root:input`。
+
+```sh
+# 两个热键处理者只能选一个，避免同一次按键切两档
+systemctl --user disable --now mechrevo-gaming-hotkey.service
+systemctl enable --now mechrevo-ec-hotkey.service
+```
+
+本机以临时 root 脚本验证了 F6 → `0x00`/`0xA0`/`0x10` 的真实 ioctl 写读回环，并恢复
+`0x00`。EC-only 服务本身尚需安装后验收；它只证明模式字节和回读，不证明底盘灯珠实际亮灭、
+持续功耗、风扇 RPM 或 TCC profile 已被应用。
+
 ## r160 历史安装基线（2026-10-18）
 
 `mechrevo-console 0.1.0.r160.g5542b9d-1` 已从固定提交 `5542b9d66eb3bb95b2edd07e4f2fe94afc36ea60` 构建并通过 pacman 安装。CLI、GUI、受限 OEM helper 与授权策略已落盘；21 个包文件零改动，9 个正规载荷的字节、权限及 root 归属逐项一致。release 的 31 份输入与通过 146 项 Rust、95 项 Python 检查的快照相同；release 与早期 debug 候选的二进制摘要分别保留。

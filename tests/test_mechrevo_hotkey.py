@@ -342,5 +342,103 @@ class HotkeyStreamTests(unittest.TestCase):
             control.run_daemon()
 
 
+class EcOnlyModeCycleTests(unittest.TestCase):
+    def setUp(self):
+        self.read = mock.patch.object(control, "read_hardware_mode").start()
+        self.addCleanup(mock.patch.stopall)
+        self.write = mock.patch.object(control, "write_hardware_mode").start()
+
+    def test_cycle_order_matches_the_tcc_profile_order(self):
+        for current, expected_name, expected_value in ((0xa0, "gaming", 0x00),
+                                                       (0x00, "turbo", 0x10),
+                                                       (0x10, "office", 0xa0)):
+            with self.subTest(current=hex(current)):
+                self.read.return_value = current
+                self.write.reset_mock()
+                self.assertEqual(control.cycle_hardware_mode(), expected_name)
+                self.write.assert_called_once_with(expected_value)
+
+    def test_unknown_mode_requests_gaming_without_guessing(self):
+        self.read.return_value = 0x77
+        self.assertEqual(control.cycle_hardware_mode(), "gaming")
+        self.write.assert_called_once_with(0x00)
+
+    def test_read_failure_does_not_write(self):
+        self.read.side_effect = OSError("mode read failed")
+        with self.assertRaisesRegex(OSError, "mode read failed"):
+            control.cycle_hardware_mode()
+        self.write.assert_not_called()
+
+    def test_write_failure_is_propagated(self):
+        self.read.return_value = 0x00
+        self.write.side_effect = RuntimeError("mode write failed")
+        with self.assertRaisesRegex(RuntimeError, "mode write failed"):
+            control.cycle_hardware_mode()
+
+
+class EcOnlyHotkeyStreamTests(unittest.TestCase):
+    def run_pipe(self, payload):
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, reader)
+        os.write(writer, payload)
+        self.addCleanup(os.close, writer)
+        real_select = select.select
+
+        def ready(readers, writers, errors, timeout):
+            result = real_select(readers, writers, errors, 0)
+            if not result[0]:
+                raise AssertionError("The EC-only F6 event was buffered")
+            return result
+
+        def stream(_path, mode, **kwargs):
+            return os.fdopen(os.dup(reader), mode, **kwargs)
+
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(Path, "exists", return_value=True))
+        stack.enter_context(mock.patch.object(control, "open", side_effect=stream, create=True))
+        self.read = stack.enter_context(mock.patch.object(control, "read_hardware_mode", return_value=0x00))
+        self.sync_profiles = stack.enter_context(mock.patch.object(control, "sync_oem_profiles"))
+        self.sync_led = stack.enter_context(mock.patch.object(control, "sync_mode_led_from_profile"))
+        self.get_profile = stack.enter_context(mock.patch.object(control, "get_current_mode_info"))
+        self.touchpad = stack.enter_context(mock.patch.object(control, "toggle_touchpad"))
+        stack.enter_context(mock.patch.object(select, "select", side_effect=ready))
+        stack.enter_context(redirect_stdout(io.StringIO()))
+
+    def test_ec_only_f6_uses_the_ec_path_and_never_calls_tccd(self):
+        class ModeHandled(Exception):
+            pass
+        payload = b"".join(struct.pack("qqHHi", 0, 0, 1, code, value)
+                           for code, value in [(125, 1), (56, 1), (64, 1)])
+        self.run_pipe(payload)
+        with mock.patch.object(control, "cycle_hardware_mode", side_effect=ModeHandled) as cycle:
+            with self.assertRaises(ModeHandled):
+                control.run_daemon(ec_only=True)
+        cycle.assert_called_once_with()
+        self.read.assert_called_once_with()
+        self.sync_profiles.assert_not_called()
+        self.sync_led.assert_not_called()
+        self.get_profile.assert_not_called()
+
+    def test_ec_only_ignores_non_mode_keys(self):
+        class ModeHandled(Exception):
+            pass
+        payload = b"".join(struct.pack("qqHHi", 0, 0, 1, code, value)
+                           for code, value in [(191, 1), (191, 0), (64, 1)])
+        self.run_pipe(payload)
+        with mock.patch.object(control, "cycle_hardware_mode", side_effect=ModeHandled) as cycle:
+            with self.assertRaises(ModeHandled):
+                control.run_daemon(ec_only=True)
+        cycle.assert_called_once_with()
+        self.touchpad.assert_not_called()
+
+    def test_ec_only_startup_requires_the_mode_device(self):
+        self.run_pipe(b"")
+        self.read.side_effect = OSError("control device unavailable")
+        with self.assertRaisesRegex(OSError, "control device unavailable"):
+            control.run_daemon(ec_only=True)
+        self.sync_profiles.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
