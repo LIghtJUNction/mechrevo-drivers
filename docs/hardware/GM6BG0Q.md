@@ -140,6 +140,29 @@ EC 的 65 W 与 80 W profile 在其它 RAPL 状态下没有差别。
    直到用户手动调用 `R_HWCHECK_UW`。现在首次使用会重试识别；参数校验和
    `copy_from_user` 仍在探测之前完成。
 
+### 4.1 2026-11-07 r204 安装与运行验收
+
+- 用本分支提交 `a8bb20f` 经 AUR 配方在本地构建
+  `mechrevo-drivers-dkms-git 4.24.0.r204.ga8bb20f-1` 并安装；DKMS 只有一个
+  `mechrevo-drivers` 版本，`pacman -Qkk` 为 148 个文件 0 变化。本地包不是
+  AUR 发布，AUR 仍从 `main` 构建。
+- 为复现启动竞争，先加载 `tuxedo_keyboard`、`tuxedo_io`，此时
+  `R_UW_MODEL_ID` 返回 `ENODEV`；再 `modprobe uniwill_wmi` 后**未调用**
+  `R_HWCHECK_UW`，`R_UW_MODEL_ID` 直接返回 `16`，TDP 范围为
+  `35/35/100`–`80/80/100`，可用档位为 3。
+- `mechrevo_ec` hwmon 注册成功：CPU/GPU EC 温度 `69/43 °C`，CPU/GPU 风扇
+  `3348/3036 RPM`；同一时刻 `ECRR` 的温度与转速在相同范围。`rmmod` 后节点
+  消失，`modprobe` 后只有一个节点。
+- `W_UW_TDP0 = 35` 后 `0x0783` 读回 `0x23`，满载 package 功耗 35 W；
+  `ECRW(0x0783, 0x00)` 恢复后读回 0，满载 53 W。`34/81` 和 profile `0/4`
+  均返回 `EINVAL`，未写 EC。
+- `W_UW_PERF_PROF` 的 1/3/2 分别写入并回读 `0xA0`/`0x10`/`0x00`。
+- 已加载模块的 srcversion 与磁盘模块一致：`tuxedo_io`
+  `65CB632BCDD17CFA054EB29`，`mechrevo_ec_sensors` `2072E2742665514F4649EFA`。
+  未重启；开机自动加载和重启保持另需验收。
+- 完整机器可读记录见
+  [verification/gm6bg0q-r204.json](../verification/gm6bg0q-r204.json)。
+
 ## 5. 未验证与边界
 
 - PL2/PL4 的实际生效范围、TCC/`0x0786`、AMD SPL/SPPT/FPPT、GPU cTGP /
