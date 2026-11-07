@@ -97,5 +97,73 @@
     "The OEM fan curve tables were not migrated; manual control used the existing universal fan control path.",
     "Suspend/resume, reboot persistence, other BIOS/EC versions and other machines were not tested.",
     "The package was installed from a local branch clone; AUR still builds from main until a release is published."
-  ]
+  ],
+  "boundary_checked_at": "2026-11-07T10:10:00Z",
+  "boundary_checks": {
+    "tdp_rejected": {
+      "pl1_pl2": [0, 34, 81, -1],
+      "pl4": [0, 99, 101],
+      "errno": "EINVAL",
+      "registers_unchanged": true
+    },
+    "tdp_accepted": {
+      "pl1_pl2_min": 35,
+      "pl1_pl2_max": 80,
+      "pl4": 100,
+      "readback_matches": true,
+      "zero_is_readable_but_rejected": true
+    },
+    "pl1_sustained_cap": {
+      "modes": ["0x00", "0x10"],
+      "request_w": 35,
+      "sustained_w": 35,
+      "turbo_boost_window_w": [50, 46],
+      "turbo_boost_window_s": 6,
+      "pl2_35_pl4_100_did_not_remove_boost": true
+    },
+    "max_80w_load_test": "skipped: default 54 W already reaches 99 C and no readable/writable RAPL constraint bounds the experiment",
+    "mode_bits": {
+      "rejected": [0, 4, 5, -1],
+      "accepted": {"1": "0xa0", "3": "0x10", "2": "0x00"},
+      "full_fan_bit6_preserved": {"1": "0xe0", "3": "0x50", "2": "0x40"},
+      "manual_fan_while_full_fan": "EBUSY"
+    },
+    "fan": {
+      "rejected": [201, 255, 256, -1],
+      "rejected_errno": "EINVAL",
+      "duty_registers_unchanged_on_reject": true,
+      "min_clamp_25_49_to": 50,
+      "request_24": {"duty": 1, "rpm": 0, "restored_with": "W_UW_FANAUTO"},
+      "request_200": {"duty": 200, "restored_with": "W_UW_FANAUTO"}
+    },
+    "wmi_removal": {
+      "keyboard_platform_device": "removed",
+      "model_and_profiles_from_cache": [16, 3],
+      "fan_and_tdp_reads": "EIO",
+      "mode_write": "ENODEV",
+      "ec_writes": 0,
+      "hwmon_unaffected": true,
+      "reload": "modprobe uniwill_wmi restored keyboard device, sysfs groups and transport"
+    },
+    "reload": {
+      "tuxedo_io_with_wmi_present": "identify at init; model 16, profiles 3",
+      "sensor_unload_reload": "one hwmon node after reload"
+    },
+    "autoload": {
+      "method": "rmmod mechrevo_ec_sensors; udevadm trigger --action=add /sys/devices/virtual/dmi/id",
+      "result": "module reloaded and hwmon registered"
+    },
+    "fan_table": {
+      "note": "Manual fan control rewrote 0x0f00-0x0f5f; AUTO disabled 0x07c6 bit2. Documented Windows-snapshot bytes were restored; five pad bytes after each FF terminator were not present in the saved material and remain driver-written.",
+      "custom_table_enabled": false
+    },
+    "final_state": {
+      "0x0751": 0,
+      "0x0783": 0,
+      "0x0784": 0,
+      "0x0785": 0,
+      "0x07c6": 0,
+      "fan_mode": "auto"
+    }
+  }
 }
