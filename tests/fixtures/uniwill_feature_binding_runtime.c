@@ -30,6 +30,9 @@ static int ec_status, ec_reads, ec_writes, tdp_calls, mode_calls, fan_calls;
 static int provider_status;
 static u8 ec_value = 64, tdp_index_seen, tdp_value_seen;
 static u8 clear_seen, set_seen;
+static int uniwill_identify_lock;
+static void mutex_lock(int *lock) { assert(!*lock); *lock = 1; }
+static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
 
 static int uniwill_get_active_interface_id(char **name)
 {
@@ -177,6 +180,9 @@ static void no_hardware_or_binding(void)
 static void bind(void)
 {
 	u32 value = 0xdeadbeef;
+	int interfaces_before = interface_calls, features_before = feature_calls;
+	int tables_before = table_calls;
+
 	interface_status = 0;
 	features.model = 42;
 	features.uniwill_has_double_pl4 = true;
@@ -184,7 +190,9 @@ static void bind(void)
 	features.uniwill_profile_v1_three_profs = true;
 	assert(IOCTL(R_HWCHECK_UW, value) == 0 && value == 1);
 	assert(id_check_uniwill == 1 && uw_feats == &features);
-	assert(interface_calls == 1 && feature_calls == 1 && table_calls == 1);
+	assert(interface_calls == interfaces_before + 1 &&
+	       feature_calls == features_before + 1 &&
+	       table_calls == tables_before + 1);
 	assert(tdp_min_defs == minimums && tdp_max_defs == maximums);
 }
 
@@ -198,7 +206,9 @@ static void unbound_metadata(void)
 	assert(IOCTL(W_UW_PERF_PROF, value) == -ENODEV);
 	assert(uw_set_performance_profile_v1(PROFILE_POWERSAVE) == -ENODEV);
 	assert(output_copies == 0 && input_copies == 1);
-	assert(interface_calls == 0);
+	/* Model, profile and valid profile-write queries each retry the failed
+	 * startup identification; validation still happens before the probe. */
+	assert(interface_calls == 3);
 	no_hardware_or_binding();
 }
 
@@ -208,7 +218,7 @@ static void unbound_fans(void)
 	for (size_t i = 0; i < COUNT(fan_read_commands); ++i)
 		assert(IOCTL(fan_read_commands[i], value) == -ENODEV);
 	assert(value == 0xdeadbeef && input_copies == 0 && output_copies == 0);
-	assert(interface_calls == 0);
+	assert(interface_calls == 2);
 	no_hardware_or_binding();
 }
 
@@ -228,7 +238,9 @@ static void unbound_tdp(void)
 	/* Limit metadata helpers do not dereference features. */
 	assert(uw_get_tdp_min(0) == 5 && uw_get_tdp_max(2) == 200);
 	assert(value == 40 && input_copies == 3 && output_copies == 0);
-	assert(interface_calls == 0);
+	/* Three reads and three writes retry identification; the provider is
+	 * absent, so no feature read or EC access follows. */
+	assert(interface_calls == 6);
 	no_hardware_or_binding();
 }
 
@@ -331,6 +343,7 @@ static void identify_absent(void)
 	assert(uw_feats == NULL && id_check_uniwill == 0 && interface_calls == 1);
 	assert(IOCTL(R_UW_MODEL_ID, value) == -ENODEV);
 	assert(value == 0 && output_copies == 1);
+	assert(interface_calls == 2);
 	no_hardware_or_binding();
 }
 
@@ -344,6 +357,7 @@ static void identify_null_provider(void)
 	assert(interface_calls == 1 && feature_calls == 1 && table_calls == 0);
 	assert(tdp_min_defs == NULL && tdp_max_defs == NULL);
 	assert(IOCTL(R_UW_PROFS_AVAILABLE, value) == -ENODEV);
+	assert(interface_calls == 2 && feature_calls == 2);
 	assert(ec_reads == 0 && ec_writes == 0 && tdp_calls == 0 && mode_calls == 0);
 }
 
@@ -365,7 +379,8 @@ static void late_binding(void)
 	value = PROFILE_OVERBOOST;
 	assert(IOCTL(W_UW_PERF_PROF, value) == 0);
 	assert(mode_calls == 1 && clear_seen == 0xb0 && set_seen == 0x10);
-	assert(interface_calls == 1 && feature_calls == 1 && table_calls == 1);
+	/* The first model query retried identification before R_HWCHECK_UW. */
+	assert(interface_calls == 2 && feature_calls == 1 && table_calls == 1);
 	assert(ec_reads == 3 && ec_writes == 0);
 }
 
