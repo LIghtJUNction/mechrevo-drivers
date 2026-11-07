@@ -165,5 +165,19 @@
       "0x07c6": 0,
       "fan_mode": "auto"
     }
+  },
+  "keyboard_backlight": {
+    "sysfs": "/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight",
+    "brightness_ec_map": {"0": "0x08", "1": "0x28", "2": "0x48", "3": "0x68", "4": "0x88"},
+    "color_ec_map": {
+      "255 0 0": "0x32/0x00/0x00",
+      "0 255 0": "0x00/0x32/0x00",
+      "0 0 255": "0x00/0x00/0x32",
+      "255 255 255": "0x32/0x32/0x32"
+    },
+    "color_apply_bit": "0x0767 bit5 consumed by EC and returned to 0; bit4 untouched",
+    "asynchronous": true,
+    "restored_state": {"0x078c": "0x08", "0x0769_0x076b": "0x32/0x32/0x32"},
+    "physical_lighting_confirmed_by_script": false
   }
 }

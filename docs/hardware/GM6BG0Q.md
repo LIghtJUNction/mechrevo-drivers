@@ -121,7 +121,26 @@ EC 的 65 W 与 80 W profile 在其它 RAPL 状态下没有差别。
 改变 boost 窗口。OEM 的 AMD profile 还会设置 SPL/SPPT/FPPT，本分支不写
 这些字段。
 
-### 3.5 已加载驱动的其它功能
+### 3.5 键盘背光
+
+驱动注册了单区 RGB 接口 `/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight`。
+本机实测：
+
+| sysfs 写入 | EC 回读 |
+| --- | --- |
+| `brightness` 0/1/2/3/4 | `0x078C` = `0x08/0x28/0x48/0x68/0x88`（bits 5–7 = 0–4） |
+| `multi_intensity` `255 0 0` | `0x0769/6A/6B` = `0x32/0x00/0x00` |
+| `multi_intensity` `0 255 0` | `0x00/0x32/0x00` |
+| `multi_intensity` `0 0 255` | `0x00/0x00/0x32` |
+| `multi_intensity` `255 255 255` | `0x32/0x32/0x32` |
+
+颜色写入后 `0x0767` bit5（apply color）由 EC 消费并回到 0；`0x0767` bit4
+（USB 供电）没有被改动。写入是异步的：sysfs 会立即回读请求值，EC 状态需要
+短暂等待。恢复原始状态（`brightness=0`、白色）后 `0x078C=0x08`、
+`0x0769-0x076B=0x32`。本记录只证明 EC/sysfs 一致，实体亮度、颜色和键盘
+是否支持逐键 RGB 仍需机主目视确认。
+
+### 3.6 已加载驱动的其它功能
 
 加载本分支后以下 sysfs 属性存在并可读：`fn_lock`、`charging_profile`
 （`charging_profiles_available` = `high_capacity balanced stationary`）、
