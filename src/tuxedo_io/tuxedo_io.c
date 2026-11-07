@@ -170,8 +170,10 @@ static int tdp_max_xxaf5xxx[] = { 0xd2, 0xd2, 0x1a4 };
 
 /* OEM control-center values observed for this exact model and BIOS: the
  * Office/Gaming/Turbo profiles use PL1/PL2/PL4 35/35/100, 65/65/100 and
- * 80/80/100, and the registry SMAPCTable stores 80/80/100. Values outside
- * those observed points are not qualified, so the bounds are that set.
+ * 80/80/100, and the registry SMAPCTable stores 80/80/100. The bounds follow
+ * those official profile points; the 80 W sustained effect was not
+ * independently load-tested here, and the EC mode byte remains the path that
+ * applies the OEM Gaming/Turbo profiles.
  */
 static int tdp_min_gm6bg0q[] = { 0x23, 0x23, 0x64 };
 static int tdp_max_gm6bg0q[] = { 0x50, 0x50, 0x64 };
@@ -179,15 +181,15 @@ static int tdp_max_gm6bg0q[] = { 0x50, 0x50, 0x64 };
 static int *tdp_min_defs = NULL;
 static int *tdp_max_defs = NULL;
 
-static void uw_id_tdp(void)
+static void uw_id_tdp(u8 model)
 {
-	if (uw_feats->model == UW_MODEL_PH4TUX) {
+	if (model == UW_MODEL_PH4TUX) {
 		tdp_min_defs = tdp_min_ph4tux;
 		tdp_max_defs = tdp_max_ph4tux;
-	} else if (uw_feats->model == UW_MODEL_PH4TRX) {
+	} else if (model == UW_MODEL_PH4TRX) {
 		tdp_min_defs = tdp_min_ph4trx;
 		tdp_max_defs = tdp_max_ph4trx;
-	} else if (uw_feats->model == UW_MODEL_PH4TQF) {
+	} else if (model == UW_MODEL_PH4TQF) {
 		tdp_min_defs = tdp_min_ph4tqx;
 		tdp_max_defs = tdp_max_ph4tqx;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
@@ -308,11 +310,14 @@ static u32 uw_identify_locked(void)
 	result = uniwill_get_active_interface_id(NULL) == 0 ? 1 : 0;
 	if (result) {
 		features = uniwill_get_device_features();
-		if (!features) {
+		if (!features || !uniwill_device_features_ready()) {
 			result = 0;
 		} else {
+			/* Initialize the TDP table before publishing uw_feats so a
+			 * concurrent ready check cannot observe the model without
+			 * its bounds. */
+			uw_id_tdp(features->model);
 			uw_feats = features;
-			uw_id_tdp();
 		}
 	}
 	return result;
@@ -331,13 +336,12 @@ static u32 uniwill_identify(void)
 /* tuxedo_io may initialize before the Uniwill interface provider registers
  * (reproduced on Jiaolong16K GM6BG0Q: R_UW_MODEL_ID failed with ENODEV until
  * R_HWCHECK_UW). Retry on first use instead of caching a load-order failure.
- * The second check under the lock keeps concurrent first users down to one
- * identification; with no Uniwill interface present this stays cheap.
+ * The lock serializes both the retry and reads of the published pointer, so a
+ * caller cannot observe uw_feats before uw_id_tdp() finished; concurrent
+ * first users still identify only once.
  */
 static void uw_ensure_identified(void)
 {
-	if (uw_feats)
-		return;
 	mutex_lock(&uniwill_identify_lock);
 	if (!uw_feats)
 		uw_identify_locked();

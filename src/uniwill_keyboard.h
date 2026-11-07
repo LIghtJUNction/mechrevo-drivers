@@ -2000,6 +2000,12 @@ struct uniwill_device_features_t *uniwill_get_device_features(void)
 }
 EXPORT_SYMBOL(uniwill_get_device_features);
 
+bool uniwill_device_features_ready(void)
+{
+	return uw_feats_loaded;
+}
+EXPORT_SYMBOL(uniwill_device_features_ready);
+
 // Fn lock
 
 static int uniwill_wmi_fn_lock_get(int *on)
