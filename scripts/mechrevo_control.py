@@ -677,7 +677,7 @@ EC_MODE_TDP = {
     "boost": (95, 95, 215),
 }
 W_UW_TDP = (0x4008F015, 0x4008F016, 0x4008F017)
-R_UW_TDP = (0x8008F018, 0x8008F019, 0x8008F01A)
+R_UW_TDP = (0x8008EF18, 0x8008EF19, 0x8008EF1A)
 
 
 def _read_tdp(fd: int) -> tuple[int, int, int]:
