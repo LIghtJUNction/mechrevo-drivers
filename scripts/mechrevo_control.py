@@ -663,6 +663,11 @@ def read_uefi_power_mode() -> int:
     return value
 
 
+EC_MODE_NAMES = {
+    0x00: "gaming",
+    0xA0: "office",
+    0x10: "turbo",
+}
 EC_MODE_TDP = {
     # Windows Control Center 5.17.49.19 profile values: PL1, PL2, PL4.
     "office": (35, 35, 215),
@@ -675,8 +680,26 @@ W_UW_TDP = (0x4008F015, 0x4008F016, 0x4008F017)
 R_UW_TDP = (0x8008F018, 0x8008F019, 0x8008F01A)
 
 
+def _read_tdp(fd: int) -> tuple[int, int, int]:
+    values = []
+    for command in R_UW_TDP:
+        readback = bytearray(8)
+        fcntl.ioctl(fd, command, readback, True)
+        values.append(struct.unpack("i", readback[:4])[0])
+    return tuple(values)
+
+
+def _write_tdp(fd: int, values: tuple[int, int, int]) -> None:
+    for command, value in zip(W_UW_TDP, values):
+        fcntl.ioctl(fd, command, struct.pack("i", value))
+
+
 def apply_mode_tdp(mode_key: str) -> tuple[int, int, int]:
-    """Apply the package PL1/PL2/PL4 profile through tuxedo_io and verify it."""
+    """Apply the package PL1/PL2/PL4 profile through tuxedo_io and verify it.
+
+    Read the previous limits first and restore all three if any write or
+    readback fails, so a partial failure cannot leave a mixed profile.
+    """
     if mode_key not in EC_MODE_TDP:
         raise ValueError(f"Unknown TDP mode key: {mode_key}")
     if not EC_CONTROL_DEVICE.exists():
@@ -684,17 +707,27 @@ def apply_mode_tdp(mode_key: str) -> tuple[int, int, int]:
     values = EC_MODE_TDP[mode_key]
     fd = os.open(EC_CONTROL_DEVICE, os.O_RDWR)
     try:
-        for command, value in zip(W_UW_TDP, values):
-            fcntl.ioctl(fd, command, struct.pack("i", value))
-        actual = []
-        for command in R_UW_TDP:
-            readback = bytearray(8)
-            fcntl.ioctl(fd, command, readback, True)
-            actual.append(struct.unpack("i", readback[:4])[0])
+        previous = _read_tdp(fd)
+        try:
+            _write_tdp(fd, values)
+            actual = _read_tdp(fd)
+            if actual != values:
+                raise RuntimeError(f"TDP readback mismatch: requested {values}, got {actual}")
+        except Exception:
+            try:
+                _write_tdp(fd, previous)
+                restored = _read_tdp(fd)
+                if restored != previous:
+                    raise RuntimeError(
+                        f"TDP rollback readback mismatch: requested {previous}, got {restored}"
+                    )
+            except Exception as rollback:
+                raise RuntimeError(
+                    f"TDP profile failed and rollback failed: {rollback}"
+                ) from rollback
+            raise
     finally:
         os.close(fd)
-    if tuple(actual) != values:
-        raise RuntimeError(f"TDP readback mismatch: requested {values}, got {tuple(actual)}")
     return values
 
 
@@ -750,6 +783,14 @@ def write_uefi_power_mode(mode_key: str) -> int:
                 "UniWill UEFI PowerMode readback mismatch: "
                 f"requested {target}, got {actual[UEFI_POWER_MODE_FILE_OFFSET]}"
             )
+        for offset, (before, after) in enumerate(zip(raw, actual)):
+            if offset == UEFI_POWER_MODE_FILE_OFFSET:
+                continue
+            if before != after:
+                raise RuntimeError(
+                    f"UniWill UEFI variable changed unrelated byte 0x{offset:02x}: "
+                    f"0x{before:02x} -> 0x{after:02x}"
+                )
     finally:
         if immutable:
             _set_efivar_immutable(UEFI_POWER_MODE_EFIVAR, True)
@@ -891,6 +932,14 @@ def run_daemon(ec_only: bool = False) -> None:
             print(f"[!] UEFI PowerMode 读取失败: {exc}", file=sys.stderr)
         else:
             print(f"[*] 当前 UEFI PowerMode: {uefi_mode}")
+            mode_name = EC_MODE_NAMES.get(initial_mode)
+            expected_uefi = UEFI_POWER_MODE_VALUES.get(mode_name)
+            if expected_uefi is not None and uefi_mode != expected_uefi:
+                print(
+                    f"[!] 启动状态不一致: EC {mode_name} 期望 UEFI {expected_uefi}，"
+                    f"实际 {uefi_mode}；按一次模式键会重新同步",
+                    file=sys.stderr,
+                )
         last_profile_id = None
     else:
         print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
@@ -930,14 +979,28 @@ def run_daemon(ec_only: bool = False) -> None:
                     if now - last_mode_trigger >= 0.35:  # 350ms debounce
                         last_mode_trigger = now
                         if ec_only:
+                            previous_mode = read_hardware_mode()
                             mode = cycle_hardware_mode()
                             print(f"[*] 实体模式键 -> EC 模式 {mode}")
                             try:
                                 tdp = apply_mode_tdp(mode)
                             except Exception as exc:
                                 print(f"[!] TDP profile apply failed: {exc}", file=sys.stderr)
-                            else:
-                                print(f"[*] PL1/PL2/PL4 -> {tdp[0]}/{tdp[1]}/{tdp[2]} W")
+                                try:
+                                    restored = write_hardware_mode(previous_mode)
+                                except Exception as rollback:
+                                    print(
+                                        f"[!] EC 模式回滚失败: {rollback}",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        f"[!] 已回滚 EC 模式到 0x{restored:02x}；"
+                                        "本次不写 UEFI",
+                                        file=sys.stderr,
+                                    )
+                                continue
+                            print(f"[*] PL1/PL2/PL4 -> {tdp[0]}/{tdp[1]}/{tdp[2]} W")
                             try:
                                 uefi_mode = write_uefi_power_mode(mode)
                             except Exception as exc:
@@ -1064,7 +1127,7 @@ def set_touchpad(enabled: bool) -> None:
     print(f"[✓] 机械革命触控板状态: {state_str}")
 
 
-def restore_touchpad_state(timeout: float = 10.0) -> bool | None:
+def restore_touchpad_state(timeout: float = 30.0) -> bool | None:
     """Reapply the saved hardware touchpad state after resume.
 
     Returns None when no state was saved. The i2c device may appear a moment

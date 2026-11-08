@@ -420,7 +420,7 @@ class EcOnlyHotkeyStreamTests(unittest.TestCase):
             with self.assertRaises(ModeHandled):
                 control.run_daemon(ec_only=True)
         cycle.assert_called_once_with()
-        self.read.assert_called_once_with()
+        self.assertEqual(self.read.call_count, 2)
         self.sync_profiles.assert_not_called()
         self.sync_led.assert_not_called()
         self.get_profile.assert_not_called()
@@ -483,6 +483,20 @@ class UefiPowerModeTests(unittest.TestCase):
             raw[0x56] = value
             self.path.write_bytes(raw)
             self.assertEqual(control.read_uefi_power_mode(), value)
+
+    def test_unrelated_payload_change_is_rejected(self):
+        real_write = control.os.write
+
+        def mutate_after_write(fd, data):
+            written = real_write(fd, data)
+            raw = bytearray(self.path.read_bytes())
+            raw[0x10] ^= 0x01
+            self.path.write_bytes(raw)
+            return written
+
+        with mock.patch.object(control.os, "write", side_effect=mutate_after_write), \
+                self.assertRaisesRegex(RuntimeError, "unrelated byte"):
+            control.write_uefi_power_mode("turbo")
 
     def test_writes_only_the_power_mode_byte(self):
         raw = bytearray(self.path.read_bytes())
@@ -581,6 +595,29 @@ class ModeTdpProfileTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "TDP readback mismatch"):
             control.apply_mode_tdp("office")
 
+    def test_write_failure_rolls_back_previous_limits(self):
+        self.values = [35, 35, 215]
+        failed = False
+
+        def fail_second_write(fd, command, argument, *_):
+            nonlocal failed
+            self.assertEqual(fd, 7)
+            if command in control.W_UW_TDP:
+                index = control.W_UW_TDP.index(command)
+                if index == 1 and not failed:
+                    failed = True
+                    raise OSError("second PL write failed")
+                self.values[index] = struct.unpack("i", argument)[0]
+            else:
+                index = control.R_UW_TDP.index(command)
+                argument[:4] = struct.pack("i", self.values[index])
+            return 0
+
+        with mock.patch.object(control.fcntl, "ioctl", side_effect=fail_second_write), \
+                self.assertRaisesRegex(OSError, "second PL write failed"):
+            control.apply_mode_tdp("turbo")
+        self.assertEqual(self.values, [35, 35, 215])
+
     def test_unknown_mode_is_rejected_before_open(self):
         with mock.patch.object(control.os, "open") as opened, \
                 self.assertRaisesRegex(ValueError, "Unknown TDP mode"):
@@ -635,7 +672,7 @@ class TouchpadRestoreTests(unittest.TestCase):
         device = mock.Mock()
         device.exists.return_value = False
         with mock.patch.object(control, "TOUCHPAD_DEVICE_PATH", device), \
-                mock.patch.object(control.time, "monotonic", side_effect=[0.0, 11.0]), \
+                mock.patch.object(control.time, "monotonic", side_effect=[0.0, 31.0]), \
                 mock.patch.object(control.time, "sleep"), \
                 self.assertRaisesRegex(RuntimeError, "did not reappear"):
             control.restore_touchpad_state()
