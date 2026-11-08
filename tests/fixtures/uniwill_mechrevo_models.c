@@ -198,9 +198,9 @@ static void settings_identity(void)
         assert(uw_get_performance_profile_count() == (board == 1 ? 3 : 0));
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
         if (board == 1) {
-            assert(uw_get_tdp_min(0) == 35 && uw_get_tdp_max(0) == 80);
-            assert(uw_get_tdp_min(1) == 35 && uw_get_tdp_max(1) == 80);
-            assert(uw_get_tdp_min(2) == 100 && uw_get_tdp_max(2) == 100);
+            assert(uw_get_tdp_min(0) == 35 && uw_get_tdp_max(0) == 95);
+            assert(uw_get_tdp_min(1) == 35 && uw_get_tdp_max(1) == 95);
+            assert(uw_get_tdp_min(2) == 100 && uw_get_tdp_max(2) == 215);
         } else
 #endif
         {
@@ -284,7 +284,7 @@ static void gm6bg0q(void)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
     for (int index = 0; index < 3; index++) {
         int minimum = index < 2 ? 35 : 100;
-        int maximum = index < 2 ? 80 : 100;
+        int maximum = index < 2 ? 95 : 215;
         assert(uw_get_tdp_min(index) == minimum);
         assert(uw_get_tdp_max(index) == maximum);
         for (int value = 0; value <= 200; value++) {

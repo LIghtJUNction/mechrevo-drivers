@@ -168,15 +168,15 @@ static int tdp_max_x6xx45xu[] = { 0x64, 0x64, 0x69 };
 static int tdp_min_xxaf5xxx[] = { 0x0a, 0x0a, 0x0a };
 static int tdp_max_xxaf5xxx[] = { 0xd2, 0xd2, 0x1a4 };
 
-/* OEM control-center values observed for this exact model and BIOS: the
- * Office/Gaming/Turbo profiles use PL1/PL2/PL4 35/35/100, 65/65/100 and
- * 80/80/100, and the registry SMAPCTable stores 80/80/100. The bounds follow
- * those official profile points; the 80 W sustained effect was not
- * independently load-tested here, and the EC mode byte remains the path that
- * applies the OEM Gaming/Turbo profiles.
+/* Windows Control Center 5.17.49.19 profile values for this exact model:
+ * Office/Gaming/Turbo use PL1/PL2/PL4 35/35/215, 80/80/215 and 95/95/215.
+ * The lower bound remains 35 W for PL1/PL2 and 100 W for PL4 so the EC
+ * defaults and an explicit reset remain representable. These are package
+ * profile values, not a completed high-power thermal qualification; PL4 was
+ * not load-tested at 215 W here.
  */
 static int tdp_min_gm6bg0q[] = { 0x23, 0x23, 0x64 };
-static int tdp_max_gm6bg0q[] = { 0x50, 0x50, 0x64 };
+static int tdp_max_gm6bg0q[] = { 0x5f, 0x5f, 0xd7 };
 
 static int *tdp_min_defs = NULL;
 static int *tdp_max_defs = NULL;

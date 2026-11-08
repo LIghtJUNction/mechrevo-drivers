@@ -51,10 +51,11 @@ cd /tmp && acpixtract -a gm6bg0q.tables && iasl -da DSDT.dat SSDT*.dat
   `ABBC0F6D/E/F` 管理与 `ABBC0F6A/B/C` 旧管理 GUID，以及
   `ABBC0F70/71/72` 事件 GUID；内核 `uniwill_wmi` 使用 `BC` 管理方法。
 - 本机 Windows 控制台静态材料（用户提供的逆向报告）给出相同的 EC 符号、
-  `0x0751` 模式字节、`0x0783-0x0785` PL 地址和 `SMAPCTable`：
-  `PL1=80`、`PL2=80`、`PL4=100`、`TccOffset=100`；三份 profile JSON 分别为
-  `35/35/100`、`65/65/100`、`80/80/100`。这些是厂商软件配置点，
-  不是厂商安全规范。
+  `0x0751` 模式字节和 `0x0783-0x0785` PL 地址。本机只读 EC 默认值为
+  Gaming `65/65/100`、Office `35/35/100`、Battery Saver `80/80/100`、
+  TCC `99`。Windows Control Center 5.17.49.19 的 `UserPofiles` 则是
+  Gaming `80/80/215`、Office `35/35/215`、Turbo `95/95/215`、TccOffset `5`；
+  这些是软件 profile 值，不是 EC 默认值，也不是厂商安全规范。
 
 ## 3. 实机测量
 
@@ -152,9 +153,10 @@ EC 的 65 W 与 80 W profile 在其它 RAPL 状态下没有差别。
 1. `mechrevo_ec_sensors`：新增 GM6BG0Q 精确 DMI 配置，GPU 转速低字节使用
    `0x046D`（GM6PX0X 保持 `0x046B`）。温度仍为 `0x043E/0x044F`，
    探测时通过 `ECRR` 核对项目号 `0x10` 与 `0x078E` bit6，不写 EC。
-2. `tuxedo_io` 的 GM6BG0Q TDP 表：`PL1/PL2` 35–80 W，`PL4` 固定 100 W。
-   上下限取 OEM 控制台在本机实际使用的三个 profile 点，不扩展到未出现的值；
-   同一条目仍要求完整产品名和 BIOS `N.1.19MRO15`。
+2. `tuxedo_io` 的 GM6BG0Q TDP 表：`PL1/PL2` 35–95 W，`PL4` 100–215 W。
+   上限按 Windows Control Center 5.17.49.19 的 Gaming `80/80/215` 和
+   Turbo `95/95/215` profile 设置；同一条目仍要求完整产品名和 BIOS
+   `N.1.19MRO15`。高功率数值没有在本机做满载热验证。
 3. 三档性能模式：把 GM6BG0Q 加入 `uniwill_profile_v1_three_profs`，
    只写 `0x0751` 的 `0xA0/0x00/0x10`，并在计算 legacy 标记之后加入，
    避免复制风扇曲线。实机 35 W 与 54 W 的差异见 3.3。
@@ -217,6 +219,23 @@ EC 的 65 W 与 80 W profile 在其它 RAPL 状态下没有差别。
 终止符），终止符之后未记录的 5 字节仍是驱动写入值。该区域当前未启用，
 任何再次启用手动风扇的路径都会重新写入整张表。
 
+### 4.3 2026-11-08 Windows 5.17.49.19 profile bounds
+
+Windows 安装包 `UserPofiles/Mode1..3_Profile1.json` 的模式值：
+
+| 项目 | Office (Mode2) | Gaming (Mode1) | Turbo (Mode3) |
+|---|---:|---:|---:|
+| PL1 / PL2 / PL4 | 35 / 35 / 215 | 80 / 80 / 215 | 95 / 95 / 215 |
+| TccOffset | 5 | 5 | 5 |
+| cTGP | switch 0 / 150 W | switch 1 / 150 W | switch 1 / 175 W |
+| 风扇最大 duty | 55% | 90% | 100% |
+
+驱动边界现在为 `min={35,35,100}`、`max={95,95,215}`，只通过 fixture/单元
+测试验证边界和写入路径；没有把 95 W 或 PL4=215 W 写入本机 EC 做满载验收。
+4.2 的 `80/80/100` 边界表和测量是 **2026-11-07 r204 历史结果**，不是当前
+高功率边界的热验证。EC 默认值仍为 Gaming `65/65/100`、Office `35/35/100`、
+Battery Saver `80/80/100`，与安装包 profile 分开记录。
+
 ## 5. 未验证与边界
 
 - PL2/PL4 的实际生效范围、TCC/`0x0786`、AMD SPL/SPPT/FPPT、GPU cTGP /
@@ -226,7 +245,9 @@ EC 的 65 W 与 80 W profile 在其它 RAPL 状态下没有差别。
 - 睡眠/恢复、重启后的 PL 保持、EC 版本差异、其他 BIOS、同型号不同配置
   未验收。EC 版本不是本分支的识别条件。
 - OEM profile 数值来自本机 Windows 控制台静态材料；它们不是厂商公开规范。
-  `PL1/PL2` 35/65/80 W 与 `PL4=100 W` 是"已观察/已写入成功"的边界，
-  **不是**建议运行值，也不保证散热或电源适配器余量。
+  历史 r204 的 `PL1/PL2` 35/65/80 W、`PL4=100 W` 是当时已观察/写入成功的边界；
+  当前代码按 5.17.49.19 profile 允许 `PL1/PL2` 35–95 W、`PL4` 100–215 W，
+  但 95 W / 215 W 没有做满载热验证。它们**不是**建议运行值，也不保证散热或
+  电源适配器余量。
 - 本机 RAPL 由 `power-profiles-daemon` 管理；驱动本身不修改 RAPL、
   thermald 或平台档位。
