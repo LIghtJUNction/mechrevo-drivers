@@ -2,6 +2,10 @@
 
 Windows / Linux 共用 Rust 核心，界面使用 eframe / egui 0.37；GUI 需要 Rust 1.95 或更新版本。
 
+![原生控制中心深色界面，明确标注的模拟数据](../../screenshots/overview-dark.png)
+
+[浅色界面](../../screenshots/overview-light.png) · [截图与验收记录](../../VISUAL-REVIEW.md)
+
 ```sh
 cargo run --manifest-path console/Cargo.toml -p mechrevo-console-gui --features gui
 ```
