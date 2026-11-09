@@ -52,7 +52,7 @@ impl DesktopApp {
             } else {
                 colors.label
             };
-            let glyph_id = ui.id().with(("navigation-icon", section));
+            let glyph_id = egui::IdSalt::new(("navigation-icon", section));
             let mut button = egui::Button::new((
                 egui::Atom::custom(glyph_id, Vec2::splat(18.0)),
                 RichText::new(label).size(14.0).color(color),
@@ -242,10 +242,14 @@ impl DesktopApp {
                 {
                     let _ = self.controller.preview_oem();
                 }
-                if ui
-                    .add_enabled(can_apply, primary_button(ui, "应用性能档位"))
-                    .clicked()
-                {
+                let apply_button = if can_apply {
+                    primary_button(ui, "应用性能档位")
+                } else {
+                    egui::Button::new(RichText::new("应用性能档位").color(colors.secondary))
+                        .fill(colors.inset)
+                        .stroke(Stroke::NONE)
+                };
+                if ui.add_enabled(can_apply, apply_button).clicked() {
                     if let Err(error) = self.controller.apply_oem_preview() {
                         self.controller.error = Some(mechrevo_console_core::ControlError::new(
                             "oem_preview_invalidated",
@@ -417,7 +421,7 @@ impl DesktopApp {
                         colors.text,
                         colors.secondary,
                     );
-                    let arrow_id = ui.id().with(("control-arrow", &control.id));
+                    let arrow_id = egui::IdSalt::new(("control-arrow", &control.id));
                     let output = ui
                         .add_enabled_ui(!self.controller.write_in_progress(), |ui| {
                             egui::Button::new((

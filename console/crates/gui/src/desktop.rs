@@ -298,6 +298,8 @@ impl DesktopApp {
         self.side_navigation = root.available_width() >= 1060.0 && root.available_height() >= 440.0;
         let outer = if root.available_width() >= 900.0 {
             24.0
+        } else if root.available_width() < 480.0 {
+            12.0
         } else {
             16.0
         };
@@ -376,13 +378,15 @@ impl DesktopApp {
         // The outer centering row has zero spacing; content widgets must not
         // inherit that structural setting.
         ui.spacing_mut().item_spacing.x = 10.0;
+        let compact_header = ui.available_width() < 480.0;
         self.header(ui);
-        ui.add_space(18.0);
+        ui.add_space(if compact_header { 10.0 } else { 18.0 });
         let mut bottom_marker = Rect::NOTHING;
         let mut heading_rect = Rect::NOTHING;
         let mut thermal_panel_rect = Rect::NOTHING;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt(("console-content", self.section))
+            .min_scrolled_height(0.0)
             .auto_shrink([false, false]);
         if self.bottom_requested {
             scroll = scroll.vertical_scroll_offset(self.last_metrics.content_size.y.max(0.0));
@@ -390,6 +394,10 @@ impl DesktopApp {
         self.bottom_requested = false;
         let output = scroll.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            if compact_header {
+                ui.horizontal_wrapped(|ui| self.header_actions(ui));
+                ui.add_space(6.0);
+            }
             if self.display_settings_open {
                 self.display_settings(ui);
             }
@@ -423,7 +431,6 @@ impl DesktopApp {
                         .color(secondary(ui)),
                 )
                 .rect;
-            ui.add_space(6.0);
         });
         RenderMetrics {
             content_size: output.content_size,
@@ -436,6 +443,20 @@ impl DesktopApp {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
+        // At the minimum window size, only navigation stays fixed. Moving the
+        // secondary actions into the scroll area leaves the actual page usable
+        // even with enlarged text; all actions remain keyboard accessible.
+        if ui.available_width() < 480.0 {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.spacing_mut().interact_size.y = 32.0;
+                ui.spacing_mut().button_padding.y = 6.0;
+                self.navigation(ui);
+            });
+            ui.add_space(2.0);
+            ui.separator();
+            return;
+        }
         let wide = ui.available_width() >= 760.0;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -853,18 +874,12 @@ impl DesktopApp {
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("趋势暂不可用")
-                                .size(14.0)
-                                .strong()
-                                .color(label_color(ui)),
-                        );
-                        ui.label(
                             RichText::new("正在积累趋势")
-                                .size(13.0)
+                                .size(15.0)
                                 .color(secondary(ui)),
                         );
                         ui.label(
-                            RichText::new(format!("至少需要 3 次硬件采样 · 当前已采集 {count} 次"))
+                            RichText::new(format!("已采集 {count} 次，3 次后显示曲线"))
                                 .size(13.0)
                                 .color(secondary(ui)),
                         );
@@ -932,11 +947,12 @@ impl DesktopApp {
                 }
             }
         }
+        if count < 3 {
+            return;
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(
-                RichText::new(if count < 3 {
-                    "采集至少 3 次后显示趋势".into()
-                } else if let Some((first, last)) = range {
+                RichText::new(if let Some((first, last)) = range {
                     let seconds = last.duration_since(first).as_secs();
                     if seconds >= 60 {
                         format!("最近 {} 分 {:02} 秒", seconds / 60, seconds % 60)
@@ -1804,10 +1820,14 @@ fn snapshot_is_fixture(snapshot: Option<&mechrevo_console_core::Snapshot>) -> bo
     let Some(snapshot) = snapshot else {
         return false;
     };
-    snapshot
-        .telemetry
-        .iter()
-        .any(|reading| reading.source.backend.to_lowercase().contains("fixture"))
+    snapshot.platform.to_ascii_lowercase().contains("fixture")
+        || snapshot.telemetry.iter().any(|reading| {
+            reading
+                .source
+                .backend
+                .to_ascii_lowercase()
+                .contains("fixture")
+        })
 }
 
 /// One focusable click target retains egui's pointer, Space/Enter and
