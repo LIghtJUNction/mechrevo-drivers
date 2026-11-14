@@ -706,28 +706,28 @@ pub(super) fn controls(root: &Path) -> Vec<OemControl> {
                 .or_insert_with(|| driver_binding(&root, &spec))
                 .clone();
             match inspect_with_binding(&root, &spec, binding) {
-            Ok(inspected) => inspected.control,
-            Err(error) => OemControl {
-                id: spec.id.clone(),
-                kind: spec.kind,
-                label: spec.label.into(),
-                current: None,
-                domain: spec.fallback_domain(),
-                status: CapabilityStatus::Unavailable,
-                writable: false,
-                source: EvidenceSource {
-                    backend: spec.provider.backend().into(),
-                    path: root
-                        .join(&spec.directory)
-                        .join(spec.attribute)
-                        .display()
-                        .to_string(),
-                    device_id: Some(root.join(&spec.owner).display().to_string()),
+                Ok(inspected) => inspected.control,
+                Err(error) => OemControl {
+                    id: spec.id.clone(),
+                    kind: spec.kind,
+                    label: spec.label.into(),
+                    current: None,
+                    domain: spec.fallback_domain(),
+                    status: CapabilityStatus::Unavailable,
+                    writable: false,
+                    source: EvidenceSource {
+                        backend: spec.provider.backend().into(),
+                        path: root
+                            .join(&spec.directory)
+                            .join(spec.attribute)
+                            .display()
+                            .to_string(),
+                        device_id: Some(root.join(&spec.owner).display().to_string()),
+                    },
+                    binding: String::new(),
+                    readback_scope: spec.scope().into(),
+                    reason: Some(error.to_string()),
                 },
-                binding: String::new(),
-                readback_scope: spec.scope().into(),
-                reason: Some(error.to_string()),
-            },
             }
         })
         .collect()

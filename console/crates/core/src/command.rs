@@ -82,6 +82,51 @@ fn failure(code: &str, message: String, stdout: &[u8], stderr: &[u8]) -> crate::
     error
 }
 
+fn spawn_piped_command(
+    program: &str,
+    args: &[&str],
+    isolated_group: bool,
+) -> Result<Child, crate::ControlError> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if isolated_group {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command.spawn().map_err(|error| {
+        crate::ControlError::new(
+            "command_unavailable",
+            format!("Cannot start {program}: {error}"),
+        )
+    })
+}
+
+/// Append `bytes` up to `limit` across `stdout + stderr`, returning `true` if truncated.
+fn append_bounded_output(
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+    is_stdout: bool,
+    bytes: &[u8],
+    limit: usize,
+) -> bool {
+    let available = limit.saturating_sub(stdout.len() + stderr.len());
+    let destination = if is_stdout { stdout } else { stderr };
+    destination.extend_from_slice(&bytes[..bytes.len().min(available)]);
+    bytes.len() > available
+}
+
 /// Run a control helper synchronously without claiming that it can be cancelled.
 ///
 /// A privileged helper may no longer be signalable by its unprivileged caller.
@@ -99,23 +144,7 @@ pub fn run_control_helper(
     args: &[&str],
     output_limit: usize,
 ) -> Result<CommandOutput, crate::ControlError> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let mut child = command.spawn().map_err(|error| {
-        crate::ControlError::new(
-            "command_unavailable",
-            format!("Cannot start {program}: {error}"),
-        )
-    })?;
+    let mut child = spawn_piped_command(program, args, false)?;
     let (sender, receiver) = mpsc::sync_channel(4);
     let mut readers = Vec::new();
     let mut capture_failure = None;
@@ -145,10 +174,9 @@ pub fn run_control_helper(
     for event in receiver {
         match event {
             PipeEvent::Data(is_stdout, bytes) => {
-                let available = output_limit.saturating_sub(stdout.len() + stderr.len());
-                let destination = if is_stdout { &mut stdout } else { &mut stderr };
-                destination.extend_from_slice(&bytes[..bytes.len().min(available)]);
-                if bytes.len() > available && capture_failure.is_none() {
+                if append_bounded_output(&mut stdout, &mut stderr, is_stdout, &bytes, output_limit)
+                    && capture_failure.is_none()
+                {
                     capture_failure = Some(format!(
                         "{program} exceeded its {output_limit} byte capture limit"
                     ));
@@ -212,28 +240,7 @@ pub fn run_command(
     output_limit: usize,
 ) -> Result<CommandOutput, crate::ControlError> {
     let started = Instant::now();
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let mut child = command.spawn().map_err(|error| {
-        crate::ControlError::new(
-            "command_unavailable",
-            format!("Cannot start {program}: {error}"),
-        )
-    })?;
+    let mut child = spawn_piped_command(program, args, true)?;
     // A small bounded channel prevents unbounded allocations even when a helper
     // continuously fills both pipes. The receiver enforces the combined limit.
     let (sender, receiver) = mpsc::sync_channel(4);
@@ -298,10 +305,8 @@ pub fn run_command(
             .min(Duration::from_millis(10));
         match receiver.recv_timeout(wait) {
             Ok(PipeEvent::Data(is_stdout, bytes)) => {
-                let available = output_limit.saturating_sub(stdout.len() + stderr.len());
-                let destination = if is_stdout { &mut stdout } else { &mut stderr };
-                destination.extend_from_slice(&bytes[..bytes.len().min(available)]);
-                if bytes.len() > available {
+                if append_bounded_output(&mut stdout, &mut stderr, is_stdout, &bytes, output_limit)
+                {
                     terminate(&mut child);
                     return Err(failure(
                         "command_output_limit",

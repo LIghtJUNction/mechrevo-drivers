@@ -168,6 +168,9 @@ impl DesktopApp {
     pub fn set_source_details_expanded(&mut self, expanded: bool) {
         self.source_details_expanded = expanded;
     }
+    fn is_compact(&self) -> bool {
+        self.preferences.display_mode == DisplayMode::Compact
+    }
     fn configure(&mut self, ctx: &egui::Context) {
         let dark = match self.preferences.theme {
             Theme::Dark => true,
@@ -324,13 +327,22 @@ impl DesktopApp {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(side);
                 let content_width = if self.side_navigation {
-                    ui.allocate_ui_with_layout(
+                    let sidebar_resp = ui.allocate_ui_with_layout(
                         Vec2::new(184.0, ui.available_height()),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             ui.set_width(184.0);
                             self.sidebar(ui);
                         },
+                    );
+                    let divider_x = sidebar_resp.response.rect.right() + 12.0;
+                    let rect = sidebar_resp.response.rect;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(divider_x, rect.top() + 4.0),
+                            egui::pos2(divider_x, rect.bottom() - 4.0),
+                        ],
+                        Stroke::new(1.0, divider(ui)),
                     );
                     ui.add_space(24.0);
                     width - 208.0
@@ -353,6 +365,7 @@ impl DesktopApp {
 
     fn navigation(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 4.0;
+        let colors = appearance::palette(ui);
         for (section, label) in [
             (Section::Dashboard, "概览"),
             (Section::Controls, "控制"),
@@ -365,20 +378,24 @@ impl DesktopApp {
                 selected,
                 if self.motion_enabled { 0.2 } else { 0.0 },
             );
-            let fill = if ui.visuals().dark_mode {
-                Color32::from_white_alpha((18.0 * t) as u8)
-            } else {
-                Color32::from_black_alpha((11.0 * t) as u8)
-            };
+            let fill = colors.selection.gamma_multiply(t);
+            let stroke = Stroke::new(
+                1.0,
+                if selected {
+                    colors.accent.gamma_multiply(0.45 * t)
+                } else {
+                    Color32::TRANSPARENT
+                },
+            );
             let response = ui.add(
                 egui::Button::new(RichText::new(label).size(13.0).color(if selected {
-                    foreground(ui)
+                    colors.accent
                 } else {
-                    secondary(ui)
+                    colors.secondary
                 }))
                 .selected(selected)
                 .fill(fill)
-                .stroke(Stroke::NONE)
+                .stroke(stroke)
                 .corner_radius(9.0),
             );
             if response.clicked() {
@@ -650,32 +667,38 @@ impl DesktopApp {
     }
 
     fn dashboard(&mut self, ui: &mut egui::Ui) -> Rect {
+        let compact = self.is_compact();
+        let gap = if compact { 12.0 } else { 18.0 };
         let thermal_rect = self.thermal_panel(ui);
-        ui.add_space(18.0);
+        ui.add_space(gap);
         self.performance_controls(ui);
         if ui.available_width() >= 660.0 {
             ui.scope(|ui| {
-                ui.spacing_mut().item_spacing.x = 18.0;
+                ui.spacing_mut().item_spacing.x = gap;
                 ui.columns(2, |columns| {
                     for column in columns.iter_mut() {
                         column.spacing_mut().item_spacing.x = 10.0;
                     }
-                    surface(&mut columns[0], |ui| self.everyday_power(ui));
-                    surface(&mut columns[1], |ui| self.brightness_controls(ui));
+                    appearance::surface_padded(&mut columns[0], compact, |ui| {
+                        self.everyday_power(ui)
+                    });
+                    appearance::surface_padded(&mut columns[1], compact, |ui| {
+                        self.brightness_controls(ui)
+                    });
                 });
             });
         } else {
-            surface(ui, |ui| self.everyday_power(ui));
-            ui.add_space(14.0);
-            surface(ui, |ui| self.brightness_controls(ui));
+            appearance::surface_padded(ui, compact, |ui| self.everyday_power(ui));
+            ui.add_space(if compact { 10.0 } else { 14.0 });
+            appearance::surface_padded(ui, compact, |ui| self.brightness_controls(ui));
         }
-        ui.add_space(18.0);
+        ui.add_space(gap);
         self.quick_controls(ui);
-        ui.add_space(24.0);
+        ui.add_space(if compact { 16.0 } else { 24.0 });
         self.power_source(ui);
-        ui.add_space(24.0);
+        ui.add_space(if compact { 16.0 } else { 24.0 });
         ui.separator();
-        ui.add_space(14.0);
+        ui.add_space(12.0);
         self.identity(ui);
         egui::CollapsingHeader::new("接口能力与限制")
             .id_salt("hardware-capabilities")
@@ -708,8 +731,9 @@ impl DesktopApp {
             .copied()
             .filter(|r| fan_component(r).is_none())
             .collect();
+        let compact = self.is_compact();
         ui.scope(|ui| {
-            surface(ui, |ui| {
+            appearance::surface_padded(ui, compact, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 // Set the content minimum before advancing the cursor: egui
                 // measures this height from the current position.
@@ -915,7 +939,7 @@ impl DesktopApp {
                 let y = egui::lerp(plot.bottom()..=plot.top(), portion);
                 painter.line_segment(
                     [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
-                    Stroke::new(1.0, divider(ui)),
+                    Stroke::new(1.0, divider(ui).gamma_multiply(0.55)),
                 );
                 painter.text(
                     egui::pos2(
@@ -979,30 +1003,51 @@ impl DesktopApp {
     }
 
     fn feedback(&self, ui: &mut egui::Ui) {
+        let colors = appearance::palette(ui);
         if self.pending_close {
-            ui.label(RichText::new("正在完成操作与回读，结束后自动退出。").color(amber(ui)));
+            appearance::banner(
+                ui,
+                colors.inset,
+                colors.warning.gamma_multiply(0.65),
+                |ui| {
+                    ui.label(
+                        RichText::new("正在完成操作与回读，结束后自动退出。").color(colors.warning),
+                    );
+                },
+            );
+            ui.add_space(6.0);
         }
         if let Some((kind, elapsed)) = self.controller.activity() {
             if kind != JobKind::Refresh || elapsed > Duration::from_secs(10) {
-                ui.label(
-                    RichText::new(format!(
-                        "{} · {:.1} 秒",
-                        match kind {
-                            JobKind::Refresh => "设备响应较慢，请等待",
-                            JobKind::Preview => "正在准备操作预览",
-                            JobKind::Apply => "正在应用并回读",
-                        },
-                        elapsed.as_secs_f32()
-                    ))
-                    .color(amber(ui)),
+                appearance::banner(
+                    ui,
+                    colors.inset,
+                    colors.warning.gamma_multiply(0.65),
+                    |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} · {:.1} 秒",
+                                match kind {
+                                    JobKind::Refresh => "设备响应较慢，请等待",
+                                    JobKind::Preview => "正在准备操作预览",
+                                    JobKind::Apply => "正在应用并回读",
+                                },
+                                elapsed.as_secs_f32()
+                            ))
+                            .color(colors.warning),
+                        );
+                    },
                 );
+                ui.add_space(6.0);
             }
         }
         if let Some(error) = &self.controller.error {
-            ui.add_space(12.0);
-            surface(ui, |ui| {
+            ui.add_space(6.0);
+            appearance::banner(ui, colors.panel, colors.error.gamma_multiply(0.75), |ui| {
                 ui.label(
-                    RichText::new(format!("操作未确认 · {}", error.message)).color(error_color(ui)),
+                    RichText::new(format!("操作未确认 · {}", error.message))
+                        .strong()
+                        .color(colors.error),
                 );
                 egui::CollapsingHeader::new("错误详情").show(ui, |ui| {
                     for detail in &error.details {
@@ -1014,24 +1059,41 @@ impl DesktopApp {
                     ));
                 });
             });
+            ui.add_space(6.0);
         }
         if let Some(applied) = &self.controller.applied {
-            ui.label(
-                RichText::new(format!(
-                    "已应用并回读：{} → {}",
-                    applied.previous, applied.confirmed
-                ))
-                .color(green(ui)),
+            appearance::banner(
+                ui,
+                colors.selection,
+                colors.accent.gamma_multiply(0.65),
+                |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "已应用并回读：{} → {}",
+                            applied.previous, applied.confirmed
+                        ))
+                        .color(colors.accent),
+                    );
+                },
             );
+            ui.add_space(6.0);
         }
         if let Some(applied) = &self.controller.brightness_applied {
-            ui.label(
-                RichText::new(format!(
-                    "亮度请求已回读：{} → {}",
-                    applied.previous, applied.confirmed
-                ))
-                .color(green(ui)),
+            appearance::banner(
+                ui,
+                colors.selection,
+                colors.accent.gamma_multiply(0.65),
+                |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "亮度请求已回读：{} → {}",
+                            applied.previous, applied.confirmed
+                        ))
+                        .color(colors.accent),
+                    );
+                },
             );
+            ui.add_space(6.0);
         }
         if let Some(applied) = &self.controller.oem_applied {
             let label = self
@@ -1046,19 +1108,27 @@ impl DesktopApp {
                 })
                 .map(|control| control.label.as_str())
                 .unwrap_or(&applied.control_id);
-            ui.label(
-                RichText::new(format!(
-                    "{label} 请求已回读：{} → {}",
-                    oem_value_text(&applied.previous),
-                    oem_value_text(&applied.confirmed)
-                ))
-                .color(green(ui)),
+            appearance::banner(
+                ui,
+                colors.selection,
+                colors.accent.gamma_multiply(0.65),
+                |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "{label} 请求已回读：{} → {}",
+                            oem_value_text(&applied.previous),
+                            oem_value_text(&applied.confirmed)
+                        ))
+                        .color(colors.accent),
+                    );
+                    ui.label(
+                        RichText::new(&applied.readback_scope)
+                            .size(12.0)
+                            .color(colors.secondary),
+                    );
+                },
             );
-            ui.label(
-                RichText::new(&applied.readback_scope)
-                    .size(13.0)
-                    .color(secondary(ui)),
-            );
+            ui.add_space(6.0);
         }
     }
 
@@ -1076,7 +1146,8 @@ impl DesktopApp {
         if self.controller.selected_oem_control.is_none() {
             self.controller.select_oem_control(&controls[0].id);
         }
-        surface(ui, |ui| {
+        let compact = self.is_compact();
+        appearance::surface_padded(ui, compact, |ui| {
             ui.label(
                 RichText::new("选择要调节的设备功能")
                     .size(14.0)
@@ -1162,7 +1233,23 @@ impl DesktopApp {
                                     ("青绿", [65, 220, 150]),
                                     ("紫罗兰", [170, 95, 255]),
                                 ] {
-                                    if ui.selectable_label(*rgb == preset, name).clicked() {
+                                    let swatch_id = egui::IdSalt::new(("rgb-swatch", name));
+                                    let selected = *rgb == preset;
+                                    let output = egui::Button::new((
+                                        egui::Atom::custom(swatch_id, Vec2::splat(10.0)),
+                                        RichText::new(name),
+                                    ))
+                                    .selected(selected)
+                                    .gap(6.0)
+                                    .atom_ui(ui);
+                                    if let Some(rect) = output.rect(swatch_id) {
+                                        ui.painter().circle_filled(
+                                            rect.center(),
+                                            4.5,
+                                            Color32::from_rgb(preset[0], preset[1], preset[2]),
+                                        );
+                                    }
+                                    if output.response.clicked() {
                                         *rgb = preset;
                                     }
                                 }
@@ -1222,30 +1309,34 @@ impl DesktopApp {
                 unavailable(ui, reason);
             }
             if let Some(plan) = &self.controller.oem_preview {
+                let colors = appearance::palette(ui);
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} → {}",
-                        oem_value_text(&plan.previous),
-                        oem_value_text(&plan.target)
-                    ))
-                    .color(green(ui)),
-                );
-                if let Some(brightness) = plan.companion_brightness {
-                    ui.label(format!("伴随键盘亮度  {brightness}"));
-                }
-                if plan.requires_privilege {
+                appearance::banner(ui, colors.inset, colors.accent.gamma_multiply(0.6), |ui| {
                     ui.label(
-                        RichText::new("应用时请求管理员授权")
-                            .size(13.0)
-                            .color(secondary(ui)),
+                        RichText::new(format!(
+                            "待应用：{} → {}",
+                            oem_value_text(&plan.previous),
+                            oem_value_text(&plan.target)
+                        ))
+                        .strong()
+                        .color(colors.accent),
                     );
-                }
-                ui.label(
-                    RichText::new(&plan.readback_scope)
-                        .size(13.0)
-                        .color(secondary(ui)),
-                );
+                    if let Some(brightness) = plan.companion_brightness {
+                        ui.label(format!("伴随键盘亮度  {brightness}"));
+                    }
+                    if plan.requires_privilege {
+                        ui.label(
+                            RichText::new("应用时请求管理员授权")
+                                .size(13.0)
+                                .color(colors.secondary),
+                        );
+                    }
+                    ui.label(
+                        RichText::new(&plan.readback_scope)
+                            .size(12.0)
+                            .color(colors.secondary),
+                    );
+                });
             }
             egui::CollapsingHeader::new("接口详情")
                 .id_salt(("oem-interface-details", &control.id))
@@ -1659,13 +1750,15 @@ impl DesktopApp {
             });
             ui.add_space(12.0);
         }
-        surface(ui, |ui| {
+        let compact = self.is_compact();
+        let item_gap = if compact { 8.0 } else { 12.0 };
+        appearance::surface_padded(ui, compact, |ui| {
             for (index, reading) in s.telemetry.iter().enumerate() {
                 ui.push_id((&reading.device_id, &reading.id), |ui| {
                     if index > 0 {
-                        ui.add_space(12.0);
+                        ui.add_space(item_gap);
                         ui.separator();
-                        ui.add_space(12.0);
+                        ui.add_space(item_gap);
                     }
                     let value = RichText::new(reading_text(reading))
                         .font(appearance::tabular_font(21.0))
@@ -1739,7 +1832,10 @@ impl DesktopApp {
         if query_edit.changed() {
             self.catalog_page = 0;
         }
-        let total = self.controller.matching_model_indices(&self.catalog_query).len();
+        let total = self
+            .controller
+            .matching_model_indices(&self.catalog_query)
+            .len();
         let total_pages = total.div_ceil(PAGE_SIZE).max(1);
         if self.catalog_page >= total_pages {
             self.catalog_page = total_pages - 1;
@@ -1767,7 +1863,10 @@ impl DesktopApp {
                         .color(secondary(ui)),
                 );
                 if ui
-                    .add_enabled(self.catalog_page + 1 < total_pages, egui::Button::new("下一页"))
+                    .add_enabled(
+                        self.catalog_page + 1 < total_pages,
+                        egui::Button::new("下一页"),
+                    )
                     .clicked()
                 {
                     self.catalog_page += 1;
@@ -1781,15 +1880,18 @@ impl DesktopApp {
                 "试试更短的型号名称，或搜索产品系列。",
             );
         }
-        let page_indices: Vec<usize> = self.controller.matching_model_indices(&self.catalog_query)[start..end].to_vec();
+        let page_indices: Vec<usize> =
+            self.controller.matching_model_indices(&self.catalog_query)[start..end].to_vec();
+        let compact = self.is_compact();
+        let row_gap = if compact { 8.0 } else { 12.0 };
         let columns = if ui.available_width() >= 760.0 { 2 } else { 1 };
         for row in page_indices.chunks(columns) {
-            ui.add_space(12.0);
+            ui.add_space(row_gap);
             ui.columns(columns, |columns| {
                 for (ui, &idx) in columns.iter_mut().zip(row) {
                     let model = &self.controller.catalog[idx];
                     ui.push_id(&model.id, |ui| {
-                        surface(ui, |ui| {
+                        appearance::surface_padded(ui, compact, |ui| {
                             ui.label(
                                 RichText::new(model.series.as_deref().unwrap_or("MECHREVO"))
                                     .size(12.0)
@@ -1946,9 +2048,6 @@ fn green(ui: &egui::Ui) -> Color32 {
 }
 fn amber(ui: &egui::Ui) -> Color32 {
     appearance::palette(ui).warning
-}
-fn error_color(ui: &egui::Ui) -> Color32 {
-    appearance::palette(ui).error
 }
 fn divider(ui: &egui::Ui) -> Color32 {
     appearance::palette(ui).border

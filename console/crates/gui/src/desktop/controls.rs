@@ -60,7 +60,14 @@ impl DesktopApp {
             ))
             .selected(selected)
             .frame_when_inactive(selected)
-            .stroke(Stroke::NONE)
+            .stroke(Stroke::new(
+                1.0,
+                if selected {
+                    colors.accent.gamma_multiply(0.45)
+                } else {
+                    Color32::TRANSPARENT
+                },
+            ))
             .corner_radius(10.0)
             .gap(12.0)
             .min_size(Vec2::new(ui.available_width(), 44.0));
@@ -68,6 +75,16 @@ impl DesktopApp {
                 button = button.fill(colors.selection);
             }
             let output = button.atom_ui(ui);
+            if selected {
+                let bar = Rect::from_min_size(
+                    egui::pos2(
+                        output.response.rect.left() + 3.0,
+                        output.response.rect.top() + 10.0,
+                    ),
+                    Vec2::new(3.0, (output.response.rect.height() - 20.0).max(8.0)),
+                );
+                ui.painter().rect_filled(bar, 1.5, colors.accent);
+            }
             if let Some(rect) = output.rect(glyph_id) {
                 navigation_icon(ui.painter(), rect, section, color);
             }
@@ -85,8 +102,10 @@ impl DesktopApp {
         }
         // Keep the footer quiet and anchored, without taking space from the
         // navigation in short windows or at larger text sizes.
-        if ui.available_height() >= 100.0 {
-            ui.add_space((ui.available_height() - 58.0).max(16.0));
+        if ui.available_height() >= 110.0 {
+            ui.add_space((ui.available_height() - 68.0).max(16.0));
+            ui.separator();
+            ui.add_space(6.0);
             ui.label(
                 RichText::new("更改先预览，应用后回读")
                     .size(12.0)
@@ -130,7 +149,8 @@ impl DesktopApp {
             _ => None,
         };
         let colors = appearance::palette(ui);
-        surface(ui, |ui| {
+        let compact = self.is_compact();
+        appearance::surface_padded(ui, compact, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             heading_with_icon(ui, "性能与散热", Icon::Power);
             ui.add_space(2.0);
@@ -179,12 +199,22 @@ impl DesktopApp {
             } else {
                 1
             };
+            let current_id = match &control.current {
+                Some(OemValue::Choice(id)) => Some(id.as_str()),
+                _ => None,
+            };
             for row in choices.chunks(columns) {
                 ui.columns(columns, |columns| {
                     for (ui, id) in columns.iter_mut().zip(row) {
                         let chosen = selected.as_deref() == Some(id.as_str());
+                        let is_current = current_id == Some(id.as_str());
+                        let title = if is_current && !chosen {
+                            format!("{} · 当前", oem_choice_label(id))
+                        } else {
+                            oem_choice_label(id).to_owned()
+                        };
                         let text = tile_text(
-                            oem_choice_label(id),
+                            &title,
                             mode_description(id),
                             if chosen { colors.accent } else { colors.text },
                             colors.secondary,
@@ -197,7 +227,10 @@ impl DesktopApp {
                         if chosen {
                             button = button
                                 .fill(colors.selection)
-                                .stroke(Stroke::new(1.0, colors.accent));
+                                .stroke(Stroke::new(1.5, colors.accent));
+                        } else if is_current {
+                            button =
+                                button.stroke(Stroke::new(1.0, colors.accent.gamma_multiply(0.55)));
                         }
                         let response = ui.add_enabled(!self.controller.busy(), button);
                         if response.clicked() {
@@ -221,14 +254,18 @@ impl DesktopApp {
                 .as_ref()
                 .filter(|p| p.control_id == control.id);
             if let Some(plan) = preview {
-                ui.label(
-                    RichText::new(format!(
-                        "待应用：{} → {}",
-                        oem_value_text(&plan.previous),
-                        oem_value_text(&plan.target)
-                    ))
-                    .color(colors.accent),
-                );
+                appearance::banner(ui, colors.inset, colors.accent.gamma_multiply(0.6), |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "待应用：{} → {}",
+                            oem_value_text(&plan.previous),
+                            oem_value_text(&plan.target)
+                        ))
+                        .strong()
+                        .color(colors.accent),
+                    );
+                });
+                ui.add_space(4.0);
             }
             let can_apply =
                 preview.is_some() && owns_selection && reason.is_none() && !self.controller.busy();
