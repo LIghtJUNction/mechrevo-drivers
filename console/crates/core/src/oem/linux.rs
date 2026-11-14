@@ -233,7 +233,7 @@ fn numeric(value: &str) -> Result<u32, ControlError> {
         .parse()
         .map_err(|e| invalid(format!("OEM numeric value is out of range: {e}")))
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Provider {
     Tuxedo,
     Uniwill,
@@ -590,8 +590,12 @@ fn read_rgb(device: &Device, order: [usize; 3]) -> Result<OemValue, ControlError
         values[order[2]] as u8,
     ]))
 }
-fn inspect(root: &Path, spec: &Spec) -> Result<Inspected, ControlError> {
-    let driver = driver_binding(root, spec)?;
+fn inspect_with_binding(
+    root: &Path,
+    spec: &Spec,
+    driver: Result<String, ControlError>,
+) -> Result<Inspected, ControlError> {
+    let driver = driver?;
     let device = Device::open(
         root,
         &spec.directory,
@@ -692,9 +696,16 @@ pub(super) fn controls(root: &Path) -> Vec<OemControl> {
     let Ok(root) = fs::canonicalize(root) else {
         return vec![];
     };
+    let mut bindings: std::collections::HashMap<(Provider, PathBuf), Result<String, ControlError>> =
+        std::collections::HashMap::new();
     specs(&root)
         .into_iter()
-        .map(|spec| match inspect(&root, &spec) {
+        .map(|spec| {
+            let binding = bindings
+                .entry((spec.provider, spec.owner.clone()))
+                .or_insert_with(|| driver_binding(&root, &spec))
+                .clone();
+            match inspect_with_binding(&root, &spec, binding) {
             Ok(inspected) => inspected.control,
             Err(error) => OemControl {
                 id: spec.id.clone(),
@@ -717,6 +728,7 @@ pub(super) fn controls(root: &Path) -> Vec<OemControl> {
                 readback_scope: spec.scope().into(),
                 reason: Some(error.to_string()),
             },
+            }
         })
         .collect()
 }
@@ -730,7 +742,8 @@ fn prepare(
         .into_iter()
         .find(|spec| spec.id == id)
         .ok_or_else(unavailable)?;
-    let inspected = inspect(&root, &spec)?;
+    let driver = driver_binding(&root, &spec);
+    let inspected = inspect_with_binding(&root, &spec, driver)?;
     validate_target(&inspected.control.domain, &target)?;
     let control = &inspected.control;
     let plan = OemPlan {

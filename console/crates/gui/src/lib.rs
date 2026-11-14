@@ -176,7 +176,7 @@ struct Request {
 }
 
 enum Reply {
-    Snapshot(Snapshot, Vec<CatalogModel>),
+    Snapshot(Snapshot, Option<Vec<CatalogModel>>),
     Preview(ProfilePlan),
     Applied(ApplyResult, Snapshot),
     BrightnessPreview(BrightnessPlan),
@@ -215,6 +215,9 @@ pub struct Controller {
     next_id: u64,
     pub snapshot: Option<Snapshot>,
     pub catalog: Vec<CatalogModel>,
+    catalog_search_keys: Vec<String>,
+    cached_catalog_query: Option<String>,
+    cached_catalog_indices: Vec<usize>,
     pub selected_profile: PowerProfile,
     pub preview: Option<ProfilePlan>,
     pub applied: Option<ApplyResult>,
@@ -243,12 +246,21 @@ impl Controller {
         let worker = thread::Builder::new()
             .name("mechrevo-platform".into())
             .spawn(move || {
+                let mut catalog_sent = false;
                 while let Ok(request) = incoming.recv() {
                     if !worker_alive.load(Ordering::Acquire) {
                         break;
                     }
                     let result = catch_unwind(AssertUnwindSafe(|| match request.job {
-                        Job::Refresh => Reply::Snapshot(backend.snapshot(), backend.catalog()),
+                        Job::Refresh => {
+                            let catalog = if catalog_sent {
+                                None
+                            } else {
+                                catalog_sent = true;
+                                Some(backend.catalog())
+                            };
+                            Reply::Snapshot(backend.snapshot(), catalog)
+                        }
                         Job::Preview(profile) => match backend.plan(profile) {
                             Ok(plan) => Reply::Preview(plan),
                             Err(error) => Reply::Error(error),
@@ -307,6 +319,9 @@ impl Controller {
             next_id: 1,
             snapshot: None,
             catalog: Vec::new(),
+            catalog_search_keys: Vec::new(),
+            cached_catalog_query: None,
+            cached_catalog_indices: Vec::new(),
             selected_profile: PowerProfile::Balanced,
             preview: None,
             applied: None,
@@ -683,7 +698,15 @@ impl Controller {
                 match response.reply {
                     Reply::Snapshot(snapshot, catalog) => {
                         self.snapshot = Some(snapshot);
-                        self.catalog = catalog;
+                        if let Some(catalog) = catalog {
+                            self.catalog_search_keys = catalog
+                                .iter()
+                                .map(mechrevo_console_core::catalog_search_key)
+                                .collect();
+                            self.catalog = catalog;
+                            self.cached_catalog_query = None;
+                            self.cached_catalog_indices.clear();
+                        }
                         self.last_refresh = Some(Instant::now());
                     }
                     Reply::Preview(plan) => {
@@ -783,21 +806,34 @@ impl Controller {
         }
     }
 
+    pub fn matching_model_indices(&mut self, query: &str) -> &[usize] {
+        let normalized = query.trim().to_lowercase();
+        if self.cached_catalog_query.as_deref() != Some(normalized.as_str()) {
+            self.cached_catalog_indices.clear();
+            if normalized.is_empty() {
+                self.cached_catalog_indices.extend(0..self.catalog.len());
+            } else {
+                for (idx, key) in self.catalog_search_keys.iter().enumerate() {
+                    if key.contains(&normalized) {
+                        self.cached_catalog_indices.push(idx);
+                    }
+                }
+            }
+            self.cached_catalog_query = Some(normalized);
+        }
+        &self.cached_catalog_indices
+    }
+
     pub fn matching_models<'a>(&'a self, query: &str) -> Vec<&'a CatalogModel> {
         let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return self.catalog.iter().collect();
+        }
         self.catalog
             .iter()
-            .filter(|model| {
-                [
-                    model.id.as_str(),
-                    model.name.as_str(),
-                    model.slug.as_str(),
-                    model.category.as_deref().unwrap_or(""),
-                    model.series.as_deref().unwrap_or(""),
-                ]
-                .iter()
-                .any(|part| part.to_lowercase().contains(&query))
-            })
+            .zip(self.catalog_search_keys.iter())
+            .filter(|(_, key)| key.contains(&query))
+            .map(|(model, _)| model)
             .collect()
     }
 }

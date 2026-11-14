@@ -243,18 +243,57 @@ fn parse_catalog(input: &str) -> Result<BundledCatalog, ControlError> {
     }
     Ok(data)
 }
+/// Precompute a normalized lowercase search key for a catalog model.
+pub fn catalog_search_key(model: &CatalogModel) -> String {
+    [
+        model.id.as_str(),
+        model.name.as_str(),
+        model.slug.as_str(),
+        model.series.as_deref().unwrap_or(""),
+        model.category.as_deref().unwrap_or(""),
+    ]
+    .join("\0")
+    .to_lowercase()
+}
+
 /// Marketing inventory is intentionally separate from tested support.
 // @mark mechrevo.model_catalog role=implementation
 pub fn catalog_search(query: &str) -> Vec<CatalogModel> {
-    // Embedded immutable evidence is validated by tests; malformed evidence fails closed.
-    let Ok(data) = parse_catalog(include_str!("../../../../data/mechrevo-catalog.json")) else {
-        return vec![];
-    };
-    let query = query.to_lowercase();
-    data.entries.into_iter().filter_map(|v| {
-        let haystack=format!("{} {} {} {} {}",v.id,v.name,v.slug,v.series.as_deref().unwrap_or(""),v.category.as_deref().unwrap_or(""));
-        haystack.to_lowercase().contains(&query).then(||CatalogModel {id:v.id,name:v.name,slug:v.slug,category:v.category,series:v.series,entry_kind:v.entry_kind,evidence:vec![v.url.clone(),data.source.url.clone()],url:v.url,support_note:"Official product listing only; Windows/Linux hardware compatibility is not established by this entry.".into()})
-    }).collect()
+    static BUNDLED: std::sync::OnceLock<Vec<(CatalogModel, String)>> = std::sync::OnceLock::new();
+    let entries = BUNDLED.get_or_init(|| {
+        // Embedded immutable evidence is validated by tests; malformed evidence fails closed.
+        let Ok(data) = parse_catalog(include_str!("../../../../data/mechrevo-catalog.json")) else {
+            return vec![];
+        };
+        let source_url = data.source.url;
+        data.entries
+            .into_iter()
+            .map(|v| {
+                let model = CatalogModel {
+                    id: v.id,
+                    name: v.name,
+                    slug: v.slug,
+                    category: v.category,
+                    series: v.series,
+                    entry_kind: v.entry_kind,
+                    evidence: vec![v.url.clone(), source_url.clone()],
+                    url: v.url,
+                    support_note: "Official product listing only; Windows/Linux hardware compatibility is not established by this entry.".into(),
+                };
+                let key = catalog_search_key(&model);
+                (model, key)
+            })
+            .collect()
+    });
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return entries.iter().map(|(model, _)| model.clone()).collect();
+    }
+    entries
+        .iter()
+        .filter(|(_, key)| key.contains(&query))
+        .map(|(model, _)| model.clone())
+        .collect()
 }
 
 /// Blocking backend: call from a GUI worker, never its event/render thread.

@@ -297,6 +297,7 @@ class System:
     def open_sensors(self):
         # Availability history belongs to this capture, not the System lifetime.
         self.rpm_interface_seen = False
+        self.rpm_sensor = None
         if {k: self.text("/sys/class/dmi/id/" + k) for k in IDENTITY} != IDENTITY:
             raise ObservationError("This host/BIOS is not qualified for these EC readings")
         if self.read_thermal_msr:
@@ -308,6 +309,7 @@ class System:
         if len(candidates) != 1:
             raise ObservationError("Cannot identify one CPU package temperature sensor")
         self.hwmon = candidates[0]
+        self.core_temp_inputs = [p for p in self.hwmon.glob("temp*_input") if p.name != "temp1_input"]
         self.fd = os.open(self.path("/dev/tuxedo_io"), os.O_RDONLY | os.O_CLOEXEC)
         if self.read_ioctl("available") != 1:
             raise ObservationError("Uniwill interface is unavailable")
@@ -319,22 +321,27 @@ class System:
 
     def fan_rpm(self):
         """Read the qualified OEM hwmon interface, never infer RPM from duty."""
-        candidates = [p for p in self.path("/sys/class/hwmon").glob("hwmon*")
-                      if (p / "name").read_text().strip() == "mechrevo_ec"]
-        if len(candidates) > 1:
-            raise ObservationError("Ambiguous mechrevo_ec RPM sensors")
-        absent = {"available": False, "reason": "mechrevo_ec RPM interface absent"}
-        if not candidates:
-            if self.rpm_interface_seen:
-                raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
-            return absent
-        sensor = candidates[0]
-        # Older temperature-only releases are supported. A partial advertised
-        # fan interface is a failure, rather than evidence that RPM is absent.
-        if not list(sensor.glob("fan*")):
-            if self.rpm_interface_seen:
-                raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
-            return absent
+        sensor = getattr(self, "rpm_sensor", None)
+        if sensor is None:
+            candidates = [p for p in self.path("/sys/class/hwmon").glob("hwmon*")
+                          if (p / "name").read_text().strip() == "mechrevo_ec"]
+            if len(candidates) > 1:
+                raise ObservationError("Ambiguous mechrevo_ec RPM sensors")
+            absent = {"available": False, "reason": "mechrevo_ec RPM interface absent"}
+            if not candidates:
+                if self.rpm_interface_seen:
+                    raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
+                return absent
+            sensor = candidates[0]
+            # Older temperature-only releases are supported. A partial advertised
+            # fan interface is a failure, rather than evidence that RPM is absent.
+            if not list(sensor.glob("fan*")):
+                if self.rpm_interface_seen:
+                    raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
+                return absent
+            self.rpm_sensor = sensor
+        elif not sensor.exists() or not list(sensor.glob("fan*")):
+            raise ObservationError("Previously available mechrevo_ec RPM interface disappeared")
         result = {"available": True, "source": "mechrevo_ec"}
         for channel, label, key in ((1, "CPU fan", "cpu_rpm"),
                                     (2, "GPU fan", "gpu_rpm")):
@@ -379,7 +386,7 @@ class System:
         result = {"monotonic_s": start, "read_windows": windows}
         result["package_mc"] = read_group("package_before", lambda: int((self.hwmon / "temp1_input").read_text()))
         result["core_max_mc"] = read_group("core_max", lambda: max(
-            int(p.read_text()) for p in self.hwmon.glob("temp*_input") if p.name != "temp1_input"))
+            int(p.read_text()) for p in self.core_temp_inputs))
         result["cpu0_package_throttle_count"] = read_group("throttle_count", lambda: int(self.text(
             "/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count")))
         energy, modulus = read_group("energy", lambda: (
