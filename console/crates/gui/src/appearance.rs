@@ -64,30 +64,27 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         return;
     }
     use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
-    for (name, bytes, families) in [(
-        "Manrope",
-        include_bytes!("../assets/fonts/Manrope.ttf").as_slice(),
-        vec![
-            egui::FontFamily::Name("Numbers".into()),
-            egui::FontFamily::Proportional,
-        ],
-    )] {
-        let data = egui::FontData::from_static(bytes).tweak(egui::epaint::text::FontTweak {
-            coords: egui::epaint::text::VariationCoords::new([(b"wght", 450.0)]),
-            ..Default::default()
-        });
-        ctx.add_font(FontInsert::new(
-            name,
-            data,
-            families
-                .into_iter()
-                .map(|family| InsertFontFamily {
-                    family,
-                    priority: FontPriority::Highest,
-                })
-                .collect(),
-        ));
-    }
+    let name = "Manrope";
+    let bytes = include_bytes!("../assets/fonts/Manrope.ttf").as_slice();
+    let families = [
+        egui::FontFamily::Name("Numbers".into()),
+        egui::FontFamily::Proportional,
+    ];
+    let data = egui::FontData::from_static(bytes).tweak(egui::epaint::text::FontTweak {
+        coords: egui::epaint::text::VariationCoords::new([(b"wght", 450.0)]),
+        ..Default::default()
+    });
+    ctx.add_font(FontInsert::new(
+        name,
+        data,
+        families
+            .into_iter()
+            .map(|family| InsertFontFamily {
+                family,
+                priority: FontPriority::Highest,
+            })
+            .collect(),
+    ));
     ctx.data_mut(|data| data.insert_temp(key, true));
 }
 

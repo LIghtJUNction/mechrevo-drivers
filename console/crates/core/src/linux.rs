@@ -92,16 +92,21 @@ fn reading(
     }
 }
 const PROFILE_SCOPE: &str = "Linux ACPI platform profile (not OEM preset or GPU tuning)";
+fn identity_is_wujie_hpt(identity: &Identity) -> bool {
+    identity.manufacturer.as_deref() == Some("MECHREVO")
+        && identity.product_name.as_deref() == Some("WUJIE15 PRO")
+        && identity.board_name.as_deref() == Some("WUJIE15 Series-HPT")
+}
 fn is_wujie_hpt(root: &Path) -> bool {
     let dmi = root.join("class/dmi/id");
     read(&dmi.join("sys_vendor")).as_deref() == Some("MECHREVO")
         && read(&dmi.join("product_name")).as_deref() == Some("WUJIE15 PRO")
         && read(&dmi.join("board_name")).as_deref() == Some("WUJIE15 Series-HPT")
 }
-fn hpt_profile_needs_quirk(root: &Path) -> bool {
+fn hpt_profile_needs_quirk_for(root: &Path, is_hpt: bool) -> bool {
     // HPT uses 0/1/2 = performance/balanced/quiet, unlike the generic
     // Bitland four-mode map. The corrected driver omits balanced-performance.
-    is_wujie_hpt(root)
+    is_hpt
         && paths(&root.join("class/platform-profile"))
             .iter()
             .any(|handler| {
@@ -112,6 +117,9 @@ fn hpt_profile_needs_quirk(root: &Path) -> bool {
                     })
             })
 }
+fn hpt_profile_needs_quirk(root: &Path) -> bool {
+    hpt_profile_needs_quirk_for(root, is_wujie_hpt(root))
+}
 struct ProfileInterface {
     path: PathBuf,
     choices: PathBuf,
@@ -121,7 +129,10 @@ struct ProfileInterface {
 }
 impl ProfileInterface {
     fn discover(root: &Path) -> Option<Self> {
-        if hpt_profile_needs_quirk(root) {
+        Self::discover_with_quirk(root, hpt_profile_needs_quirk(root))
+    }
+    fn discover_with_quirk(root: &Path, hpt_mapping_unsupported: bool) -> Option<Self> {
+        if hpt_mapping_unsupported {
             return None;
         }
         let path = root.join("firmware/acpi/platform_profile");
@@ -259,8 +270,8 @@ impl ProfileInterface {
         Ok(file)
     }
 }
-pub(crate) fn policy(root: &Path) -> PowerPolicy {
-    ProfileInterface::discover(root)
+pub(crate) fn policy_with_quirk(root: &Path, hpt_mapping_unsupported: bool) -> PowerPolicy {
+    ProfileInterface::discover_with_quirk(root, hpt_mapping_unsupported)
         .map(|interface| interface.state())
         .unwrap_or(PowerPolicy {
             scope: PROFILE_SCOPE.into(),
@@ -268,6 +279,10 @@ pub(crate) fn policy(root: &Path) -> PowerPolicy {
             options: vec![],
             source: None,
         })
+}
+#[cfg(test)]
+pub(crate) fn policy(root: &Path) -> PowerPolicy {
+    policy_with_quirk(root, hpt_profile_needs_quirk(root))
 }
 // @mark mechrevo.telemetry role=implementation
 pub(crate) fn snapshot(root: &Path) -> Snapshot {
@@ -283,8 +298,8 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
     identity.qualify();
     let mut telemetry = Vec::new();
     let mut diagnostics = Vec::new();
-    let hpt = is_wujie_hpt(root);
-    let hpt_mapping_unsupported = hpt_profile_needs_quirk(root);
+    let hpt = identity_is_wujie_hpt(&identity);
+    let hpt_mapping_unsupported = hpt_profile_needs_quirk_for(root, hpt);
     if hpt_mapping_unsupported {
         diagnostics.push(Diagnostic {
             code: "bitland_hpt_kernel_quirk_required".into(),
@@ -428,7 +443,7 @@ pub(crate) fn snapshot(root: &Path) -> Snapshot {
             _ => {}
         }
     }
-    let power_policy = policy(root);
+    let power_policy = policy_with_quirk(root, hpt_mapping_unsupported);
     let profile_available = power_policy
         .current
         .as_ref()

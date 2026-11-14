@@ -106,6 +106,8 @@ pub struct DesktopApp {
     pub preferences: Preferences,
     section: Section,
     catalog_query: String,
+    catalog_page: usize,
+    last_style_key: Option<(bool, u32, bool)>,
     bottom_requested: bool,
     last_metrics: RenderMetrics,
     pending_close: bool,
@@ -140,6 +142,8 @@ impl DesktopApp {
             preferences,
             section: Section::Dashboard,
             catalog_query: String::new(),
+            catalog_page: 0,
+            last_style_key: None,
             bottom_requested: false,
             last_metrics: RenderMetrics::default(),
             pending_close: false,
@@ -164,12 +168,21 @@ impl DesktopApp {
     pub fn set_source_details_expanded(&mut self, expanded: bool) {
         self.source_details_expanded = expanded;
     }
-    fn configure(&self, ctx: &egui::Context) {
+    fn configure(&mut self, ctx: &egui::Context) {
         let dark = match self.preferences.theme {
             Theme::Dark => true,
             Theme::Light => false,
             Theme::System => ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark,
         };
+        let style_key = (
+            dark,
+            self.preferences.text_scale.to_bits(),
+            self.motion_enabled,
+        );
+        if self.last_style_key == Some(style_key) {
+            return;
+        }
+        self.last_style_key = Some(style_key);
         // set_visuals alone changes colors, not the theme-specific spacing
         // and typography selected by egui. Keep both on the same theme.
         ctx.set_theme(if dark {
@@ -858,15 +871,13 @@ impl DesktopApp {
             rect.left_top() + Vec2::new(2.0, 6.0),
             rect.right_bottom() - Vec2::new(46.0, 6.0),
         );
-        let times: Vec<_> = data
+        let range = data
             .iter()
             .flat_map(|(samples, _)| samples.iter().map(|(time, _)| *time))
-            .collect();
-        let range = times
-            .iter()
-            .min()
-            .zip(times.iter().max())
-            .map(|(first, last)| (*first, *last));
+            .fold(None::<(Instant, Instant)>, |acc, t| match acc {
+                None => Some((t, t)),
+                Some((min_t, max_t)) => Some((min_t.min(t), max_t.max(t))),
+            });
         if count < 3 {
             // Keep this a semantic label, so the collection state is also
             // available to screen readers and keyboard-only users.
@@ -892,15 +903,14 @@ impl DesktopApp {
             );
         } else if let Some((first, last)) = range {
             let duration = last.duration_since(first).as_secs_f32().max(0.001);
-            let values: Vec<_> = data
+            let (min_val, max_val) = data
                 .iter()
                 .flat_map(|(s, _)| s.iter().filter_map(|(_, v)| *v))
-                .collect();
-            let low =
-                (values.iter().copied().fold(f64::INFINITY, f64::min) / 10.0).floor() * 10.0 - 5.0;
-            let high = (values.iter().copied().fold(f64::NEG_INFINITY, f64::max) / 10.0).ceil()
-                * 10.0
-                + 5.0;
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                    (lo.min(v), hi.max(v))
+                });
+            let low = (min_val / 10.0).floor() * 10.0 - 5.0;
+            let high = (max_val / 10.0).ceil() * 10.0 + 5.0;
             for portion in [0.0, 0.5, 1.0] {
                 let y = egui::lerp(plot.bottom()..=plot.top(), portion);
                 painter.line_segment(
@@ -1719,31 +1729,65 @@ impl DesktopApp {
     }
 
     fn catalog(&mut self, ui: &mut egui::Ui) {
-        ui.add(
+        const PAGE_SIZE: usize = 24;
+        let query_edit = ui.add(
             egui::TextEdit::singleline(&mut self.catalog_query)
                 .hint_text("搜索型号、系列或名称")
                 .desired_width(f32::INFINITY)
                 .margin(14.0),
         );
-        let models = self.controller.matching_models(&self.catalog_query);
+        if query_edit.changed() {
+            self.catalog_page = 0;
+        }
+        let total = self.controller.matching_model_indices(&self.catalog_query).len();
+        let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+        if self.catalog_page >= total_pages {
+            self.catalog_page = total_pages - 1;
+        }
+        let start = self.catalog_page * PAGE_SIZE;
+        let end = (start + PAGE_SIZE).min(total);
         ui.add_space(8.0);
-        ui.label(
-            RichText::new(format!("{} 个产品条目", models.len()))
-                .size(13.0)
-                .color(secondary(ui)),
-        );
-        if models.is_empty() && !self.catalog_query.trim().is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format!("{total} 个产品条目"))
+                    .size(13.0)
+                    .color(secondary(ui)),
+            );
+            if total > PAGE_SIZE {
+                ui.add_space(12.0);
+                if ui
+                    .add_enabled(self.catalog_page > 0, egui::Button::new("上一页"))
+                    .clicked()
+                {
+                    self.catalog_page = self.catalog_page.saturating_sub(1);
+                }
+                ui.label(
+                    RichText::new(format!("第 {} / {} 页", self.catalog_page + 1, total_pages))
+                        .size(13.0)
+                        .color(secondary(ui)),
+                );
+                if ui
+                    .add_enabled(self.catalog_page + 1 < total_pages, egui::Button::new("下一页"))
+                    .clicked()
+                {
+                    self.catalog_page += 1;
+                }
+            }
+        });
+        if total == 0 && !self.catalog_query.trim().is_empty() {
             empty_state(
                 ui,
                 "没有找到匹配的型号",
                 "试试更短的型号名称，或搜索产品系列。",
             );
         }
+        let page_indices: Vec<usize> = self.controller.matching_model_indices(&self.catalog_query)[start..end].to_vec();
         let columns = if ui.available_width() >= 760.0 { 2 } else { 1 };
-        for row in models.chunks(columns) {
+        for row in page_indices.chunks(columns) {
             ui.add_space(12.0);
             ui.columns(columns, |columns| {
-                for (ui, model) in columns.iter_mut().zip(row) {
+                for (ui, &idx) in columns.iter_mut().zip(row) {
+                    let model = &self.controller.catalog[idx];
                     ui.push_id(&model.id, |ui| {
                         surface(ui, |ui| {
                             ui.label(
@@ -2034,10 +2078,11 @@ fn sensor_key(r: &SensorReading) -> String {
     )
 }
 fn sensor_category(r: &SensorReading) -> &'static str {
-    let identity = format!("{} {} {}", r.device_id, r.label, r.source.path).to_lowercase();
     if matches!(r.kind.as_str(), "fan_speed" | "fan") {
-        "FAN"
-    } else if ["nvidia", "amdgpu", "gpu"]
+        return "FAN";
+    }
+    let identity = format!("{} {} {}", r.device_id, r.label, r.source.path).to_lowercase();
+    if ["nvidia", "amdgpu", "gpu"]
         .iter()
         .any(|p| identity.contains(p))
     {
@@ -2076,16 +2121,14 @@ fn primary_temperature<'a>(
     readings: &'a [SensorReading],
     category: &str,
 ) -> Option<&'a SensorReading> {
-    let mut matching: Vec<_> = readings
+    readings
         .iter()
         .filter(|r| is_temperature(r) && sensor_category(r) == category)
-        .collect();
-    matching.sort_by(|a, b| {
-        measured(b)
-            .partial_cmp(&measured(a))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    matching.first().copied()
+        .max_by(|a, b| {
+            measured(a)
+                .partial_cmp(&measured(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
 }
 fn temperature_metric(
     ui: &mut egui::Ui,

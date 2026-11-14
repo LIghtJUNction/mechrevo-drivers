@@ -500,12 +500,21 @@ def sync_oem_profiles() -> None:
             pass
 
 
-def send_notification(title: str, message: str, icon: str = "preferences-system-power") -> None:
-    """Send a notification and propagate notifier failures."""
+def send_notification(
+    title: str,
+    message: str,
+    icon: str = "preferences-system-power",
+    osd_message: str | None = None,
+    osd_icon: str | None = None,
+) -> None:
+    """Send an OSD prompt when available, otherwise fall back to notify-send."""
+    if osd_message and shutil.which("omarchy-osd"):
+        run_cmd(["omarchy-osd", "-i", osd_icon or icon, "-m", osd_message])
+        return
     if not shutil.which("notify-send"):
         raise RuntimeError("通知发送失败：找不到 notify-send")
-    run_cmd(["notify-send", "-u", "critical", "-t", "3000",
-             "-a", "MECHREVO Gaming Center", "-i", icon, title, message])
+    run_cmd(["notify-send", "-u", "normal", "-t", "2500",
+             "-a", "MECHREVO Control", "-i", icon, title, message])
 
 
 def get_current_mode_info() -> tuple[str, str]:
@@ -857,7 +866,13 @@ def set_mode(mode_name: str, notify: bool = False) -> None:
         time.sleep(min(0.1, remaining))
     set_hardware_mode_led(mode_key)
     if notify:
-        send_notification("★ 机械革命电竞控制台 ★", f"运行模式已切换为：【{title_name}】\n{desc_info}")
+        short_title = title_name.split(" (", 1)[0]
+        send_notification(
+            "机械革命控制台",
+            f"运行模式已切换为：{title_name}\n{desc_info}",
+            osd_message=f"运行模式: {short_title}",
+            osd_icon="speedometer",
+        )
     print(f"[✓] 成功切换至机械革命运行模式: {title_name} ({target_id})")
 
 
@@ -943,13 +958,22 @@ def run_daemon(ec_only: bool = False) -> None:
         last_profile_id = None
     else:
         print(f"[*] 机械革命硬件热键守护进程已启动，监听设备: {target_dev}")
-        sync_oem_profiles()
-        last_profile_id = sync_mode_led_from_profile()
+        for attempt in range(10):
+            try:
+                sync_oem_profiles()
+                last_profile_id = sync_mode_led_from_profile()
+                break
+            except Exception as exc:
+                if attempt == 9:
+                    raise
+                print(f"[!] 等待 tccd D-Bus 就绪 ({attempt + 1}/10): {exc}", file=sys.stderr)
+                time.sleep(0.5)
 
     last_mode_trigger = 0.0
     last_fn_trigger = 0.0
     last_tp_trigger = 0.0
     last_kbl_trigger = 0.0
+    poll_timeout = 5.0 if ec_only else 3.0
 
     with open(target_dev, "rb", buffering=0) as f:
         # struct input_event: timeval (16B), type (2B), code (2B), value (4B) -> 24B on 64-bit
@@ -957,7 +981,7 @@ def run_daemon(ec_only: bool = False) -> None:
         event_size = struct.calcsize(event_format)
 
         while True:
-            ready, _, _ = select.select([f], [], [], 1.0)
+            ready, _, _ = select.select([f], [], [], poll_timeout)
             if not ready:
                 if ec_only:
                     continue
@@ -1343,7 +1367,13 @@ def set_screen_color_mode(mode_name: str, notify: bool = True) -> None:
     apply_display_color(temp_k=p["temp"], gamma=p["gamma"], is_identity=p["identity"])
     get_state_file("color_profile").write_text(m_key)
     if notify:
-        send_notification("★ 机械革命电竞控制台 ★", f"屏幕色彩已切换为：【{p['name']}】\n{p['desc']}", icon="video-display")
+        send_notification(
+            "机械革命控制台",
+            f"屏幕色彩已切换为：{p['name']}\n{p['desc']}",
+            icon="video-display",
+            osd_message=f"屏幕色彩: {p['name']}",
+            osd_icon="video-display",
+        )
     print(f"[✓] 机械革命屏幕色彩调教: {p['name']} ({p['desc']})")
 
 
