@@ -317,7 +317,7 @@ static u32 uw_identify_locked(void)
 			 * concurrent ready check cannot observe the model without
 			 * its bounds. */
 			uw_id_tdp(features->model);
-			uw_feats = features;
+			smp_store_release(&uw_feats, features);
 		}
 	}
 	return result;
@@ -342,6 +342,8 @@ static u32 uniwill_identify(void)
  */
 static void uw_ensure_identified(void)
 {
+	if (likely(smp_load_acquire(&uw_feats)))
+		return;
 	mutex_lock(&uniwill_identify_lock);
 	if (!uw_feats)
 		uw_identify_locked();
@@ -354,7 +356,7 @@ static void uw_ensure_identified(void)
 static bool uw_features_ready(void)
 {
 	uw_ensure_identified();
-	return uw_feats != NULL;
+	return READ_ONCE(uw_feats) != NULL;
 }
 
 /*static int fop_open(struct inode *inode, struct file *file)
