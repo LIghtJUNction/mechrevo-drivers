@@ -100,10 +100,10 @@ static int uw_wmi_ec_evaluate(u8 function, u32 arg, u32 *return_buffer)
 		memcpy(return_buffer, out_acpi->buffer.pointer, out_acpi->buffer.length);
 	}
 
+	mutex_unlock(&uniwill_ec_lock);
+
 	kfree(out_acpi);
 	kfree(wmi_arg);
-
-	mutex_unlock(&uniwill_ec_lock);
 
 	return e_result;
 }

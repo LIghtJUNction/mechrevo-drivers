@@ -17,6 +17,9 @@ struct uniwill_device_features_t {
 };
 
 static struct uniwill_device_features_t *uw_feats;
+#define likely(x) __builtin_expect(!!(x), 1)
+#define smp_load_acquire(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define smp_store_release(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
 static pthread_mutex_t uniwill_identify_lock = PTHREAD_MUTEX_INITIALIZER;
 static void mutex_lock(pthread_mutex_t *lock)
 {
