@@ -107,15 +107,49 @@ pub(crate) fn paint_backdrop(ui: &egui::Ui, rect: Rect) {
 }
 
 pub(crate) fn surface<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    surface_padded(ui, false, contents)
+}
+
+pub(crate) fn surface_padded<R>(
+    ui: &mut egui::Ui,
+    compact: bool,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     let colors = palette(ui);
+    let margin = if ui.available_width() < 380.0 {
+        if compact {
+            12.0
+        } else {
+            18.0
+        }
+    } else if compact {
+        16.0
+    } else {
+        24.0
+    };
     let response = egui::Frame::new()
         .fill(colors.panel)
+        .stroke(egui::Stroke::new(1.0, colors.border))
         .corner_radius(16.0)
-        .inner_margin(if ui.available_width() < 380.0 {
-            18.0
-        } else {
-            24.0
-        })
+        .inner_margin(margin)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            contents(ui)
+        });
+    response.inner
+}
+
+pub(crate) fn banner<R>(
+    ui: &mut egui::Ui,
+    fill: Color32,
+    border: Color32,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let response = egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, border))
+        .corner_radius(10.0)
+        .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             contents(ui)
