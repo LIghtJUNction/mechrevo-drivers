@@ -50,7 +50,8 @@ static bool allocation_failure;
 static int allocation_calls, input_frees, output_frees, wmi_calls;
 static void *allocated_input;
 static union acpi_object *allocated_output;
-static void *kzalloc(size_t length, int flags)
+/* Retain the allocator trap to catch reintroduced request allocations. */
+static inline void *kzalloc(size_t length, int flags)
 {
 	assert(flags == GFP_KERNEL && length == 8);
 	++allocation_calls;
@@ -86,7 +87,7 @@ static int wmi_evaluate_method(const char *guid, u8 instance, u32 method,
 	assert(uniwill_ec_lock);
 	assert(strcmp(guid, UNIWILL_WMI_MGMT_GUID_BC) == 0);
 	assert(instance == 0 && method == 4);
-	assert(input->length == 8 && input->pointer == allocated_input);
+	assert(input->length == 8 && input->pointer);
 	assert(output->length == ACPI_ALLOCATE_BUFFER && !output->pointer);
 	memcpy(request, input->pointer, sizeof(request));
 	++wmi_calls;
@@ -174,7 +175,6 @@ static void configure_error(unsigned int error)
 	response_type = ACPI_TYPE_BUFFER;
 	response_length = 40;
 	switch (error) {
-	case 0: allocation_failure = true; break;
 	case 1: acpi_result = 1; break;
 	case 2: missing_object = true; break;
 	case 3: response_type = ACPI_TYPE_INTEGER; break;
@@ -193,7 +193,7 @@ static void evaluate_error(int expected)
 	int calls_before = wmi_calls;
 	assert(uw_wmi_ec_evaluate(0xab, 0x78563412, output.words) == expected);
 	assert(memcmp(&output, &original, sizeof(output)) == 0);
-	assert(wmi_calls == calls_before + !allocation_failure);
+	assert(wmi_calls == calls_before + 1);
 	assert_released();
 }
 
@@ -205,10 +205,36 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < sizeof(payload); ++i)
 		payload[i] = (u8)(i + 0x10);
 
-	if (strcmp(test, "allocation_failure") == 0) {
+	if (strcmp(test, "no_input_allocation") == 0) {
 		allocation_failure = true;
-		evaluate_error(-ENOMEM);
-		assert(allocation_calls == 1 && !lock_calls && !wmi_calls);
+		for (unsigned int i = 0; i < 2048; ++i) {
+			u32 output[10], argument = 0x78563412u ^ (i * 0x01010101u);
+			u8 expected[8] = { 0 }, function = (u8)i;
+			memcpy(expected, &argument, sizeof(argument));
+			expected[5] = function;
+			assert(uw_wmi_ec_evaluate(function, argument, output) == 0);
+			assert(memcmp(request, expected, sizeof(request)) == 0);
+			assert(memcmp(output, payload, sizeof(output)) == 0);
+			assert_released();
+		}
+		assert(!allocation_calls && !input_frees);
+		assert(wmi_calls == 2048 && output_frees == 2048);
+	} else if (strcmp(test, "request_after_error") == 0) {
+		for (unsigned int error = 1; error < 7; ++error) {
+			configure_error(error);
+			evaluate_error(-EIO);
+			configure_error(1);
+			acpi_result = 0;
+			u32 output[10], argument = 0xf0e0d0c0u | error;
+			u8 expected[8] = { 0 };
+			memcpy(expected, &argument, sizeof(argument));
+			expected[5] = (u8)error;
+			assert(uw_wmi_ec_evaluate((u8)error, argument, output) == 0);
+			assert(memcmp(request, expected, sizeof(request)) == 0);
+			assert(memcmp(output, payload, sizeof(output)) == 0);
+			assert_released();
+		}
+		assert(!allocation_calls && !input_frees && wmi_calls == 12);
 	} else if (strcmp(test, "null_destination") == 0) {
 		assert(uw_wmi_ec_evaluate(0xab, 0x78563412, NULL) == -EINVAL);
 		assert(!allocation_calls && !lock_calls && !wmi_calls);
@@ -217,16 +243,16 @@ int main(int argc, char **argv)
 		const u8 expected[] = {0x12, 0x34, 0x56, 0x78, 0, 0xab, 0, 0};
 		assert(uw_wmi_ec_evaluate(0xab, 0x78563412, output) == 0);
 		assert(memcmp(request, expected, sizeof(expected)) == 0);
-		assert(input_frees == 1 && output_frees == 1);
+		assert(!input_frees && output_frees == 1);
 	} else if (strcmp(test, "acpi_failure_with_object") == 0) {
 		acpi_result = 1;
 		evaluate_error(-EIO);
-		assert(input_frees == 1 && output_frees == 1);
+		assert(!input_frees && output_frees == 1);
 	} else if (strcmp(test, "acpi_failure_without_object") == 0) {
 		acpi_result = 1;
 		missing_object = true;
 		evaluate_error(-EIO);
-		assert(input_frees == 1 && output_frees == 0);
+		assert(!input_frees && output_frees == 0);
 	} else if (strcmp(test, "missing_object") == 0) {
 		missing_object = true;
 		evaluate_error(-EIO);
@@ -256,9 +282,9 @@ int main(int argc, char **argv)
 			assert_released();
 		}
 	} else if (strcmp(test, "helper_errors") == 0) {
-		for (unsigned int i = 0; i < 7; ++i) {
+		for (unsigned int i = 1; i < 7; ++i) {
 			configure_error(i);
-			int expected = i == 0 ? -ENOMEM : -EIO;
+			int expected = -EIO;
 			union uw_ec_read_return read_output = {.dword = 0xdeadbeef};
 			union uw_ec_write_return write_output = {.dword = 0xdeadbeef};
 			assert(uw_ec_read_addr_wmi(0x34, 0x12, &read_output) == expected);
@@ -287,10 +313,10 @@ int main(int argc, char **argv)
 		assert(memcmp(request, write_request, sizeof(request)) == 0);
 		assert(write_output.dword == expected);
 	} else if (strcmp(test, "ram_read_error") == 0) {
-		for (unsigned int i = 0; i < 7; ++i) {
+		for (unsigned int i = 1; i < 7; ++i) {
 			configure_error(i);
 			u8 output = 0xa5;
-			assert(uw_wmi_read_ec_ram(0x1234, &output) == (i == 0 ? -ENOMEM : -EIO));
+			assert(uw_wmi_read_ec_ram(0x1234, &output) == -EIO);
 			assert(output == 0xa5);
 			assert_released();
 		}

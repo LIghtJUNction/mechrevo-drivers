@@ -81,8 +81,11 @@ class UniwillWmiRuntime(unittest.TestCase):
         result = subprocess.run([str(self.binary), case], text=True, capture_output=True, timeout=10, preexec_fn=disable_core_dumps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_allocation_failure_never_calls_wmi(self):
-        self.check_case("allocation_failure")
+    def test_repeated_requests_need_no_input_allocation_and_preserve_abi(self):
+        self.check_case("no_input_allocation")
+
+    def test_success_after_each_response_error_preserves_fresh_request_and_output(self):
+        self.check_case("request_after_error")
 
     def test_null_destination_never_allocates_or_calls_wmi(self):
         self.check_case("null_destination")

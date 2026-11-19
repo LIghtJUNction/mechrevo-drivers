@@ -64,20 +64,17 @@ static int uw_wmi_ec_evaluate(u8 function, u32 arg, u32 *return_buffer)
 	acpi_status status;
 	union acpi_object *out_acpi;
 	int e_result = 0;
-	u8 *wmi_arg;
+	/* WMI consumes the request synchronously; its fixed eight bytes need
+	 * no per-transaction allocation. Keep every reserved byte zero. */
+	u8 wmi_arg[UW_WMI_EC_INPUT_SIZE] = { 0 };
 
 	u8 wmi_instance = 0x00;
 	u32 wmi_method_id = 0x04;
-	struct acpi_buffer wmi_in = { UW_WMI_EC_INPUT_SIZE, NULL };
+	struct acpi_buffer wmi_in = { sizeof(wmi_arg), wmi_arg };
 	struct acpi_buffer wmi_out = { ACPI_ALLOCATE_BUFFER, NULL };
 
 	if (!return_buffer)
 		return -EINVAL;
-
-	wmi_arg = kzalloc(UW_WMI_EC_INPUT_SIZE, GFP_KERNEL);
-	if (!wmi_arg)
-		return -ENOMEM;
-	wmi_in.pointer = wmi_arg;
 
 	memcpy(wmi_arg, &arg, sizeof(arg));
 	wmi_arg[5] = function;
@@ -103,7 +100,6 @@ static int uw_wmi_ec_evaluate(u8 function, u32 arg, u32 *return_buffer)
 	mutex_unlock(&uniwill_ec_lock);
 
 	kfree(out_acpi);
-	kfree(wmi_arg);
 
 	return e_result;
 }
