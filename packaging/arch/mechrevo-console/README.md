@@ -53,7 +53,8 @@ systemctl enable --now mechrevo-ec-hotkey.service
 实体灯光／RPM、游戏性能及 Windows 实机不在本轮结论范围内。
 更新不自动覆盖已有用户配置；本机 profile/settings 安装前后内容一致，恢复材料保存在本机统一备份目录。
 
-构建需要 Rust 1.95 以上、Git、pkgconf、desktop-file-utils 和 libxml2；makepkg/AUR helper
+当前主线控制台构建需要 Rust 1.99.1 以上、Git、pkgconf、desktop-file-utils 和 libxml2；
+上方固定历史提交的最低 Rust 版本仍以该提交的 Cargo.toml 为准。makepkg/AUR helper
 可按配方安装缺失的系统构建依赖。`prepare()` 先用 `cargo fetch --locked` 下载当前架构的
 锁定依赖，首次构建不要求事先准备 Cargo 缓存；网络或锁文件检查失败就停止。
 编译仍使用 `--release --workspace --all-features --locked --offline`，不会联网更新依赖

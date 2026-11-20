@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 pub mod brightness;
+pub mod color;
 pub mod command;
 pub mod oem;
 pub mod privilege;

@@ -14,7 +14,7 @@ license=('GPL-2.0-or-later' 'OFL-1.1')
 depends=('glibc' 'libgcc' 'fontconfig' 'libxkbcommon' 'libxkbcommon-x11'
          'wayland' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'libglvnd' 'polkit'
          'python' 'systemd')
-# Cargo enforces the GUI's Rust 1.95 minimum; rustup also provides `rust`.
+# Cargo enforces the pinned source's rust-version; rustup also provides `rust`.
 makedepends=('git' 'rust' 'pkgconf' 'desktop-file-utils' 'libxml2')
 optdepends=('noto-fonts-cjk: Chinese system font fallback')
 options=('!strip' '!debug' '!lto')

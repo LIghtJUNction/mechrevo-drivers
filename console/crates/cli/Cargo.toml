@@ -17,3 +17,4 @@ path = "src/oem_helper.rs"
 [dependencies]
 mechrevo-console-core = { path = "../core" }
 serde_json.workspace = true
+zclap.workspace = true

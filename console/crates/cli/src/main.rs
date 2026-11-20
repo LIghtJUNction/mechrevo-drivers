@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 #[cfg(any(target_os = "linux", test))]
 use std::io::Read;
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::OpenOptions,
     io::{self, Write},
     path::PathBuf,
@@ -27,98 +27,144 @@ enum Action {
     OemSet(String, String, bool),
     Export(PathBuf),
 }
-fn text(arg: &OsString) -> Result<&str, ControlError> {
+fn text(arg: &OsStr) -> Result<&str, ControlError> {
     arg.to_str()
         .ok_or_else(|| ControlError::new("invalid_argument", "This argument must be valid Unicode"))
 }
 fn usage(message: impl Into<String>) -> ControlError {
     ControlError::new("invalid_arguments", message)
 }
+// One borrowed grammar serves normal CLI invocation and parser tests. zclap
+// validates unknown/repeated options before any service or hardware access.
+const CLI: zclap::Command<'static> = zclap::Command::new("mechrevo-console")
+    .args(&[
+        zclap::Arg::flag("help").short('h').conflicts("version"),
+        zclap::Arg::flag("version").short('V'),
+    ])
+    .subcommands(&[
+        zclap::Command::new("status").args(&[zclap::Arg::flag("json")]),
+        zclap::Command::new("capabilities"),
+        zclap::Command::new("models").args(&[zclap::Arg::positional("query")]),
+        zclap::Command::new("profile").args(&[
+            zclap::Arg::positional("profile").required(),
+            zclap::Arg::flag("dry-run"),
+        ]),
+        zclap::Command::new("brightness").args(&[
+            zclap::Arg::positional("percent"),
+            zclap::Arg::value("device"),
+            zclap::Arg::flag("dry-run").requires("percent"),
+        ]),
+        zclap::Command::new("oem").subcommands(&[
+            zclap::Command::new("list"),
+            zclap::Command::new("set").args(&[
+                zclap::Arg::positional("control").required(),
+                zclap::Arg::positional("target").required(),
+                zclap::Arg::flag("dry-run"),
+            ]),
+        ]),
+        zclap::Command::new("export").args(&[zclap::Arg::value("output").required()]),
+    ]);
 fn parse(args: Vec<OsString>) -> Result<Action, ControlError> {
-    let Some(command) = args.first() else {
-        return Ok(Action::Help);
-    };
-    let command = text(command)?;
-    let rest = &args[1..];
-    match command {
-        "--help" | "-h" if rest.is_empty() => Ok(Action::Help),
-        "--version" | "-V" if rest.is_empty() => Ok(Action::Version),
-        "status" if rest.is_empty() => Ok(Action::Status(false)),
-        "status" if rest.len() == 1 && rest[0] == "--json" => Ok(Action::Status(true)),
-        "capabilities" if rest.is_empty() => Ok(Action::Capabilities),
-        "models" if rest.len() <= 1 => Ok(Action::Models(
-            rest.first().map(text).transpose()?.unwrap_or("").into(),
-        )),
-        "profile" => {
-            if rest.is_empty() || rest.len() > 2 {
-                return Err(usage("profile requires one profile and optional --dry-run"));
+    use zclap::Event;
+
+    let mut command = "";
+    let (mut help, mut version, mut json, mut dry_run) = (false, false, false, false);
+    let (mut query, mut profile, mut percent, mut device) = (None, None, None, None);
+    let (mut control, mut target, mut output) = (None, None, None);
+    let mut parser = CLI.parse_os(&args);
+    while let Some(event) = parser.next().map_err(|error| usage(error.to_string()))? {
+        match event {
+            Event::Command { name } => command = name,
+            Event::Flag { arg: "help" } => help = true,
+            Event::Flag { arg: "version" } => version = true,
+            Event::Flag { arg: "json" } => json = true,
+            Event::Flag { arg: "dry-run" } => dry_run = true,
+            Event::Value {
+                arg: "query",
+                value,
+            } => query = Some(text(value)?),
+            Event::Value {
+                arg: "profile",
+                value,
+            } => {
+                profile = Some(PowerProfile::from_str(text(value)?)?);
             }
-            let profile = PowerProfile::from_str(text(&rest[0])?)?;
-            let dry = rest.len() == 2;
-            if dry && rest[1] != "--dry-run" {
-                return Err(usage("Unknown profile option"));
-            }
-            Ok(Action::Profile(profile, dry))
-        }
-        "brightness" => {
-            let mut percent = None;
-            let mut device = None;
-            let mut dry = false;
-            let mut i = 0;
-            while i < rest.len() {
-                let token = text(&rest[i])?;
-                match token {
-                    "--dry-run" if !dry => dry = true,
-                    "--device" if device.is_none() => {
-                        i += 1;
-                        let arg = rest
-                            .get(i)
-                            .ok_or_else(|| usage("--device needs a device ID"))?;
-                        let id = text(arg)?;
-                        if id.is_empty() {
-                            return Err(usage("Device ID must not be empty"));
-                        }
-                        device = Some(id.into());
-                    }
-                    value if percent.is_none() => {
-                        let value = value.parse::<u16>().map_err(|_| {
-                            usage("Brightness percent must be an integer from 0 through 100")
-                        })?;
-                        if value > 100 {
-                            return Err(usage("Brightness percent must be 0 through 100"));
-                        }
-                        percent = Some(value as u8);
-                    }
-                    _ => return Err(usage("Unknown or repeated brightness argument")),
+            Event::Value {
+                arg: "percent",
+                value,
+            } => {
+                let value = text(value)?.parse::<u16>().map_err(|_| {
+                    usage("Brightness percent must be an integer from 0 through 100")
+                })?;
+                if value > 100 {
+                    return Err(usage("Brightness percent must be 0 through 100"));
                 }
-                i += 1;
+                percent = Some(value as u8);
             }
-            if dry && percent.is_none() {
-                return Err(usage("--dry-run requires a target percent"));
+            Event::Value {
+                arg: "device",
+                value,
+            } => {
+                let value = text(value)?;
+                if value.is_empty() {
+                    return Err(usage("Device ID must not be empty"));
+                }
+                device = Some(value);
             }
-            Ok(Action::Brightness(percent, device, dry))
+            Event::Value {
+                arg: "control",
+                value,
+            } => control = Some(text(value)?),
+            Event::Value {
+                arg: "target",
+                value,
+            } => target = Some(text(value)?),
+            // Keep native OS strings here: Unix paths need not be UTF-8.
+            Event::Value {
+                arg: "output",
+                value,
+            } => output = Some(value),
+            _ => return Err(usage("Unrecognized command definition")),
         }
-        "oem" if rest.len() == 1 && rest[0] == "list" => Ok(Action::OemList),
-        "oem" if (rest.len() == 3 || rest.len() == 4) && rest[0] == "set" => {
-            let id = text(&rest[1])?;
-            let value = text(&rest[2])?;
+    }
+    parser.finish().map_err(|error| usage(error.to_string()))?;
+    if (help || version) && !command.is_empty() {
+        return Err(usage(
+            "Help and version must be requested without a subcommand",
+        ));
+    }
+    match command {
+        "" if version => Ok(Action::Version),
+        "" => Ok(Action::Help),
+        "status" => Ok(Action::Status(json)),
+        "capabilities" => Ok(Action::Capabilities),
+        "models" => Ok(Action::Models(query.unwrap_or("").into())),
+        "profile" => Ok(Action::Profile(
+            profile.ok_or_else(|| usage("profile requires one profile"))?,
+            dry_run,
+        )),
+        "brightness" => Ok(Action::Brightness(
+            percent,
+            device.map(String::from),
+            dry_run,
+        )),
+        "list" => Ok(Action::OemList),
+        "set" => {
+            let id = control.ok_or_else(|| usage("oem set requires a control ID"))?;
+            let value = target.ok_or_else(|| usage("oem set requires a value"))?;
             if id.is_empty() || value.is_empty() || id.starts_with("--") || value.starts_with("--")
             {
                 return Err(usage("oem set requires a control ID and a value"));
             }
-            let dry = rest.len() == 4;
-            if dry && rest[3] != "--dry-run" {
-                return Err(usage("Unknown OEM option; only --dry-run is accepted"));
-            }
-            Ok(Action::OemSet(id.into(), value.into(), dry))
+            Ok(Action::OemSet(id.into(), value.into(), dry_run))
+        }
+        "export" => {
+            let path = output.filter(|value| !value.is_empty()).ok_or_else(|| {
+                usage("export requires --output PATH; existing files are never replaced")
+            })?;
+            Ok(Action::Export(PathBuf::from(path)))
         }
         "oem" => Err(usage("Use oem list or oem set ID VALUE [--dry-run]")),
-        "export" if rest.len() == 2 && rest[0] == "--output" && !rest[1].is_empty() => {
-            Ok(Action::Export(PathBuf::from(&rest[1])))
-        }
-        "export" => Err(usage(
-            "export requires --output PATH; existing files are never replaced",
-        )),
         _ => Err(usage("Unknown command or invalid options; use --help")),
     }
 }
@@ -187,19 +233,7 @@ fn parse_oem_value(
             Ok(OemValue::Level(level))
         }
         (OemControlKind::KeyboardColor, OemDomain::Rgb) => {
-            if raw.len() != 7
-                || !raw.starts_with('#')
-                || !raw.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
-            {
-                return Err(oem_value_error("Keyboard color requires #RRGGBB"));
-            }
-            let rgb = u32::from_str_radix(&raw[1..], 16)
-                .map_err(|_| oem_value_error("Keyboard color requires #RRGGBB"))?;
-            Ok(OemValue::Rgb([
-                (rgb >> 16) as u8,
-                (rgb >> 8) as u8,
-                rgb as u8,
-            ]))
+            mechrevo_console_core::color::parse_rgb_hex(raw).map(OemValue::Rgb)
         }
         _ => Err(ControlError::new(
             "invalid_oem_domain",
@@ -449,6 +483,67 @@ mod tests {
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
     }
+
+    #[test]
+    fn project_z_grammar_keeps_options_scoped_and_supports_attached_values() {
+        assert!(CLI.check().is_ok());
+        assert_eq!(parse(args(&[])).unwrap(), Action::Help);
+        assert_eq!(parse(args(&["-h"])).unwrap(), Action::Help);
+        assert_eq!(parse(args(&["-V"])).unwrap(), Action::Version);
+        assert_eq!(
+            parse(args(&["brightness", "--device=screen", "42", "--dry-run"])).unwrap(),
+            Action::Brightness(Some(42), Some("screen".into()), true)
+        );
+        assert_eq!(
+            parse(args(&["export", "--output=中文 空格.json"])).unwrap(),
+            Action::Export("中文 空格.json".into())
+        );
+        for values in [
+            vec!["--help", "status"],
+            vec!["--version", "status"],
+            vec!["--help", "--version"],
+            vec!["status", "--json", "--json"],
+            vec!["brightness", "10", "--device=one", "--device=two"],
+            vec!["brightness", "10", "--device="],
+            vec!["brightness", "--device", "--dry-run"],
+            vec!["profile", "balanced", "--dry-run", "--dry-run"],
+            vec!["export", "--output="],
+            vec!["export", "--output=a", "--output=b"],
+            vec!["oem", "set", "--", "fn_lock", "--dry-run"],
+        ] {
+            assert!(parse(args(&values)).is_err(), "Accepted {values:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_export_paths_are_preserved_while_control_text_requires_unicode() {
+        use std::os::unix::ffi::OsStringExt;
+        let path = OsString::from_vec(b"report-\xff.json".to_vec());
+        assert_eq!(
+            parse(vec!["export".into(), "--output".into(), path.clone()]).unwrap(),
+            Action::Export(PathBuf::from(&path))
+        );
+        let attached = OsString::from_vec(b"--output=report-\xff.json".to_vec());
+        assert_eq!(
+            parse(vec!["export".into(), attached]).unwrap(),
+            Action::Export(PathBuf::from(path))
+        );
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert_eq!(
+            parse(vec!["models".into(), invalid.clone()])
+                .unwrap_err()
+                .code,
+            "invalid_argument"
+        );
+        assert_eq!(
+            parse(vec!["brightness".into(), "--device".into(), invalid])
+                .unwrap_err()
+                .code,
+            "invalid_argument"
+        );
+    }
+
     #[test]
     fn oem_commands_require_explicit_control_value_and_known_options() {
         assert_eq!(parse(args(&["oem", "list"])).unwrap(), Action::OemList);
