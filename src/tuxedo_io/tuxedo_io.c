@@ -536,17 +536,26 @@ static int uw_get_tdp_min(u8 tdp_index)
 
 static int uw_get_tdp_max(u8 tdp_index)
 {
+	int maximum, encoding_max = 0xff;
+
 	if (tdp_index > 2)
 		return -EINVAL;
 
 	if (tdp_max_defs == NULL)
 		return -ENODEV;
 
-	if (tdp_max_defs[tdp_index] <= 0) {
+	maximum = tdp_max_defs[tdp_index];
+	if (maximum <= 0)
 		return -ENODEV;
-	}
 
-	return tdp_max_defs[tdp_index];
+	/* Tables describe model limits, but the EC wire value is still a byte.
+	 * A missing double-PL4 capability must not wrap 400 W into 144 W.
+	 * Publish the effective limit so callers cannot offer an invalid target.
+	 */
+	if (tdp_index == 2 && uw_feats && uw_feats->uniwill_has_double_pl4)
+		encoding_max *= 2;
+
+	return maximum < encoding_max ? maximum : encoding_max;
 }
 
 static int uw_get_tdp(u8 tdp_index)

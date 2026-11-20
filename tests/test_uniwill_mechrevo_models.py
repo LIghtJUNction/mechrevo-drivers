@@ -26,6 +26,7 @@ class MechrevoModels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         parent = Path(os.environ.get('UNIWILL_TEST_TMPDIR', ROOT / '.local-tests'))
+        parent.mkdir(parents=True, exist_ok=True)
         cls.temp = tempfile.TemporaryDirectory(prefix='mechrevo-models-', dir=parent)
         cls.addClassCleanup(cls.temp.cleanup)
         keyboard = Path(os.environ.get('MECHREVO_MODEL_KEYBOARD',
@@ -89,6 +90,9 @@ class MechrevoModels(unittest.TestCase):
 
     def test_gm6bg0q_modes_and_oem_bounds_require_the_complete_identity(self):
         self.check_case('gm6bg0q')
+
+    def test_tdp_limits_follow_pl4_scaling_without_byte_overflow(self):
+        self.check_case('tdp_encoding')
 
     def test_missing_foreign_and_similar_identities_never_inherit_support(self):
         self.check_case('identity')

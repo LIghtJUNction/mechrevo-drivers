@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -141,6 +142,68 @@ static void jiaolong(void)
 #endif
     assert(uw_set_tdp(3, 50) == -EINVAL);
     assert(uw_get_tdp(255) == -EINVAL);
+}
+static void tdp_encoding(void)
+{
+    const struct {
+        const char *board, *sku;
+        int limits[3];
+    } models[] = {
+        {"GM6IXxB_MB1", "STELLARIS16I06", {205, 205, 400}},
+        {"X6AR5xxY", "STELLARIS16I07", {210, 210, 420}},
+        {"X6AR55xU", NULL, {145, 155, 290}},
+        {"XxAF5xxx", NULL, {210, 210, 420}},
+        {"XxAF5xxx_mLED", NULL, {210, 210, 420}},
+    };
+    for (unsigned model = 0; model < sizeof(models) / sizeof(*models); ++model) {
+        for (int doubled = 0; doubled < 2; ++doubled) {
+            reset();
+            double_pl4 = doubled;
+            detect("TUXEDO", models[model].board, models[model].sku);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
+            if (!doubled) {
+                int before = writes;
+                written_value = 0xa5;
+                int status = uw_set_tdp(2, models[model].limits[2]);
+                if (status != -EINVAL || writes != before)
+                    fprintf(stderr, "single-byte PL4 accepted %d W as byte %u (status %d)\n",
+                            models[model].limits[2], written_value, status);
+                assert(status == -EINVAL && writes == before && written_value == 0xa5);
+            }
+            for (int index = 0; index < 3; ++index) {
+                int minimum = uw_get_tdp_min(index);
+                int maximum = models[model].limits[index];
+                int encoding_max = index == 2 && doubled ? 510 : 255;
+                int effective_max = maximum < encoding_max ? maximum : encoding_max;
+                assert(uw_get_tdp_max(index) == effective_max);
+                for (int value = 0; value <= maximum + 1; ++value) {
+                    int before = writes;
+                    bool valid = value >= minimum && value <= effective_max;
+                    written_index = 0xee;
+                    written_value = 0xa5;
+                    assert(uw_set_tdp(index, value) == (valid ? 0 : -EINVAL));
+                    assert(writes == before + valid);
+                    if (valid) {
+                        int encoded = index == 2 && doubled ? value / 2 : value;
+                        assert(written_index == index && written_value == encoded);
+                        ec[0x0783 + index] = written_value;
+                        assert(uw_get_tdp(index) == (index == 2 && doubled ? encoded * 2 : encoded));
+                    } else {
+                        assert(written_index == 0xee && written_value == 0xa5);
+                    }
+                }
+            }
+#else
+            /* DMI-based TDP selection is unavailable before 4.18. */
+            for (int index = 0; index < 3; ++index) {
+                assert(uw_get_tdp_min(index) == -ENODEV);
+                assert(uw_get_tdp_max(index) == -ENODEV);
+                assert(uw_set_tdp(index, models[model].limits[index]) == -ENODEV);
+                assert(writes == 0);
+            }
+#endif
+        }
+    }
 }
 static void identity(void)
 {
@@ -362,6 +425,7 @@ int main(int argc, char **argv)
     assert(argc == 2);
     if (!strcmp(argv[1], "gx4hrxl")) gx4hrxl();
     else if (!strcmp(argv[1], "jiaolong")) jiaolong();
+    else if (!strcmp(argv[1], "tdp_encoding")) tdp_encoding();
     else if (!strcmp(argv[1], "identity")) identity();
     else if (!strcmp(argv[1], "existing")) existing();
     else if (!strcmp(argv[1], "retry")) retry();
