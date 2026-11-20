@@ -188,6 +188,38 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(result["modules"], [name])
         self.assertEqual(result["prerequisites"], [])
 
+    def test_regression_domains_run_new_modules_and_keep_other_domains_out(self):
+        expected = {
+            "driver": (
+                "test_driver_quality_runtime.py", "test_platform_driver_quality.py",
+                "test_peripheral_driver_failures.py", "test_uniwill_verifier_existing.py",
+            ),
+            "console": ("test_mechrevo_touchpad.py", "test_console_verifier_existing.py"),
+        }
+        files = {name for names in expected.values() for name in names}
+        files.add("test_power_verifier_outside.py")
+        previous = {Path(name).stem: sys.modules.pop(Path(name).stem, None) for name in files}
+
+        def restore_modules():
+            for name, module in previous.items():
+                sys.modules.pop(name, None)
+                if module is not None:
+                    sys.modules[name] = module
+
+        self.addCleanup(restore_modules)
+        for name in files:
+            body = ("raise AssertionError('unrelated domain must not load')\n"
+                    if name == "test_power_verifier_outside.py" else
+                    "import unittest\nclass T(unittest.TestCase):\n def test_selected(self): pass\n")
+            (self.root / "tests" / name).write_text(body)
+
+        for domain, names in expected.items():
+            with self.subTest(domain=domain):
+                code, result, _ = self.run_main(["--domain", domain])
+                self.assertEqual((code, result["outcome"]), (0, "passed"))
+                self.assertEqual(result["modules"], sorted(names))
+                self.assertEqual((result["discovered"], result["ran"]), (len(names), len(names)))
+
     def test_derived_immutable_outcome(self):
         result = verify.Report("all", discovered=1, ran=1, skipped=1)
         self.assertEqual(result.outcome, verify.Outcome.INCOMPLETE)
