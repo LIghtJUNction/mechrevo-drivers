@@ -339,6 +339,98 @@ fn five_profile_dashboard_is_responsive_in_both_themes() {
 }
 
 #[test]
+fn complete_desktop_overview_keeps_daily_controls_on_the_first_screen() {
+    let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
+    let profile_labels = [
+        "办公节能\n轻负载 · 节能优先",
+        "游戏低噪\n游戏参数 · 较低风扇请求",
+        "游戏平衡\n动态睿频 · 日常游戏",
+        "狂暴性能\n性能优先 · 允许空闲降频",
+        "全速强冷\n全速风扇请求 · 快速散热",
+    ];
+    for theme in [Theme::Dark, Theme::Light] {
+        // Include actual performance choices, charging controls, a writable
+        // display, temperatures and both named fans in the same rendered view.
+        let mut app = performance_fixture();
+        app.preferences.theme = theme;
+        app.controller.select_brightness_device("fixture-panel");
+        let mut harness = Harness::new([1280, 900], 1.0, fonts.clone());
+        let (metrics, output) = settle(&mut harness, &mut app);
+        assert_width("complete desktop overview", &metrics);
+        assert_client_bounds(
+            "complete desktop overview",
+            &metrics,
+            harness.physical,
+            output.pixels_per_point,
+        );
+        assert!(
+            metrics.scroll_offset.y.abs() < 0.001,
+            "daily controls must be visible before scrolling"
+        );
+        let viewport = metrics.viewport.expand(1.0);
+        let profiles: Vec<_> = profile_labels
+            .iter()
+            .map(|label| {
+                let (_, bounds) = accessible_control(&output, label, egui::accesskit::Role::Button);
+                assert!(
+                    viewport.contains_rect(bounds),
+                    "performance choice '{label}' is clipped on the first screen: {bounds:?}"
+                );
+                bounds
+            })
+            .collect();
+        for pair in profiles.windows(2) {
+            assert!(
+                (pair[0].top() - pair[1].top()).abs() <= 1.0
+                    && pair[0].right() <= pair[1].left(),
+                "the five desktop performance choices must share one row without overlap: {profiles:?}"
+            );
+        }
+        let text = rendered_text(&output);
+        for label in ["当前运行", "狂暴性能", "电池保养", "屏幕亮度"] {
+            let shape = text
+                .iter()
+                .find(|shape| shape.galley.job.text == label)
+                .unwrap_or_else(|| panic!("daily-control label '{label}' is missing"));
+            let bounds = shape.galley.rect.translate(shape.pos.to_vec2());
+            assert!(
+                viewport.contains_rect(bounds),
+                "daily-control label '{label}' is clipped on the first screen: {bounds:?}"
+            );
+        }
+        for label in ["预览档位更改", "预览充电更改", "预览亮度", "长期接电"] {
+            let (_, bounds) = accessible_control(&output, label, egui::accesskit::Role::Button);
+            assert!(
+                viewport.contains_rect(bounds),
+                "daily-control action '{label}' needs scrolling: {bounds:?}"
+            );
+        }
+        assert!(!app.controller.busy());
+        assert!(app.controller.oem_preview.is_none());
+        assert!(app.controller.brightness_preview.is_none());
+
+        // The first-screen charging entry must edit the real typed target,
+        // while keeping the driver's current state and explicit preview step.
+        let (_, charging) = accessible_control(&output, "长期接电", egui::accesskit::Role::Button);
+        click(&mut harness, &mut app, charging.center());
+        assert_eq!(
+            app.controller.selected_oem_control.as_deref(),
+            Some("charging_profile")
+        );
+        assert_eq!(
+            app.controller.requested_oem_value,
+            Some(OemValue::Choice("stationary".into()))
+        );
+        assert_eq!(
+            app.controller.selected_oem().unwrap().current,
+            Some(OemValue::Choice("high_capacity".into()))
+        );
+        assert!(!app.controller.busy());
+        assert!(app.controller.oem_preview.is_none());
+    }
+}
+
+#[test]
 fn profile_selection_does_not_apply_or_change_current_readback() {
     let fonts = Arc::new(SystemFontProvider::new().with_locale(Some("zh-Hans")));
     let mut app = performance_fixture();
@@ -1449,7 +1541,7 @@ fn overview_gives_compact_space_to_real_device_readings() {
         );
         let panel = metrics.thermal_panel_rect;
         assert!(
-            panel.is_finite() && (240.0..=290.0).contains(&panel.height()),
+            panel.is_finite() && (180.0..=250.0).contains(&panel.height()),
             "thermal card with two actual fan readings is no longer compact: {panel:?}"
         );
         let (_, navigation) = accessible_control(&output, "概览", egui::accesskit::Role::Button);

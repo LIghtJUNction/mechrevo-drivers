@@ -213,13 +213,13 @@ impl DesktopApp {
         v.selection.stroke = Stroke::new(1.0, colors.accent);
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, line);
         v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text);
-        v.widgets.inactive.weak_bg_fill = panel;
-        v.widgets.inactive.bg_fill = panel;
-        v.widgets.inactive.bg_stroke = Stroke::new(1.0, line);
+        v.widgets.inactive.weak_bg_fill = colors.raised;
+        v.widgets.inactive.bg_fill = colors.raised;
+        v.widgets.inactive.bg_stroke = Stroke::NONE;
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, text);
-        v.widgets.hovered.bg_fill = colors.raised;
+        v.widgets.hovered.bg_fill = colors.border;
         v.widgets.hovered.weak_bg_fill = v.widgets.hovered.bg_fill;
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0, colors.accent);
+        v.widgets.hovered.bg_stroke = Stroke::NONE;
         v.widgets.hovered.fg_stroke = Stroke::new(1.0, text);
         v.widgets.active = v.widgets.hovered;
         v.widgets.open = v.widgets.hovered;
@@ -327,22 +327,13 @@ impl DesktopApp {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(side);
                 let content_width = if self.side_navigation {
-                    let sidebar_resp = ui.allocate_ui_with_layout(
+                    ui.allocate_ui_with_layout(
                         Vec2::new(184.0, ui.available_height()),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             ui.set_width(184.0);
                             self.sidebar(ui);
                         },
-                    );
-                    let divider_x = sidebar_resp.response.rect.right() + 12.0;
-                    let rect = sidebar_resp.response.rect;
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(divider_x, rect.top() + 4.0),
-                            egui::pos2(divider_x, rect.bottom() - 4.0),
-                        ],
-                        Stroke::new(1.0, divider(ui)),
                     );
                     ui.add_space(24.0);
                     width - 208.0
@@ -379,14 +370,6 @@ impl DesktopApp {
                 if self.motion_enabled { 0.2 } else { 0.0 },
             );
             let fill = colors.selection.gamma_multiply(t);
-            let stroke = Stroke::new(
-                1.0,
-                if selected {
-                    colors.accent.gamma_multiply(0.45 * t)
-                } else {
-                    Color32::TRANSPARENT
-                },
-            );
             let response = ui.add(
                 egui::Button::new(RichText::new(label).size(13.0).color(if selected {
                     colors.accent
@@ -395,7 +378,7 @@ impl DesktopApp {
                 }))
                 .selected(selected)
                 .fill(fill)
-                .stroke(stroke)
+                .stroke(Stroke::NONE)
                 .corner_radius(9.0),
             );
             if response.clicked() {
@@ -410,7 +393,7 @@ impl DesktopApp {
         ui.spacing_mut().item_spacing.x = 10.0;
         let compact_header = ui.available_width() < 480.0;
         self.header(ui);
-        ui.add_space(if compact_header { 10.0 } else { 18.0 });
+        ui.add_space(if compact_header { 10.0 } else { 16.0 });
         let mut bottom_marker = Rect::NOTHING;
         let mut heading_rect = Rect::NOTHING;
         let mut thermal_panel_rect = Rect::NOTHING;
@@ -432,7 +415,6 @@ impl DesktopApp {
                 self.display_settings(ui);
             }
             self.feedback(ui);
-            ui.add_space(8.0);
             heading_rect = ui.scope(|ui| self.editorial_heading(ui)).response.rect;
             ui.add_space(18.0);
             match self.section {
@@ -451,9 +433,7 @@ impl DesktopApp {
                 Section::Sensors => self.sensors(ui),
                 Section::Catalog => self.catalog(ui),
             }
-            ui.add_space(30.0);
-            ui.separator();
-            ui.add_space(6.0);
+            ui.add_space(24.0);
             bottom_marker = ui
                 .label(
                     RichText::new("MECHREVO  /  CONTROL CENTER")
@@ -494,7 +474,7 @@ impl DesktopApp {
                 ui.label(RichText::new("控制中心").size(12.0).color(secondary(ui)));
             } else {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
-                icon(ui.painter(), rect, Icon::Brand, green(ui));
+                icon(ui.painter(), rect, Icon::Brand, accent(ui));
                 ui.label(RichText::new("MECHREVO").font(appearance::display_font(20.0)));
                 ui.add_space(if wide { 20.0 } else { 6.0 });
                 self.navigation(ui);
@@ -513,7 +493,6 @@ impl DesktopApp {
             ui.horizontal_wrapped(|ui| self.header_actions(ui));
         }
         ui.add_space(2.0);
-        ui.separator();
     }
 
     fn header_actions(&mut self, ui: &mut egui::Ui) {
@@ -735,11 +714,6 @@ impl DesktopApp {
         ui.scope(|ui| {
             appearance::surface_padded(ui, compact, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
-                // Set the content minimum before advancing the cursor: egui
-                // measures this height from the current position.
-                if ui.available_width() >= 680.0 {
-                    ui.set_min_height(222.0);
-                }
                 ui.label(
                     RichText::new("实时监测")
                         .size(15.0)
@@ -749,9 +723,8 @@ impl DesktopApp {
                 ui.add_space(8.0);
                 let width = ui.available_width();
                 if width >= 680.0 {
-                    // Standard desktop view is 270 px including the material's
-                    // margins. This is a minimum, never a clip: large text and
-                    // additional sensors are free to make the panel taller.
+                    // Natural content height keeps everyday controls nearby;
+                    // extra sensors and larger text remain free to grow.
                     let left = width * 0.45 - 14.0;
                     let right = width - left - 28.0;
                     ui.horizontal_top(|ui| {
@@ -762,7 +735,7 @@ impl DesktopApp {
                             |ui| {
                                 ui.set_width(left);
                                 ui.columns(2, |columns| {
-                                    let cpu_color = green(&columns[0]);
+                                    let cpu_color = foreground(&columns[0]);
                                     let gpu_color = amber(&columns[1]);
                                     temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
                                     temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
@@ -787,7 +760,7 @@ impl DesktopApp {
                 } else {
                     if width >= 280.0 {
                         ui.columns(2, |columns| {
-                            let cpu_color = green(&columns[0]);
+                            let cpu_color = foreground(&columns[0]);
                             let gpu_color = amber(&columns[1]);
                             temperature_metric(&mut columns[0], "CPU", cpu, cpu_color);
                             temperature_metric(&mut columns[1], "GPU", gpu, gpu_color);
@@ -799,7 +772,7 @@ impl DesktopApp {
                             }
                         });
                     } else {
-                        temperature_metric(ui, "CPU", cpu, green(ui));
+                        temperature_metric(ui, "CPU", cpu, foreground(ui));
                         for fan in cpu_fans.iter().take(3) {
                             component_fan_metric(ui, fan);
                         }
@@ -863,7 +836,7 @@ impl DesktopApp {
         cpu: Option<&SensorReading>,
         gpu: Option<&SensorReading>,
     ) {
-        let series = [(cpu, green(ui)), (gpu, amber(ui))];
+        let series = [(cpu, foreground(ui)), (gpu, amber(ui))];
         let data: Vec<_> = series
             .iter()
             .filter_map(|(r, c)| {
@@ -880,7 +853,7 @@ impl DesktopApp {
         // history value. A suspended/disappeared GPU must not look live.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
-            for (label, reading, color) in [("CPU", cpu, green(ui)), ("GPU", gpu, amber(ui))] {
+            for (label, reading, color) in [("CPU", cpu, foreground(ui)), ("GPU", gpu, amber(ui))] {
                 let endpoint = reading
                     .and_then(measured)
                     .map(|value| format!("{label} {value:.0}°C"))
@@ -889,7 +862,7 @@ impl DesktopApp {
             }
         });
         let width = ui.available_width().max(1.0);
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 124.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 104.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
         let plot = Rect::from_min_max(
             rect.left_top() + Vec2::new(2.0, 6.0),
@@ -1428,7 +1401,7 @@ impl DesktopApp {
                     profile_label(&plan.previous),
                     profile_label(&plan.target)
                 ))
-                .color(green(ui)),
+                .color(accent(ui)),
             );
         }
         if reason.is_none() || self.controller.preview.is_some() {
@@ -1553,7 +1526,7 @@ impl DesktopApp {
                     "待应用 {}% · 原始值 {} → {}",
                     plan.requested_percent, plan.previous, plan.target
                 ))
-                .color(green(ui)),
+                .color(accent(ui)),
             );
         }
         if reason.is_none() || self.controller.brightness_preview.is_some() {
@@ -1895,7 +1868,7 @@ impl DesktopApp {
                             ui.label(
                                 RichText::new(model.series.as_deref().unwrap_or("MECHREVO"))
                                     .size(12.0)
-                                    .color(green(ui)),
+                                    .color(accent(ui)),
                             );
                             ui.add_space(5.0);
                             ui.add(
@@ -1958,7 +1931,7 @@ fn data_provenance(
     if snapshot_is_fixture(Some(snapshot)) {
         ("模拟数据", amber(ui))
     } else {
-        ("真实硬件", green(ui))
+        ("真实硬件", accent(ui))
     }
 }
 
@@ -2043,7 +2016,7 @@ fn sampling_switch(ui: &mut egui::Ui, enabled: &mut bool, motion: bool) -> egui:
     }
     response
 }
-fn green(ui: &egui::Ui) -> Color32 {
+fn accent(ui: &egui::Ui) -> Color32 {
     appearance::palette(ui).accent
 }
 fn amber(ui: &egui::Ui) -> Color32 {
@@ -2060,11 +2033,11 @@ fn slider_style(ui: &mut egui::Ui) {
     ui.spacing_mut().slider_width = ui.available_width().max(1.0);
     ui.spacing_mut().slider_rail_height = 6.0;
     let rail = if dark {
-        Color32::from_rgb(101, 117, 122)
+        Color32::from_rgb(101, 101, 110)
     } else {
-        Color32::from_rgb(129, 143, 151)
+        Color32::from_rgb(138, 138, 142)
     };
-    let fill = green(ui);
+    let fill = accent(ui);
     let foreground = foreground(ui);
     let visuals = ui.visuals_mut();
     visuals.disabled_alpha = 0.75;
@@ -2143,7 +2116,7 @@ fn oem_value_text(value: &OemValue) -> String {
         OemValue::Boolean(false) => "关闭".into(),
         OemValue::Choice(choice) => oem_choice_label(choice).into(),
         OemValue::Level(value) => value.to_string(),
-        OemValue::Rgb([red, green, blue]) => format!("#{red:02X}{green:02X}{blue:02X}"),
+        OemValue::Rgb(rgb) => mechrevo_console_core::color::format_rgb_hex(*rgb),
     }
 }
 fn oem_choice_label(choice: &str) -> &str {

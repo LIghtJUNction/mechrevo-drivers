@@ -30,8 +30,8 @@ impl DesktopApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
-            icon(ui.painter(), rect, Icon::Brand, colors.accent);
-            ui.label(RichText::new("MECHREVO").size(17.0).strong());
+            icon(ui.painter(), rect, Icon::Brand, colors.text);
+            ui.label(RichText::new("MECHREVO").font(appearance::display_font(18.0)));
         });
         ui.add_space(4.0);
         ui.label(
@@ -47,11 +47,7 @@ impl DesktopApp {
             (Section::Catalog, "型号目录", "机型信息与支持范围"),
         ] {
             let selected = self.section == section;
-            let color = if selected {
-                colors.accent
-            } else {
-                colors.label
-            };
+            let color = if selected { colors.text } else { colors.label };
             let glyph_id = egui::IdSalt::new(("navigation-icon", section));
             let mut button = egui::Button::new((
                 egui::Atom::custom(glyph_id, Vec2::splat(18.0)),
@@ -60,31 +56,14 @@ impl DesktopApp {
             ))
             .selected(selected)
             .frame_when_inactive(selected)
-            .stroke(Stroke::new(
-                1.0,
-                if selected {
-                    colors.accent.gamma_multiply(0.45)
-                } else {
-                    Color32::TRANSPARENT
-                },
-            ))
+            .stroke(Stroke::NONE)
             .corner_radius(10.0)
             .gap(12.0)
             .min_size(Vec2::new(ui.available_width(), 44.0));
             if selected {
-                button = button.fill(colors.selection);
+                button = button.fill(colors.raised);
             }
             let output = button.atom_ui(ui);
-            if selected {
-                let bar = Rect::from_min_size(
-                    egui::pos2(
-                        output.response.rect.left() + 3.0,
-                        output.response.rect.top() + 10.0,
-                    ),
-                    Vec2::new(3.0, (output.response.rect.height() - 20.0).max(8.0)),
-                );
-                ui.painter().rect_filled(bar, 1.5, colors.accent);
-            }
             if let Some(rect) = output.rect(glyph_id) {
                 navigation_icon(ui.painter(), rect, section, color);
             }
@@ -104,10 +83,8 @@ impl DesktopApp {
         // navigation in short windows or at larger text sizes.
         if ui.available_height() >= 110.0 {
             ui.add_space((ui.available_height() - 68.0).max(16.0));
-            ui.separator();
-            ui.add_space(6.0);
             ui.label(
-                RichText::new("更改先预览，应用后回读")
+                RichText::new("本机设备 · 原生控制")
                     .size(12.0)
                     .color(colors.secondary),
             );
@@ -150,11 +127,14 @@ impl DesktopApp {
         };
         let colors = appearance::palette(ui);
         let compact = self.is_compact();
-        appearance::surface_padded(ui, compact, |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            heading_with_icon(ui, "性能与散热", Icon::Power);
-            ui.add_space(2.0);
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(0, 4))
+            .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal_wrapped(|ui| {
+                small_icon(ui, Icon::Power);
+                ui.label(RichText::new("性能与散热").size(16.0).strong());
+                ui.add_space(8.0);
                 ui.label(RichText::new("当前运行").size(13.0).color(colors.secondary));
                 ui.label(
                     RichText::new(
@@ -164,17 +144,9 @@ impl DesktopApp {
                             .map(oem_value_text)
                             .unwrap_or_else(|| "等待检测".into()),
                     )
-                    .size(16.0)
-                    .strong()
+                    .size(13.0)
                     .color(colors.accent),
                 );
-                if let Some(OemValue::Choice(id)) = &control.current {
-                    ui.label(
-                        RichText::new(mode_description(id))
-                            .size(13.0)
-                            .color(colors.secondary),
-                    );
-                }
             });
             if control.status != CapabilityStatus::Available {
                 unavailable(
@@ -189,8 +161,8 @@ impl DesktopApp {
             let OemDomain::Choices(choices) = &control.domain else {
                 return;
             };
-            ui.add_space(12.0);
-            let columns = if ui.available_width() >= 780.0 {
+            ui.add_space(8.0);
+            let columns = if ui.available_width() >= 720.0 {
                 5
             } else if ui.available_width() >= 480.0 {
                 3
@@ -222,15 +194,14 @@ impl DesktopApp {
                         let mut button = egui::Button::new(text)
                             .selected(chosen)
                             .corner_radius(10.0)
-                            .min_size(Vec2::new(ui.available_width(), 78.0))
+                            .fill(colors.panel)
+                            .stroke(Stroke::NONE)
+                            .min_size(Vec2::new(ui.available_width(), if compact { 60.0 } else { 68.0 }))
                             .wrap();
                         if chosen {
                             button = button
                                 .fill(colors.selection)
-                                .stroke(Stroke::new(1.5, colors.accent));
-                        } else if is_current {
-                            button =
-                                button.stroke(Stroke::new(1.0, colors.accent.gamma_multiply(0.55)));
+                                .stroke(Stroke::NONE);
                         }
                         let response = ui.add_enabled(!self.controller.busy(), button);
                         if response.clicked() {
@@ -240,7 +211,7 @@ impl DesktopApp {
                     }
                 });
             }
-            ui.add_space(12.0);
+            ui.add_space(8.0);
             let owns_selection =
                 self.controller.selected_oem_control.as_deref() == Some(&control.id);
             let reason = if owns_selection {
@@ -294,11 +265,6 @@ impl DesktopApp {
                         ));
                     }
                 }
-                ui.label(
-                    RichText::new("预览后应用更改")
-                        .size(12.0)
-                        .color(colors.secondary),
-                );
             });
             if let Some(reason) = reason {
                 unavailable(ui, &reason);
@@ -309,7 +275,7 @@ impl DesktopApp {
                 evidence(ui, &control.source.backend, &control.source.path);
             });
         });
-        ui.add_space(18.0);
+        ui.add_space(16.0);
     }
 
     pub(super) fn everyday_power(&mut self, ui: &mut egui::Ui) {
@@ -384,7 +350,7 @@ impl DesktopApp {
                         oem_value_text(&plan.previous),
                         oem_value_text(&plan.target)
                     ))
-                    .color(green(ui)),
+                    .color(accent(ui)),
                 );
             }
             let can_apply = ready && preview.is_some();
@@ -467,6 +433,8 @@ impl DesktopApp {
                                 egui::Atom::custom(arrow_id, Vec2::splat(14.0)),
                             ))
                             .corner_radius(12.0)
+                            .fill(colors.panel)
+                            .stroke(Stroke::NONE)
                             .min_size(Vec2::new(ui.available_width(), 76.0))
                             .wrap()
                             .atom_ui(ui)

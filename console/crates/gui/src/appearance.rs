@@ -22,32 +22,32 @@ impl Palette {
     pub fn new(dark: bool) -> Self {
         if dark {
             Self {
-                background: Color32::from_rgb(10, 12, 14),
-                panel: Color32::from_rgb(21, 24, 27),
-                raised: Color32::from_rgb(35, 39, 43),
-                inset: Color32::from_rgb(16, 19, 22),
-                text: Color32::from_rgb(239, 243, 245),
-                secondary: Color32::from_rgb(155, 165, 174),
-                label: Color32::from_rgb(210, 218, 225),
-                border: Color32::from_rgb(44, 50, 56),
-                accent: Color32::from_rgb(157, 223, 202),
-                selection: Color32::from_rgb(29, 52, 46),
-                warning: Color32::from_rgb(236, 196, 142),
-                error: Color32::from_rgb(248, 160, 160),
+                background: Color32::from_rgb(13, 13, 16),
+                panel: Color32::from_rgb(23, 23, 27),
+                raised: Color32::from_rgb(34, 34, 39),
+                inset: Color32::from_rgb(18, 18, 22),
+                text: Color32::from_rgb(241, 241, 244),
+                secondary: Color32::from_rgb(162, 162, 173),
+                label: Color32::from_rgb(208, 208, 216),
+                border: Color32::from_rgb(43, 43, 49),
+                accent: Color32::from_rgb(234, 207, 171),
+                selection: Color32::from_rgb(44, 40, 35),
+                warning: Color32::from_rgb(239, 192, 129),
+                error: Color32::from_rgb(249, 155, 162),
             }
         } else {
             Self {
-                background: Color32::from_rgb(244, 246, 248),
-                panel: Color32::WHITE,
-                raised: Color32::from_rgb(232, 237, 240),
-                inset: Color32::from_rgb(239, 243, 245),
-                text: Color32::from_rgb(25, 33, 40),
-                secondary: Color32::from_rgb(89, 101, 111),
-                label: Color32::from_rgb(56, 71, 81),
-                border: Color32::from_rgb(217, 225, 230),
-                accent: Color32::from_rgb(23, 101, 81),
-                selection: Color32::from_rgb(222, 239, 233),
-                warning: Color32::from_rgb(129, 83, 16),
+                background: Color32::from_rgb(247, 247, 245),
+                panel: Color32::from_rgb(255, 255, 254),
+                raised: Color32::from_rgb(235, 235, 231),
+                inset: Color32::from_rgb(240, 240, 236),
+                text: Color32::from_rgb(30, 30, 32),
+                secondary: Color32::from_rgb(96, 96, 101),
+                label: Color32::from_rgb(64, 64, 67),
+                border: Color32::from_rgb(222, 222, 217),
+                accent: Color32::from_rgb(116, 77, 38),
+                selection: Color32::from_rgb(235, 223, 206),
+                warning: Color32::from_rgb(132, 83, 20),
                 error: Color32::from_rgb(164, 46, 46),
             }
         }
@@ -120,17 +120,17 @@ pub(crate) fn surface_padded<R>(
         if compact {
             12.0
         } else {
-            18.0
+            16.0
         }
     } else if compact {
         16.0
     } else {
-        24.0
+        20.0
     };
     let response = egui::Frame::new()
         .fill(colors.panel)
-        .stroke(egui::Stroke::new(1.0, colors.border))
-        .corner_radius(16.0)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(12.0)
         .inner_margin(margin)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
