@@ -13,6 +13,13 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 #define __user
+/* Preserve the production access semantics in this single-thread fixture.
+ * These helpers do not turn the boundary tests into a memory-ordering test. */
+#define likely(value) __builtin_expect(!!(value), 1)
+#define READ_ONCE(value) __atomic_load_n(&(value), __ATOMIC_RELAXED)
+#define smp_load_acquire(pointer) __atomic_load_n((pointer), __ATOMIC_ACQUIRE)
+#define smp_store_release(pointer, value) \
+	__atomic_store_n((pointer), (value), __ATOMIC_RELEASE)
 
 /* @REAL_INTERFACE_TYPES@ */
 
