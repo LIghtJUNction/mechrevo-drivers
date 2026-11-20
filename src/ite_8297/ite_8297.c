@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/hid.h>
+#include <linux/mutex.h>
 
 // USB HID feature data write size
 #define HID_DATA_SIZE 64
@@ -46,6 +47,7 @@ struct ite8297_driver_data_t {
 	struct led_classdev cdev_blue;
 	struct hid_device *hid_dev;
 	struct color_t current_color;
+	struct mutex lock;
 };
 
 static int ite8297_write_color(struct hid_device *hdev, u8 red, u8 green, u8 blue)
@@ -56,6 +58,8 @@ static int ite8297_write_color(struct hid_device *hdev, u8 red, u8 green, u8 blu
 		return -ENODEV;
 
 	buf = kzalloc(HID_DATA_SIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 	buf[0] = 0xcc;
 	buf[1] = 0xb0;
 	buf[2] = 0x01;
@@ -68,15 +72,22 @@ static int ite8297_write_color(struct hid_device *hdev, u8 red, u8 green, u8 blu
 				    HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 	kfree(buf);
 
-	return result;
+	if (result < 0)
+		return result;
+	return result == HID_DATA_SIZE ? 0 : -EIO;
 }
 
 static int ite8297_write_state(struct ite8297_driver_data_t *ite8297_driver_data)
 {
-	return ite8297_write_color(ite8297_driver_data->hid_dev,
+	int result;
+
+	mutex_lock(&ite8297_driver_data->lock);
+	result = ite8297_write_color(ite8297_driver_data->hid_dev,
 				   ite8297_driver_data->current_color.red,
 				   ite8297_driver_data->current_color.green,
 				   ite8297_driver_data->current_color.blue);
+	mutex_unlock(&ite8297_driver_data->lock);
+	return result;
 }
 
 static int lightbar_set_blocking(struct led_classdev *led_cdev, enum led_brightness brightness)
@@ -85,20 +96,33 @@ static int lightbar_set_blocking(struct led_classdev *led_cdev, enum led_brightn
 	bool led_green = strstr(led_cdev->name, LED_NAME_RGB_GREEN) != NULL;
 	bool led_blue = strstr(led_cdev->name, LED_NAME_RGB_BLUE) != NULL;
 	struct ite8297_driver_data_t *ite8297_driver_data;
+	struct color_t color;
+	int result;
 
 	if (led_red) {
 		ite8297_driver_data = container_of(led_cdev, struct ite8297_driver_data_t, cdev_red);
-		ite8297_driver_data->current_color.red = brightness;
 	} else if (led_green) {
 		ite8297_driver_data = container_of(led_cdev, struct ite8297_driver_data_t, cdev_green);
-		ite8297_driver_data->current_color.green = brightness;
 	} else if (led_blue) {
 		ite8297_driver_data = container_of(led_cdev, struct ite8297_driver_data_t, cdev_blue);
-		ite8297_driver_data->current_color.blue = brightness;
+	} else {
+		return -EINVAL;
 	}
-	ite8297_write_state(ite8297_driver_data);
 
-	return 0;
+	mutex_lock(&ite8297_driver_data->lock);
+	color = ite8297_driver_data->current_color;
+	if (led_red)
+		color.red = brightness;
+	else if (led_green)
+		color.green = brightness;
+	else
+		color.blue = brightness;
+	result = ite8297_write_color(ite8297_driver_data->hid_dev,
+				    color.red, color.green, color.blue);
+	if (!result)
+		ite8297_driver_data->current_color = color;
+	mutex_unlock(&ite8297_driver_data->lock);
+	return result;
 }
 
 static enum led_brightness lightbar_get(struct led_classdev *led_cdev)
@@ -132,46 +156,48 @@ static void stop_hw(struct hid_device *hdev)
 static int start_hw(struct hid_device *hdev)
 {
 	int result;
-	result = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
-	if (result) {
-		pr_err("hid_hw_start failed\n");
-		goto err_stop_hw;
-	}
 
-	hid_hw_power(hdev, PM_HINT_FULLON);
+	result = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
+	if (result)
+		return result;
+
+	result = hid_hw_power(hdev, PM_HINT_FULLON);
+	if (result)
+		goto err_stop;
 
 	result = hid_hw_open(hdev);
-	if (result) {
-		pr_err("hid_hw_open failed\n");
-		goto err_stop_hw;
-	}
+	if (result)
+		goto err_power;
 
 	return 0;
 
-err_stop_hw:
-	stop_hw(hdev);
+err_power:
+	hid_hw_power(hdev, PM_HINT_NORMAL);
+err_stop:
+	hid_hw_stop(hdev);
 	return result;
 }
+
 
 static int driver_probe_callb(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	int result;
 	struct ite8297_driver_data_t *ite8297_driver_data;
 
+	ite8297_driver_data = devm_kzalloc(&hdev->dev, sizeof(*ite8297_driver_data), GFP_KERNEL);
+	if (!ite8297_driver_data)
+		return -ENOMEM;
+	mutex_init(&ite8297_driver_data->lock);
+
 	result = hid_parse(hdev);
 	if (result) {
 		pr_err("hid_parse failed\n");
-		stop_hw(hdev);
 		return result;
 	}
 
 	result = start_hw(hdev);
 	if (result != 0)
 		return result;
-
-	ite8297_driver_data = devm_kzalloc(&hdev->dev, sizeof(*ite8297_driver_data), GFP_KERNEL);
-	if (!ite8297_driver_data)
-		return -ENOMEM;
 
 	ite8297_driver_data->cdev_red.name = LED_NAME_RGB_RED;
 	ite8297_driver_data->cdev_red.max_brightness = LED_MAX_BRIGHTNESS;
@@ -193,17 +219,33 @@ static int driver_probe_callb(struct hid_device *hdev, const struct hid_device_i
 	ite8297_driver_data->current_color.green = ITE_8297_DEFAULT_BRIGHTNESS;
 	ite8297_driver_data->current_color.blue = ITE_8297_DEFAULT_BRIGHTNESS;
 
-	led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_red);
-	led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_green);
-	led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_blue);
-
 	hid_set_drvdata(hdev, ite8297_driver_data);
 
+	result = led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_red);
+	if (result)
+		goto err_stop;
+	result = led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_green);
+	if (result)
+		goto err_red;
+	result = led_classdev_register(&hdev->dev, &ite8297_driver_data->cdev_blue);
+	if (result)
+		goto err_green;
+
 	result = ite8297_write_state(ite8297_driver_data);
-	if (result < 0)
-		return result;
+	if (result)
+		goto err_blue;
 
 	return 0;
+
+err_blue:
+	led_classdev_unregister(&ite8297_driver_data->cdev_blue);
+err_green:
+	led_classdev_unregister(&ite8297_driver_data->cdev_green);
+err_red:
+	led_classdev_unregister(&ite8297_driver_data->cdev_red);
+err_stop:
+	stop_hw(hdev);
+	return result;
 }
 
 static void driver_remove_callb(struct hid_device *hdev)

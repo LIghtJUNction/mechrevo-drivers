@@ -120,13 +120,14 @@ static int clevo_evaluate_set_keyboard_status(u8 state)
 	return clevo_evaluate_method(CLEVO_CMD_SET_KB_RGB_LEDS, cmd, NULL);
 }
 
-static void clevo_leds_set_brightness(struct led_classdev *led_cdev __always_unused, enum led_brightness brightness) {
+static int clevo_leds_set_brightness(struct led_classdev *led_cdev __always_unused, enum led_brightness brightness) {
 	int ret = clevo_evaluate_set_white_brightness(brightness);
 	if (ret) {
 		pr_debug("clevo_leds_set_brightness(): clevo_evaluate_set_white_brightness() failed\n");
-		return;
+		return ret;
 	}
 	led_cdev->brightness = brightness;
+	return 0;
 }
 
 /*static void clevo_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
@@ -163,7 +164,7 @@ static void clevo_leds_set_brightness(struct led_classdev *led_cdev __always_unu
 //    the whole keyboard brightness and not just one zone
 // This is a temporary fix until KDE handles multiple keyboard backlights correctly
 static struct led_classdev_mc clevo_mcled_cdevs[3]; // forward declaration
-static void clevo_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
+static int clevo_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
 	int ret;
 	u32 zone, color;
 	u8 red, green, blue;
@@ -172,7 +173,7 @@ static void clevo_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led
 	ret = clevo_evaluate_set_rgb_brightness(brightness);
 	if (ret) {
 		pr_debug("clevo_leds_set_brightness_mc(): clevo_evaluate_set_rgb_brightness() failed\n");
-		return;
+		return ret;
 	}
 	clevo_mcled_cdevs[0].led_cdev.brightness = brightness;
 	clevo_mcled_cdevs[1].led_cdev.brightness = brightness;
@@ -194,12 +195,13 @@ static void clevo_leds_set_brightness_mc(struct led_classdev *led_cdev, enum led
 	if (ret) {
 		pr_debug("clevo_leds_set_brightness_mc(): clevo_evaluate_set_rgb_color() failed\n");
 	}
+	return ret;
 }
 
 static struct led_classdev clevo_led_cdev = {
 	.name = "white:" LED_FUNCTION_KBD_BACKLIGHT,
 	.max_brightness = CLEVO_KBD_BRIGHTNESS_WHITE_MAX,
-	.brightness_set = &clevo_leds_set_brightness,
+	.brightness_set_blocking = &clevo_leds_set_brightness,
 	.brightness = CLEVO_KBD_BRIGHTNESS_WHITE_DEFAULT,
 	.flags = LED_BRIGHT_HW_CHANGED
 };
@@ -271,7 +273,7 @@ static struct led_classdev_mc clevo_mcled_cdevs[3] = {
 	{
 		.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT,
 		.led_cdev.max_brightness = CLEVO_KBD_BRIGHTNESS_MAX,
-		.led_cdev.brightness_set = &clevo_leds_set_brightness_mc,
+		.led_cdev.brightness_set_blocking = &clevo_leds_set_brightness_mc,
 		.led_cdev.brightness = CLEVO_KBD_BRIGHTNESS_DEFAULT,
 		.num_colors = 3,
 		.subled_info = clevo_mcled_cdevs_subleds[0]
@@ -279,7 +281,7 @@ static struct led_classdev_mc clevo_mcled_cdevs[3] = {
 	{
 		.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT,
 		.led_cdev.max_brightness = CLEVO_KBD_BRIGHTNESS_MAX,
-		.led_cdev.brightness_set = &clevo_leds_set_brightness_mc,
+		.led_cdev.brightness_set_blocking = &clevo_leds_set_brightness_mc,
 		.led_cdev.brightness = CLEVO_KBD_BRIGHTNESS_DEFAULT,
 		.num_colors = 3,
 		.subled_info = clevo_mcled_cdevs_subleds[1]
@@ -287,7 +289,7 @@ static struct led_classdev_mc clevo_mcled_cdevs[3] = {
 	{
 		.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT,
 		.led_cdev.max_brightness = CLEVO_KBD_BRIGHTNESS_MAX,
-		.led_cdev.brightness_set = &clevo_leds_set_brightness_mc,
+		.led_cdev.brightness_set_blocking = &clevo_leds_set_brightness_mc,
 		.led_cdev.brightness = CLEVO_KBD_BRIGHTNESS_DEFAULT,
 		.num_colors = 3,
 		.subled_info = clevo_mcled_cdevs_subleds[2]
@@ -301,10 +303,14 @@ int clevo_leds_init(struct platform_device *dev)
 	union acpi_object *result;
 	u32 result_fallback;
 
+	clevo_kb_backlight_type = CLEVO_KB_BACKLIGHT_TYPE_NONE;
+	clevo_led_cdev.max_brightness = CLEVO_KBD_BRIGHTNESS_WHITE_MAX;
+
 	for (i = 0; i < 3; ++i) {
 		status = clevo_evaluate_method2(CLEVO_CMD_GET_SPECS, 0, &result);
 		if (!status) {
-			if (result->type == ACPI_TYPE_BUFFER) {
+			if (result->type == ACPI_TYPE_BUFFER &&
+			    result->buffer.pointer && result->buffer.length > 0x0f) {
 				pr_debug("CLEVO_CMD_GET_SPECS result->buffer.pointer[0x0f]: 0x%02x\n", result->buffer.pointer[0x0f]);
 				clevo_kb_backlight_type = result->buffer.pointer[0x0f];
 				if (clevo_kb_backlight_type) {
@@ -316,6 +322,7 @@ int clevo_leds_init(struct platform_device *dev)
 							clevo_led_cdev.brightness = CLEVO_KBD_BRIGHTNESS_WHITE_MAX_5_DEFAULT;
 						}
 					}
+					ACPI_FREE(result);
 					break;
 				} else {
 					pr_debug("clevo_kb_backlight_type 0x00 probably wrong, retrying...\n");
@@ -480,15 +487,15 @@ EXPORT_SYMBOL(clevo_leds_get_backlight_type);
 // Reimplement brightness_set instead without writing back brightness value like in uniwill_leds.h.
 void clevo_leds_restore_state_extern(void) {
 	if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
-		clevo_led_cdev.brightness_set(&clevo_led_cdev, clevo_led_cdev.brightness);
+		clevo_led_cdev.brightness_set_blocking(&clevo_led_cdev, clevo_led_cdev.brightness);
 	}
 	else if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
 	}
 	else if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_3_ZONE_RGB) {
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
-		clevo_mcled_cdevs[1].led_cdev.brightness_set(&clevo_mcled_cdevs[1].led_cdev, clevo_mcled_cdevs[1].led_cdev.brightness);
-		clevo_mcled_cdevs[2].led_cdev.brightness_set(&clevo_mcled_cdevs[2].led_cdev, clevo_mcled_cdevs[2].led_cdev.brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
+		clevo_mcled_cdevs[1].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[1].led_cdev, clevo_mcled_cdevs[1].led_cdev.brightness);
+		clevo_mcled_cdevs[2].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[2].led_cdev, clevo_mcled_cdevs[2].led_cdev.brightness);
 	}
 }
 EXPORT_SYMBOL(clevo_leds_restore_state_extern);
@@ -497,8 +504,10 @@ void clevo_leds_notify_brightness_change_extern(void) {
 	int status;
 	u32 result;
 
-	if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
+	if (leds_initialized && clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
 		status = clevo_evaluate_method(CLEVO_CMD_GET_KB_WHITE_LEDS, 0, &result);
+		if (status || result > clevo_led_cdev.max_brightness)
+			return;
 		pr_debug("Firmware set brightness: %u\n", result);
 		clevo_led_cdev.brightness = result;
 		led_classdev_notify_brightness_hw_changed(&clevo_led_cdev, result);
@@ -510,15 +519,15 @@ EXPORT_SYMBOL(clevo_leds_notify_brightness_change_extern);
 // led_classdev_notify_brightness_hw_changed implementation when used outside of init.
 void clevo_leds_set_brightness_extern(enum led_brightness brightness) {
 	if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_FIXED_COLOR) {
-		clevo_led_cdev.brightness_set(&clevo_led_cdev, brightness);
+		clevo_led_cdev.brightness_set_blocking(&clevo_led_cdev, brightness);
 	}
 	else if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_1_ZONE_RGB) {
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, brightness);
 	}
 	else if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_3_ZONE_RGB) {
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, brightness);
-		clevo_mcled_cdevs[1].led_cdev.brightness_set(&clevo_mcled_cdevs[1].led_cdev, brightness);
-		clevo_mcled_cdevs[2].led_cdev.brightness_set(&clevo_mcled_cdevs[2].led_cdev, brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, brightness);
+		clevo_mcled_cdevs[1].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[1].led_cdev, brightness);
+		clevo_mcled_cdevs[2].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[2].led_cdev, brightness);
 	}
 }
 EXPORT_SYMBOL(clevo_leds_set_brightness_extern);
@@ -530,21 +539,21 @@ void clevo_leds_set_color_extern(u32 color) {
 		clevo_mcled_cdevs[0].subled_info[0].intensity = (color >> 16) & 0xff;
 		clevo_mcled_cdevs[0].subled_info[1].intensity = (color >> 8) & 0xff;
 		clevo_mcled_cdevs[0].subled_info[2].intensity = color & 0xff;
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
 	}
 	else if (clevo_kb_backlight_type == CLEVO_KB_BACKLIGHT_TYPE_3_ZONE_RGB) {
 		clevo_mcled_cdevs[0].subled_info[0].intensity = (color >> 16) & 0xff;
 		clevo_mcled_cdevs[0].subled_info[1].intensity = (color >> 8) & 0xff;
 		clevo_mcled_cdevs[0].subled_info[2].intensity = color & 0xff;
-		clevo_mcled_cdevs[0].led_cdev.brightness_set(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
+		clevo_mcled_cdevs[0].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[0].led_cdev, clevo_mcled_cdevs[0].led_cdev.brightness);
 		clevo_mcled_cdevs[1].subled_info[0].intensity = (color >> 16) & 0xff;
 		clevo_mcled_cdevs[1].subled_info[1].intensity = (color >> 8) & 0xff;
 		clevo_mcled_cdevs[1].subled_info[2].intensity = color & 0xff;
-		clevo_mcled_cdevs[1].led_cdev.brightness_set(&clevo_mcled_cdevs[1].led_cdev, clevo_mcled_cdevs[1].led_cdev.brightness);
+		clevo_mcled_cdevs[1].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[1].led_cdev, clevo_mcled_cdevs[1].led_cdev.brightness);
 		clevo_mcled_cdevs[2].subled_info[0].intensity = (color >> 16) & 0xff;
 		clevo_mcled_cdevs[2].subled_info[1].intensity = (color >> 8) & 0xff;
 		clevo_mcled_cdevs[2].subled_info[2].intensity = color & 0xff;
-		clevo_mcled_cdevs[2].led_cdev.brightness_set(&clevo_mcled_cdevs[2].led_cdev, clevo_mcled_cdevs[2].led_cdev.brightness);
+		clevo_mcled_cdevs[2].led_cdev.brightness_set_blocking(&clevo_mcled_cdevs[2].led_cdev, clevo_mcled_cdevs[2].led_cdev.brightness);
 	}
 }
 EXPORT_SYMBOL(clevo_leds_set_color_extern);

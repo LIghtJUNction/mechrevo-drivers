@@ -27,229 +27,98 @@
 #include "tuxedo_nb04_wmi_ab.h"
 #include "../tuxedo_compatibility_check/tuxedo_compatibility_check.h"
 
-#define dev_to_wdev(__dev)	container_of(__dev, struct wmi_device, dev)
-
+/* Serializes firmware calls with publication/removal of the WMI device. */
 static DEFINE_MUTEX(nb04_wmi_ab_lock);
-
 static struct wmi_device *__wmi_dev;
 
-#define KEYBOARD_MAX_BRIGHTNESS		0x0a
-#define KEYBOARD_DEFAULT_BRIGHTNESS	0x00
-#define KEYBOARD_DEFAULT_COLOR_RED	0xff
-#define KEYBOARD_DEFAULT_COLOR_GREEN	0xff
-#define KEYBOARD_DEFAULT_COLOR_BLUE	0xff
-
-struct driver_data_t {};
-
-static int
-__nb04_wmi_ab_method_buffer(struct wmi_device *wdev, u32 wmi_method_id,
-			    u8 *in, u8 *out)
+static int nb04_wmi_ab_evaluate(u32 wmi_method_id, u8 *in,
+			       acpi_size input_length, u8 *out,
+			       size_t output_length, u64 *integer_out)
 {
-	struct acpi_buffer acpi_buffer_in = { (acpi_size)AB_INPUT_BUFFER_LENGTH_NORMAL, in };
+	struct acpi_buffer acpi_buffer_in = { input_length, in };
 	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *acpi_object_out;
+	union acpi_object *object;
 	acpi_status status;
+	int err = 0;
+
+	if (!in || (!out && !integer_out))
+		return -EINVAL;
 
 	mutex_lock(&nb04_wmi_ab_lock);
-	pr_debug("evaluate: %u\n", wmi_method_id);
-	status = wmidev_evaluate_method(wdev, 0, wmi_method_id,
-					&acpi_buffer_in, &return_buffer);
-	mutex_unlock(&nb04_wmi_ab_lock);
+	if (!__wmi_dev) {
+		err = -ENODEV;
+		goto out;
+	}
 
+	pr_debug("evaluate: %u\n", wmi_method_id);
+	status = wmidev_evaluate_method(__wmi_dev, 0, wmi_method_id,
+				       &acpi_buffer_in, &return_buffer);
 	if (ACPI_FAILURE(status)) {
 		pr_err("failed to evaluate wmi method %u\n", wmi_method_id);
-		return -EIO;
+		err = -EIO;
+		goto out;
 	}
 
-	acpi_object_out = (union acpi_object *) return_buffer.pointer;
-	if (!acpi_object_out)
-		return -ENODATA;
-
-	if (acpi_object_out->type != ACPI_TYPE_BUFFER) {
-		pr_err("No buffer for method (%u) call\n", wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
+	object = return_buffer.pointer;
+	if (!object) {
+		err = -ENODATA;
+		goto out;
 	}
 
-	if (acpi_object_out->buffer.length != AB_OUTPUT_BUFFER_LENGTH) {
-		pr_err("Unexpected buffer length: %u for method (%u) call\n", 
-		       acpi_object_out->buffer.length, wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
+	if (integer_out) {
+		if (object->type != ACPI_TYPE_INTEGER) {
+			err = -EIO;
+			goto out;
+		}
+		*integer_out = object->integer.value;
+	} else {
+		if (object->type != ACPI_TYPE_BUFFER ||
+		    object->buffer.length != output_length ||
+		    !object->buffer.pointer) {
+			err = -EIO;
+			goto out;
+		}
+		memcpy(out, object->buffer.pointer, output_length);
 	}
 
-	memcpy(out, acpi_object_out->buffer.pointer, AB_OUTPUT_BUFFER_LENGTH);
+out:
 	kfree(return_buffer.pointer);
-
-	return 0;
+	mutex_unlock(&nb04_wmi_ab_lock);
+	return err;
 }
 
-/**
- * Method interface 8 bytes in 80 bytes out
- */
+/* Method interface: 8 bytes in, 80 bytes out. */
 int nb04_wmi_ab_method_buffer(u32 wmi_method_id, u8 *in, u8 *out)
 {
-	if (__wmi_dev)
-		return __nb04_wmi_ab_method_buffer(__wmi_dev, wmi_method_id, in, out);
-	else
-		return -ENODEV;
+	return nb04_wmi_ab_evaluate(wmi_method_id, in,
+				   AB_INPUT_BUFFER_LENGTH_NORMAL, out,
+				   AB_OUTPUT_BUFFER_LENGTH, NULL);
 }
 EXPORT_SYMBOL(nb04_wmi_ab_method_buffer);
 
-static int
-__nb04_wmi_ab_method_buffer_reduced_output(struct wmi_device *wdev, u32 wmi_method_id,
-					   u8 *in, u8 *out)
-{
-	struct acpi_buffer acpi_buffer_in = { (acpi_size)AB_INPUT_BUFFER_LENGTH_NORMAL, in };
-	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *acpi_object_out;
-	acpi_status status;
-
-	mutex_lock(&nb04_wmi_ab_lock);
-	pr_debug("evaluate: %u\n", wmi_method_id);
-	status = wmidev_evaluate_method(wdev, 0, wmi_method_id,
-					&acpi_buffer_in, &return_buffer);
-	mutex_unlock(&nb04_wmi_ab_lock);
-	if (ACPI_FAILURE(status)) {
-		pr_err("failed to evaluate wmi method %u\n", wmi_method_id);
-		return -EIO;
-	}
-
-	acpi_object_out = (union acpi_object *) return_buffer.pointer;
-	if (!acpi_object_out)
-		return -ENODATA;
-
-	if (acpi_object_out->type != ACPI_TYPE_BUFFER) {
-		pr_err("No buffer for method (%u) call\n", wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	if (acpi_object_out->buffer.length != AB_OUTPUT_BUFFER_LENGTH_REDUCED) {
-		pr_err("Unexpected buffer length: %u for method (%u) call\n", 
-		       acpi_object_out->buffer.length, wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	memcpy(out, acpi_object_out->buffer.pointer, AB_OUTPUT_BUFFER_LENGTH_REDUCED);
-	kfree(return_buffer.pointer);
-
-	return 0;
-}
-
-/**
- * Method interface 8 bytes in 10 bytes out
- */
+/* Method interface: 8 bytes in, 10 bytes out. */
 int nb04_wmi_ab_method_buffer_reduced_output(u32 wmi_method_id, u8 *in, u8 *out)
 {
-	if (__wmi_dev)
-		return __nb04_wmi_ab_method_buffer_reduced_output(__wmi_dev, wmi_method_id, in, out);
-	else
-		return -ENODEV;
+	return nb04_wmi_ab_evaluate(wmi_method_id, in,
+				   AB_INPUT_BUFFER_LENGTH_NORMAL, out,
+				   AB_OUTPUT_BUFFER_LENGTH_REDUCED, NULL);
 }
 EXPORT_SYMBOL(nb04_wmi_ab_method_buffer_reduced_output);
 
-static int
-__nb04_wmi_ab_method_extended_input(struct wmi_device *wdev, u32 wmi_method_id,
-				    u8 *in, u8 *out)
-{
-	struct acpi_buffer acpi_buffer_in = { (acpi_size)AB_INPUT_BUFFER_LENGTH_EXTENDED, in };
-	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *acpi_object_out;
-	acpi_status status;
-
-	mutex_lock(&nb04_wmi_ab_lock);
-	pr_debug("evaluate: %u\n", wmi_method_id);
-	status = wmidev_evaluate_method(wdev, 0, wmi_method_id,
-					&acpi_buffer_in, &return_buffer);
-	mutex_unlock(&nb04_wmi_ab_lock);
-
-	if (ACPI_FAILURE(status)) {
-		pr_err("failed to evaluate wmi method %u\n", wmi_method_id);
-		return -EIO;
-	}
-
-	acpi_object_out = (union acpi_object *) return_buffer.pointer;
-	if (!acpi_object_out)
-		return -ENODATA;
-
-	if (acpi_object_out->type != ACPI_TYPE_BUFFER) {
-		pr_err("No buffer for method (%u) call\n", wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	if (acpi_object_out->buffer.length != AB_OUTPUT_BUFFER_LENGTH) {
-		pr_err("Unexpected buffer length: %u for method (%u) call\n", 
-		       acpi_object_out->buffer.length, wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	memcpy(out, acpi_object_out->buffer.pointer, AB_OUTPUT_BUFFER_LENGTH);
-	kfree(return_buffer.pointer);
-
-	return 0;
-}
-
-/**
- * Method interface 496 bytes in 80 bytes out
- */
+/* Method interface: 496 bytes in, 80 bytes out. */
 int nb04_wmi_ab_method_extended_input(u32 wmi_method_id, u8 *in, u8 *out)
 {
-	if (__wmi_dev)
-		return __nb04_wmi_ab_method_extended_input(__wmi_dev, wmi_method_id, in, out);
-	else
-		return -ENODEV;
+	return nb04_wmi_ab_evaluate(wmi_method_id, in,
+				   AB_INPUT_BUFFER_LENGTH_EXTENDED, out,
+				   AB_OUTPUT_BUFFER_LENGTH, NULL);
 }
 EXPORT_SYMBOL(nb04_wmi_ab_method_extended_input);
 
-static int
-__nb04_wmi_ab_method_int_out(struct wmi_device *wdev, u32 wmi_method_id,
-			     u8 *in, u64 *out)
-{
-	struct acpi_buffer acpi_buffer_in = { (acpi_size)AB_INPUT_BUFFER_LENGTH_NORMAL, in };
-	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *acpi_object_out;
-	acpi_status status;
-
-	mutex_lock(&nb04_wmi_ab_lock);
-	pr_debug("evaluate: %u\n", wmi_method_id);
-	status = wmidev_evaluate_method(wdev, 0, wmi_method_id,
-					&acpi_buffer_in, &return_buffer);
-	mutex_unlock(&nb04_wmi_ab_lock);
-
-	if (ACPI_FAILURE(status)) {
-		pr_err("failed to evaluate wmi method\n");
-		return -EIO;
-	}
-
-	acpi_object_out = (union acpi_object *) return_buffer.pointer;
-	if (!acpi_object_out)
-		return -ENODATA;
-
-	if (acpi_object_out->type != ACPI_TYPE_INTEGER) {
-		pr_err("No integer\n");
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	*out = acpi_object_out->integer.value;
-	kfree(return_buffer.pointer);
-
-	return 0;
-}
-
-/**
- * Method interface 8 bytes in integer out
- */
+/* Method interface: 8 bytes in, integer out. */
 int nb04_wmi_ab_method_int_out(u32 wmi_method_id, u8 *in, u64 *out)
 {
-	if (__wmi_dev)
-		return __nb04_wmi_ab_method_int_out(__wmi_dev, wmi_method_id, in, out);
-	else
-		return -ENODEV;
+	return nb04_wmi_ab_evaluate(wmi_method_id, in,
+				   AB_INPUT_BUFFER_LENGTH_NORMAL, NULL, 0, out);
 }
 EXPORT_SYMBOL(nb04_wmi_ab_method_int_out);
 
@@ -259,6 +128,9 @@ int wmi_update_device_status_keyboard(struct device_keyboard_status_t *kbds)
 	u8 out[AB_OUTPUT_BUFFER_LENGTH] = {0};
 	u16 wmi_return;
 	int result, retry_count = 3;
+
+	if (!kbds)
+		return -EINVAL;
 
 	arg[0] = WMI_DEVICE_TYPE_ID_KEYBOARD;
 
@@ -333,7 +205,7 @@ static int tuxedo_nb04_wmi_ab_probe(struct wmi_device *wdev)
 static int tuxedo_nb04_wmi_ab_probe(struct wmi_device *wdev, const void *dummy_context)
 #endif
 {
-	struct driver_data_t *driver_data;
+	int err = 0;
 
 	pr_debug("driver probe\n");
 
@@ -343,15 +215,14 @@ static int tuxedo_nb04_wmi_ab_probe(struct wmi_device *wdev, const void *dummy_c
 	if (!wmi_has_guid(NB04_WMI_AB_GUID))
 		return -ENODEV;
 
-	driver_data = devm_kzalloc(&wdev->dev, sizeof(struct driver_data_t), GFP_KERNEL);
-	if (!driver_data)
-		return -ENOMEM;
+	mutex_lock(&nb04_wmi_ab_lock);
+	if (__wmi_dev)
+		err = -EBUSY;
+	else
+		__wmi_dev = wdev;
+	mutex_unlock(&nb04_wmi_ab_lock);
 
-	dev_set_drvdata(&wdev->dev, driver_data);
-
-	__wmi_dev = wdev;
-
-	return 0;
+	return err;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
@@ -360,7 +231,10 @@ static int tuxedo_nb04_wmi_ab_remove(struct wmi_device *wdev)
 static void tuxedo_nb04_wmi_ab_remove(struct wmi_device *wdev)
 #endif
 {
-	__wmi_dev = NULL;
+	mutex_lock(&nb04_wmi_ab_lock);
+	if (__wmi_dev == wdev)
+		__wmi_dev = NULL;
+	mutex_unlock(&nb04_wmi_ab_lock);
 	pr_debug("driver remove\n");
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)

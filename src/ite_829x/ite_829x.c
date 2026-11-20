@@ -90,6 +90,10 @@ static int keyb_send_data(struct hid_device *dev, u8 cmd, u8 d0, u8 d1, u8 d2, u
 	mutex_lock(&dev_lock);
 
 	buf = kzalloc(HID_DATA_SIZE, GFP_KERNEL);
+	if (!buf) {
+		mutex_unlock(&dev_lock);
+		return -ENOMEM;
+	}
 	buf[0] = 0xcc;
 	buf[1] = cmd;
 	buf[2] = d0;
@@ -102,7 +106,9 @@ static int keyb_send_data(struct hid_device *dev, u8 cmd, u8 d0, u8 d1, u8 d2, u
 
 	mutex_unlock(&dev_lock);
 
-	return result;
+	if (result < 0)
+		return result;
+	return result == HID_DATA_SIZE ? 0 : -EIO;
 }
 
 static void keyb_set_all(struct hid_device *dev, u8 color_red, u8 color_green, u8 color_blue)
@@ -174,30 +180,32 @@ static void stop_hw(struct hid_device *dev)
 static int start_hw(struct hid_device *dev)
 {
 	int result;
-	result = hid_hw_start(dev, HID_CONNECT_DEFAULT);
-	if (result) {
-		pr_err("hid_hw_start failed\n");
-		goto err_stop_hw;
-	}
 
-	hid_hw_power(dev, PM_HINT_FULLON);
+	result = hid_hw_start(dev, HID_CONNECT_DEFAULT);
+	if (result)
+		return result;
+
+	result = hid_hw_power(dev, PM_HINT_FULLON);
+	if (result)
+		goto err_stop;
 
 	result = hid_hw_open(dev);
-	if (result) {
-		pr_err("hid_hw_open failed\n");
-		goto err_stop_hw;
-	}
+	if (result)
+		goto err_power;
 
 	kbdev = dev;
 	return 0;
 
-err_stop_hw:
-	stop_hw(dev);
+err_power:
+	hid_hw_power(dev, PM_HINT_NORMAL);
+err_stop:
+	hid_hw_stop(dev);
 	return result;
 }
 
-static void leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
-	int i, j;
+
+static int leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brightness brightness) {
+	int i, j, result;
 	struct led_classdev_mc *led_cdev_mc = lcdev_to_mccdev(led_cdev);
 
 	pr_debug("leds_set_brightness_mc: channel: %d, brightness: %d, saved brightness: %d, red: %d, green: %d, blue: %d\n",
@@ -212,9 +220,11 @@ static void leds_set_brightness_mc(struct led_classdev *led_cdev, enum led_brigh
 		}
 	}
 
-	keyb_send_data(kbdev, 0x09, brightness, 0x02, 0x00, 0x00);
+	result = keyb_send_data(kbdev, 0x09, brightness, 0x02, 0x00, 0x00);
+	if (result)
+		return result;
 
-	keyb_send_data(kbdev, 0x01, led_cdev_mc->subled_info[0].channel,
+	return keyb_send_data(kbdev, 0x01, led_cdev_mc->subled_info[0].channel,
 		       led_cdev_mc->subled_info[0].intensity,
 		       led_cdev_mc->subled_info[1].intensity,
 		       led_cdev_mc->subled_info[2].intensity);
@@ -276,12 +286,11 @@ static struct notifier_block keyboard_notifier_block = {
 
 static int probe_callb(struct hid_device *dev, const struct hid_device_id *id)
 {
-	int result, i, j;
+	int result, i, j, registered = 0;
 
 	result = hid_parse(dev);
 	if (result) {
 		pr_err("hid_parse failed\n");
-		stop_hw(dev);
 		return result;
 	}
 
@@ -292,12 +301,16 @@ static int probe_callb(struct hid_device *dev, const struct hid_device_id *id)
 		return result;
 	}
 
-	keyb_send_data(kbdev, 0x09, ti_data.brightness, 0x02, 0x00, 0x00);
+	result = keyb_send_data(kbdev, 0x09, ti_data.brightness, 0x02, 0x00, 0x00);
+	if (result)
+		goto err_stop;
 	for (i = 0; i < KEYBOARD_ROWS; ++i) {
 		for (j = 0; j < KEYBOARD_COLUMNS; ++j) {
 			pr_debug("Initialize led %d to %d %d %d.\n", get_led_id(i, j), 255, 255, 255);
 
-			keyb_send_data(dev, 0x01, get_led_id(i, j), 255, 255, 255);
+			result = keyb_send_data(dev, 0x01, get_led_id(i, j), 255, 255, 255);
+			if (result)
+				goto err_stop;
 		}
 	}
 
@@ -305,7 +318,7 @@ static int probe_callb(struct hid_device *dev, const struct hid_device_id *id)
 		for (j = 0; j < KEYBOARD_COLUMNS; ++j) {
 			clevo_mcled_cdevs[i][j].led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT;
 			clevo_mcled_cdevs[i][j].led_cdev.max_brightness = ITE829X_KBD_BRIGHTNESS_MAX;
-			clevo_mcled_cdevs[i][j].led_cdev.brightness_set = &leds_set_brightness_mc;
+			clevo_mcled_cdevs[i][j].led_cdev.brightness_set_blocking = &leds_set_brightness_mc;
 			clevo_mcled_cdevs[i][j].led_cdev.brightness = ITE829X_KBD_BRIGHTNESS_DEFAULT;
 			clevo_mcled_cdevs[i][j].num_colors = 3;
 			clevo_mcled_cdevs[i][j].subled_info = clevo_mcled_cdevs_subleds[i][j];
@@ -319,19 +332,34 @@ static int probe_callb(struct hid_device *dev, const struct hid_device_id *id)
 			clevo_mcled_cdevs[i][j].subled_info[2].intensity = 255;
 			clevo_mcled_cdevs[i][j].subled_info[2].channel = get_led_id(i, j);
 
-			devm_led_classdev_multicolor_register(&dev->dev, &clevo_mcled_cdevs[i][j]);
+			result = devm_led_classdev_multicolor_register(&dev->dev, &clevo_mcled_cdevs[i][j]);
+			if (result)
+				goto err_leds;
+			++registered;
 		}
 	}
 
-	register_keyboard_notifier(&keyboard_notifier_block);
+	result = register_keyboard_notifier(&keyboard_notifier_block);
+	if (result)
+		goto err_leds;
 
 	return 0;
+
+err_leds:
+	while (registered-- > 0)
+		devm_led_classdev_multicolor_unregister(&dev->dev,
+			&clevo_mcled_cdevs[registered / KEYBOARD_COLUMNS]
+					 [registered % KEYBOARD_COLUMNS]);
+err_stop:
+	stop_hw(dev);
+	return result;
 }
 
 static void remove_callb(struct hid_device *dev)
 {
 	int i, j;
 	unregister_keyboard_notifier(&keyboard_notifier_block);
+	cancel_work_sync(&ite_829x_key_work);
 	for (i = 0; i < KEYBOARD_ROWS; ++i) {
 		for (j = 0; j < KEYBOARD_COLUMNS; ++j) {
 			devm_led_classdev_multicolor_unregister(&dev->dev, &clevo_mcled_cdevs[i][j]);

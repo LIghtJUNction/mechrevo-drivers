@@ -426,53 +426,45 @@ static int uniwill_set_custom_profile_mode(bool zero_bit_initially)
 #define UNIWILL_LIGHTBAR_LED_NAME_RGB_BLUE	"lightbar_rgb:3:status"
 #define UNIWILL_LIGHTBAR_LED_NAME_ANIMATION	"lightbar_animation::status"
 
-static void uniwill_write_lightbar_rgb(u8 red, u8 green, u8 blue)
+static int uniwill_write_lightbar_rgb(u8 red, u8 green, u8 blue)
 {
+	int status;
+
 	if (red <= UNIWILL_LIGHTBAR_LED_MAX_BRIGHTNESS) {
-		uniwill_write_ec_ram(0x0749, red);
+		status = uniwill_write_ec_ram(0x0749, red);
+		if (status)
+			return status;
 	}
 	if (green <= UNIWILL_LIGHTBAR_LED_MAX_BRIGHTNESS) {
-		uniwill_write_ec_ram(0x074a, green);
+		status = uniwill_write_ec_ram(0x074a, green);
+		if (status)
+			return status;
 	}
 	if (blue <= UNIWILL_LIGHTBAR_LED_MAX_BRIGHTNESS) {
-		uniwill_write_ec_ram(0x074b, blue);
+		status = uniwill_write_ec_ram(0x074b, blue);
+		if (status)
+			return status;
 	}
+	return 0;
 }
 
-static void uniwill_read_lightbar_rgb(u8 *red, u8 *green, u8 *blue)
+static int uniwill_write_lightbar_animation(bool animation_status)
 {
-	uniwill_read_ec_ram(0x0749, red);
-	uniwill_read_ec_ram(0x074a, green);
-	uniwill_read_ec_ram(0x074b, blue);
-}
-
-static void uniwill_write_lightbar_animation(bool animation_status)
-{
-	u8 value;
-
-	uniwill_read_ec_ram(0x0748, &value);
-	if (animation_status) {
-		value |= 0x80;
-	} else {
-		value &= ~0x80;
-	}
-	uniwill_write_ec_ram(0x0748, value);
-}
-
-static void uniwill_read_lightbar_animation(bool *animation_status)
-{
-	u8 lightbar_animation_data;
-	uniwill_read_ec_ram(0x0748, &lightbar_animation_data);
-	*animation_status = (lightbar_animation_data & 0x80) > 0;
+	/* Never write an uninitialized byte after a failed EC read. */
+	return uniwill_update_ec_ram(0x0748, 0x80, animation_status ? 0x80 : 0);
 }
 
 static int lightbar_set_blocking(struct led_classdev *led_cdev, enum led_brightness brightness)
 {
+	int status;
 	u8 red = 0xff, green = 0xff, blue = 0xff;
 	bool led_red = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_RED) != NULL;
 	bool led_green = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_GREEN) != NULL;
 	bool led_blue = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_BLUE) != NULL;
 	bool led_animation = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_ANIMATION) != NULL;
+
+	if (brightness < LED_OFF || brightness > led_cdev->max_brightness)
+		return -EINVAL;
 
 	if (led_red || led_green || led_blue) {
 		if (led_red) {
@@ -482,43 +474,48 @@ static int lightbar_set_blocking(struct led_classdev *led_cdev, enum led_brightn
 		} else if (led_blue) {
 			blue = brightness;
 		}
-		uniwill_write_lightbar_rgb(red, green, blue);
+		status = uniwill_write_lightbar_rgb(red, green, blue);
+		if (status)
+			return status;
 		// Also make sure the animation is off
-		uniwill_write_lightbar_animation(false);
+		return uniwill_write_lightbar_animation(false);
 	} else if (led_animation) {
-		if (brightness == 1) {
-			uniwill_write_lightbar_animation(true);
-		} else {
-			uniwill_write_lightbar_animation(false);
-		}
+		return uniwill_write_lightbar_animation(brightness == 1);
 	}
-	return 0;
+	return -EINVAL;
 }
 
 static enum led_brightness lightbar_get(struct led_classdev *led_cdev)
 {
-	u8 red, green, blue;
-	bool animation_status;
+	u8 value;
+	u16 address;
+	int status;
 	bool led_red = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_RED) != NULL;
 	bool led_green = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_GREEN) != NULL;
 	bool led_blue = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_RGB_BLUE) != NULL;
 	bool led_animation = strstr(led_cdev->name, UNIWILL_LIGHTBAR_LED_NAME_ANIMATION) != NULL;
 
-	if (led_red || led_green || led_blue) {
-		uniwill_read_lightbar_rgb(&red, &green, &blue);
-		if (led_red) {
-			return red;
-		} else if (led_green) {
-			return green;
-		} else if (led_blue) {
-			return blue;
-		}
-	} else if (led_animation) {
-		uniwill_read_lightbar_animation(&animation_status);
-		return animation_status ? 1 : 0;
-	}
+	if (led_red)
+		address = 0x0749;
+	else if (led_green)
+		address = 0x074a;
+	else if (led_blue)
+		address = 0x074b;
+	else if (led_animation)
+		address = 0x0748;
+	else
+		return -EINVAL;
 
-	return 0;
+	/* LED core retains its cached brightness when the getter returns an
+	 * error, rather than publishing uninitialized or invalid EC data. */
+	status = uniwill_read_ec_ram(address, &value);
+	if (status)
+		return status;
+	if (led_animation)
+		return !!(value & 0x80);
+	if (value > led_cdev->max_brightness)
+		return -ERANGE;
+	return value;
 }
 
 static bool uw_lightbar_loaded;
@@ -586,8 +583,14 @@ static int uw_lightbar_init(struct platform_device *dev)
 	}
 
 	// Init default state
-	uniwill_write_lightbar_animation(false);
-	uniwill_write_lightbar_rgb(0, 0, 0);
+	status = uniwill_write_lightbar_animation(false);
+	if (!status)
+		status = uniwill_write_lightbar_rgb(0, 0, 0);
+	if (status) {
+		for (i = ARRAY_SIZE(lightbar_led_classdevs); i > 0; --i)
+			led_classdev_unregister(&lightbar_led_classdevs[i - 1]);
+		return status;
+	}
 
 	return 0;
 }
@@ -1680,6 +1683,14 @@ static void uw_show_hidden_bios_options(void)
 		pr_err(
 			"hidden_bios_options: get_variable read failed: st=0x%lx\n",
 			(unsigned long)st);
+		kfree(buf);
+		return;
+	}
+
+	/* The variable may shrink between the size probe and the actual read. */
+	if (size <= UW_CPU_PERFORMANCE_AND_OVERCLOCKING_SWITCH) {
+		pr_err("hidden_bios_options: EFI variable became too small (%lu bytes)\n",
+		       size);
 		kfree(buf);
 		return;
 	}

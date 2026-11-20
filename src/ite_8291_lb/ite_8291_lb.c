@@ -38,32 +38,10 @@
 #define LIGHTBAR_DEFAULT_COLOR_GREEN	0xff
 #define LIGHTBAR_DEFAULT_COLOR_BLUE	0xff
 
-struct color_u8 {
-	u8 red;
-	u8 green;
-	u8 blue;
-};
-
 struct ite8291_driver_data_t {
-	struct hid_device *hid_dev;
 	struct led_classdev_mc mcled_cdev_lightbar;
 	struct mc_subled mcled_cdev_subleds_lightbar[3];
-	struct color_u8 *color_list;
-	int color_list_length;
 };
-
-/**
- * strstr version of dmi_match
- */
-static bool __attribute__ ((unused)) dmi_string_in(enum dmi_field f, const char *str)
-{
-	const char *info = dmi_get_system_info(f);
-
-	if (info == NULL || str == NULL)
-		return info == str;
-
-	return strstr(info, str) != NULL;
-}
 
 static void stop_hw(struct hid_device *hdev)
 {
@@ -75,26 +53,28 @@ static void stop_hw(struct hid_device *hdev)
 static int start_hw(struct hid_device *hdev)
 {
 	int result;
-	result = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
-	if (result) {
-		pr_err("hid_hw_start failed\n");
-		goto err_stop_hw;
-	}
 
-	hid_hw_power(hdev, PM_HINT_FULLON);
+	result = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
+	if (result)
+		return result;
+
+	result = hid_hw_power(hdev, PM_HINT_FULLON);
+	if (result)
+		goto err_stop;
 
 	result = hid_hw_open(hdev);
-	if (result) {
-		pr_err("hid_hw_open failed\n");
-		goto err_stop_hw;
-	}
+	if (result)
+		goto err_power;
 
 	return 0;
 
-err_stop_hw:
-	stop_hw(hdev);
+err_power:
+	hid_hw_power(hdev, PM_HINT_NORMAL);
+err_stop:
+	hid_hw_stop(hdev);
 	return result;
 }
+
 
 /**
  * Color scaling quirk list
@@ -118,20 +98,6 @@ static void color_scaling(struct hid_device *hdev, u8 *red, u8 *green, u8 *blue)
 #endif
 }
 
-static int ite8291_set_color_list_entry(struct hid_device *hdev, int index, u8 red, u8 green, u8 blue)
-{
-	struct ite8291_driver_data_t *driver_data = hid_get_drvdata(hdev);
-
-	if (index >= driver_data->color_list_length)
-		return -EINVAL;
-
-	driver_data->color_list[index].red = red;
-	driver_data->color_list[index].green = green;
-	driver_data->color_list[index].blue = blue;
-
-	return 0;
-}
-
 /**
  * Write control data
  */
@@ -143,6 +109,8 @@ static int ite8291_write_control(struct hid_device *hdev, u8 *ctrl_data)
 		return -ENODEV;
 
 	buf = kzalloc(HID_DATA_SIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	memcpy(buf, ctrl_data, (size_t) HID_DATA_SIZE);
 
@@ -150,45 +118,13 @@ static int ite8291_write_control(struct hid_device *hdev, u8 *ctrl_data)
 				    HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 	kfree(buf);
 
-	return result;
-}
-
-static int ite8291_write_color_list(struct hid_device *hdev)
-{
-	struct ite8291_driver_data_t *driver_data = hid_get_drvdata(hdev);
-	int i;
-
-	u8 color_ctrl[] = { 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
-
-	switch (hdev->product) {
-	case 0x6010:
-		break;
-
-	case 0x7000:
-		color_ctrl[1] = 0x01;
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	for (i = 0; i < driver_data->color_list_length; ++i) {
-		color_ctrl[2] = (u8)i + 1;
-		color_ctrl[3] = driver_data->color_list[i].red;
-		color_ctrl[4] = driver_data->color_list[i].green;
-		color_ctrl[5] = driver_data->color_list[i].blue;
-		color_scaling(hdev, &color_ctrl[3], &color_ctrl[4], &color_ctrl[5]);
-		ite8291_write_control(hdev, color_ctrl);
-	}
-
-	return 0;
+	if (result < 0)
+		return result;
+	return result == HID_DATA_SIZE ? 0 : -EIO;
 }
 
 /**
  * Set mono color
- * 
- * Note: For now not using color list
  * 
  * @param red Range 0x00 - 0xff
  * @param green Range 0x00 - 0xff
@@ -197,6 +133,7 @@ static int ite8291_write_color_list(struct hid_device *hdev)
  */
 static int ite8291_write_lightbar_mono(struct hid_device *hdev, u8 red, u8 green, u8 blue, u8 brightness)
 {
+	int result;
 	if (hdev == NULL)
 		return -ENODEV;
 
@@ -207,180 +144,30 @@ static int ite8291_write_lightbar_mono(struct hid_device *hdev, u8 red, u8 green
 
 	switch (hdev->product) {
 	case 0x6010:
-		ite8291_write_control(hdev, (u8[]){ 0x14, 0x00, 0x01, red, green, blue, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x02, 0x01, 0x01, brightness, 0x08, 0x00, 0x00 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x14, 0x00, 0x01, red, green, blue, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x02, 0x01, 0x01, brightness, 0x08, 0x00, 0x00 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7000:
-		ite8291_write_control(hdev, (u8[]){ 0x14, 0x01, 0x01, red, green, blue, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x01, 0x01, brightness, 0x01, 0x00, 0x00 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x14, 0x01, 0x01, red, green, blue, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x01, 0x01, brightness, 0x01, 0x00, 0x00 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7001:
-		ite8291_write_control(hdev, (u8[]){ 0x14, 0x00, 0x01, red, green, blue, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x22, 0x01, 0x01, brightness, 0x01, 0x00, 0x00 });
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
-}
-
-/**
- * Write breathe mode
- * 
- * @param brightness Range 0x00 - 0x64
- * @param speed Range slowest 0x0a to fastest 0x01
- */
-static int __attribute__ ((unused)) ite8291_write_lightbar_breathe(struct hid_device *hdev, u8 brightness, u8 speed)
-{
-	if (hdev == NULL)
-		return -ENODEV;
-	
-	if (brightness > 0x64)
-		return -EINVAL;
-
-	if (speed < 0x01 || speed > 0x0a)
-		return -EINVAL;
-
-	switch (hdev->product) {
-	case 0x6010:
-		ite8291_write_color_list(hdev);
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x02, 0x02, speed, brightness, 0x08, 0x00, 0x00 });
-		break;
-
-	case 0x7000:
-		ite8291_write_color_list(hdev);
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x02, speed, brightness, 0x08, 0x00, 0x00 });
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
-}
-
-/**
- * Write wave mode
- * 
- * @param brightness Range 0x00 - 0x64
- * @param speed Range slowest 0x0a to fastest 0x01
- */
-static int __attribute__ ((unused)) ite8291_write_lightbar_wave(struct hid_device *hdev, u8 brightness, u8 speed)
-{
-	if (hdev == NULL)
-		return -ENODEV;
-
-	if (brightness > 0x64)
-		return -EINVAL;
-
-	if (speed < 0x01 || speed > 0x0a)
-		return -EINVAL;
-
-	switch (hdev->product) {
-
-	case 0x7000:
-		// Reference usage writes previous color but no color is available for mode => skipping
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x03, speed, brightness, 0x01, 0x00, 0x00 });
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
-}
-
-/**
- * Write clash mode
- * 
- * @param brightness Range 0x00 - 0x64
- * @param speed Range slowest 0x0a to fastest 0x01
- */
-static int __attribute__ ((unused)) ite8291_write_lightbar_clash(struct hid_device *hdev, u8 brightness, u8 speed)
-{
-	if (hdev == NULL)
-		return -ENODEV;
-
-	if (brightness > 0x64)
-		return -EINVAL;
-
-	if (speed < 0x01 || speed > 0x0a)
-		return -EINVAL;
-
-	switch (hdev->product) {
-
-	case 0x7000:
-		ite8291_write_color_list(hdev);
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x04, speed, brightness, 0x08, 0x00, 0x00 });
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
-}
-
-/**
- * Write "catch up" mode
- * 
- * @param brightness Range 0x00 - 0x64
- * @param speed Range slowest 0x0a to fastest 0x01
- */
-static int __attribute__ ((unused)) ite8291_write_lightbar_catchup(struct hid_device *hdev, u8 brightness, u8 speed)
-{
-	if (hdev == NULL)
-		return -ENODEV;
-
-	if (brightness > 0x64)
-		return -EINVAL;
-
-	if (speed < 0x01 || speed > 0x0a)
-		return -EINVAL;
-
-	switch (hdev->product) {
-
-	case 0x7000:
-		// Reference usage writes previous color but no color is available for mode => skipping
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x21, 0x05, speed, brightness, 0x01, 0x00, 0x00 });
-		break;
-
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
-}
-
-/**
- * Write flash mode
- * 
- * @param brightness Range 0x00 - 0x64
- * @param speed Range slowest 0x0a to fastest 0x01
- * @param direction 0x00: no, 0x01: right, 0x02 left
- */
-static int __attribute__ ((unused)) ite8291_write_lightbar_flash(struct hid_device *hdev, u8 brightness, u8 speed, u8 direction)
-{
-	if (hdev == NULL)
-		return -ENODEV;
-
-	if (brightness > 0x64)
-		return -EINVAL;
-
-	if (speed < 0x01 || speed > 0x0a)
-		return -EINVAL;
-
-	if (direction > 0x02)
-		return -EINVAL;
-
-	switch (hdev->product) {
-	case 0x6010:
-		ite8291_write_color_list(hdev);
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x02, 0x11, speed, brightness, 0x08, direction, 0x00 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x14, 0x00, 0x01, red, green, blue, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x22, 0x01, 0x01, brightness, 0x01, 0x00, 0x00 });
+		if (result)
+			return result;
 		break;
 
 	default:
@@ -392,17 +179,24 @@ static int __attribute__ ((unused)) ite8291_write_lightbar_flash(struct hid_devi
 
 static int ite8291_write_on(struct hid_device *hdev)
 {
+	int result;
 	switch (hdev->product) {
 	case 0x6010:
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7000:
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7001:
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x02, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x02, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	default:
@@ -414,30 +208,57 @@ static int ite8291_write_on(struct hid_device *hdev)
 
 static int ite8291_write_off(struct hid_device *hdev)
 {
+	int result;
 	switch (hdev->product) {
 	case 0x6010:
 		// Explicitly write mono color "off" due to issue with turning off reliably (especially for sleep)
-		ite8291_write_lightbar_mono(hdev, 0, 0, 0, 0);
+		result = ite8291_write_lightbar_mono(hdev, 0, 0, 0, 0);
+		if (result)
+			return result;
 		msleep(50);
 
-		ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7000:
-		ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	case 0x7001:
-		ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 });
-		ite8291_write_control(hdev, (u8[]){ 0x1a, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		result = ite8291_write_control(hdev, (u8[]){ 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x08, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 });
+		if (result)
+			return result;
+		result = ite8291_write_control(hdev, (u8[]){ 0x1a, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 });
+		if (result)
+			return result;
 		break;
 
 	default:
@@ -445,17 +266,6 @@ static int ite8291_write_off(struct hid_device *hdev)
 	}
 
 	return 0;
-}
-
-static void __attribute__ ((unused)) ite8291_set_testcolors(struct hid_device *hdev)
-{
-	ite8291_set_color_list_entry(hdev, 0, 0xff, 0x00, 0x00);
-	ite8291_set_color_list_entry(hdev, 1, 0xff, 0xff, 0x00);
-	ite8291_set_color_list_entry(hdev, 2, 0x00, 0xff, 0x00);
-	ite8291_set_color_list_entry(hdev, 3, 0xff, 0x00, 0xff);
-	ite8291_set_color_list_entry(hdev, 4, 0xff, 0xff, 0x00);
-	ite8291_set_color_list_entry(hdev, 5, 0x00, 0xff, 0x00);
-	ite8291_set_color_list_entry(hdev, 6, 0x00, 0x00, 0xff);
 }
 
 static int ite8291_write_state(struct hid_device *hdev)
@@ -471,11 +281,16 @@ static int ite8291_write_state(struct hid_device *hdev)
 					   ite8291_driver_data->mcled_cdev_lightbar.led_cdev.brightness);
 }
 
-static void leds_set_brightness_mc_lightbar(struct led_classdev *led_cdev, enum led_brightness brightness) {
+static int leds_set_brightness_mc_lightbar(struct led_classdev *led_cdev, enum led_brightness brightness) {
 	struct device *dev = led_cdev->dev->parent;
 	struct hid_device *hdev = to_hid_device(dev);
+	struct led_classdev_mc *mcled_cdev = lcdev_to_mccdev(led_cdev);
 
-	ite8291_write_state(hdev);
+	return ite8291_write_lightbar_mono(hdev,
+					 mcled_cdev->subled_info[0].intensity,
+					 mcled_cdev->subled_info[1].intensity,
+					 mcled_cdev->subled_info[2].intensity,
+					 brightness);
 }
 
 static int ite8291_init_leds(struct hid_device *hdev)
@@ -485,7 +300,7 @@ static int ite8291_init_leds(struct hid_device *hdev)
 
 	ite8291_driver_data->mcled_cdev_lightbar.led_cdev.name = "rgb:" "lightbar";
 	ite8291_driver_data->mcled_cdev_lightbar.led_cdev.max_brightness = LIGHTBAR_MAX_BRIGHTNESS;
-	ite8291_driver_data->mcled_cdev_lightbar.led_cdev.brightness_set = &leds_set_brightness_mc_lightbar;
+	ite8291_driver_data->mcled_cdev_lightbar.led_cdev.brightness_set_blocking = &leds_set_brightness_mc_lightbar;
 	ite8291_driver_data->mcled_cdev_lightbar.led_cdev.brightness = LIGHTBAR_DEFAULT_BRIGHTNESS;
 	ite8291_driver_data->mcled_cdev_lightbar.num_colors = 3;
 	ite8291_driver_data->mcled_cdev_lightbar.subled_info = ite8291_driver_data->mcled_cdev_subleds_lightbar;
@@ -502,42 +317,6 @@ static int ite8291_init_leds(struct hid_device *hdev)
 	retval = devm_led_classdev_multicolor_register(&hdev->dev, &ite8291_driver_data->mcled_cdev_lightbar);
 	if (retval != 0)
 		return retval;
-
-	return 0;
-}
-
-static int ite8291_driver_data_setup(struct hid_device *hdev, struct ite8291_driver_data_t *driver_data)
-{
-	int i;
-
-	driver_data->hid_dev = hdev;
-
-	switch (hdev->product) {
-	case 0x6010:
-		// Reference usage writes 9 entries but only 7 seem to be in
-		// effect. Therefore defining 7.
-	case 0x7000:
-		driver_data->color_list_length = 7;
-		break;
-
-	default:
-		driver_data->color_list_length = 0;
-	}
-
-	if (driver_data->color_list_length != 0) {
-		driver_data->color_list = devm_kzalloc(&hdev->dev,
-						       sizeof(struct color_u8) * driver_data->color_list_length,
-						       GFP_KERNEL);
-		if (!driver_data->color_list)
-			return -ENOMEM;
-
-		// Initialize color list
-		for (i = 0; i < driver_data->color_list_length; ++i) {
-			driver_data->color_list[i].red = 0;
-			driver_data->color_list[i].green = 0;
-			driver_data->color_list[i].blue = 0;
-		}
-	}
 
 	return 0;
 }
@@ -564,31 +343,36 @@ static int driver_probe_callb(struct hid_device *hdev, const struct hid_device_i
 	result = hid_parse(hdev);
 	if (result) {
 		pr_err("hid_parse failed\n");
-		stop_hw(hdev);
 		return result;
 	}
-
-	result = start_hw(hdev);
-	if (result != 0)
-		return result;
 
 	ite8291_driver_data = devm_kzalloc(&hdev->dev, sizeof(*ite8291_driver_data), GFP_KERNEL);
 	if (!ite8291_driver_data)
 		return -ENOMEM;
 
-	result = ite8291_driver_data_setup(hdev, ite8291_driver_data);
-	if (result != 0)
-		return result;
-
 	hid_set_drvdata(hdev, ite8291_driver_data);
 
-	result = ite8291_init_leds(hdev);
-	if (result != 0)
+	result = start_hw(hdev);
+	if (result)
 		return result;
 
-	ite8291_write_on(hdev);
-	ite8291_write_state(hdev);
+	result = ite8291_init_leds(hdev);
+	if (result)
+		goto err_stop;
 
+	result = ite8291_write_on(hdev);
+	if (result)
+		goto err_led;
+	result = ite8291_write_state(hdev);
+	if (result)
+		goto err_led;
+
+	return 0;
+
+err_led:
+	devm_led_classdev_multicolor_unregister(&hdev->dev, &ite8291_driver_data->mcled_cdev_lightbar);
+err_stop:
+	stop_hw(hdev);
 	return result;
 }
 
@@ -607,23 +391,23 @@ static void driver_remove_callb(struct hid_device *hdev)
 #ifdef CONFIG_PM
 static int driver_suspend_callb(struct hid_device *hdev, pm_message_t message)
 {
-	ite8291_write_off(hdev);
 	pr_debug("driver suspend\n");
-	return 0;
+	return ite8291_write_off(hdev);
 }
 
 static int driver_resume_callb(struct hid_device *hdev)
 {
+	int result;
 	pr_debug("driver resume\n");
-	ite8291_write_on(hdev);
+	result = ite8291_write_on(hdev);
+	if (result)
+		return result;
 	return ite8291_write_state(hdev);
 }
 
 static int driver_reset_resume_callb(struct hid_device *hdev)
 {
-	pr_debug("driver reset resume\n");
-	ite8291_write_on(hdev);
-	return ite8291_write_state(hdev);
+	return driver_resume_callb(hdev);
 }
 #endif
 

@@ -24,15 +24,17 @@
 #include <linux/leds.h>
 #include <linux/version.h>
 #include <linux/dmi.h>
+#include <linux/mutex.h>
 #include "tuxedo_nb05_kbd_backlight.h"
 #include "tuxedo_nb05_ec.h"
 
 #define NB05_KBD_BRIGHTNESS_MAX_WHITE		0x02
 #define NB05_KBD_BRIGHTNESS_DEFAULT_WHITE	0x00
 
-static struct led_classdev *__nb05_kbd_led_cdev = NULL;
+static DEFINE_MUTEX(nb05_kbd_led_lock);
+static struct led_classdev *__nb05_kbd_led_cdev;
 
-static u8 white_brightness_to_level_map[] = {
+static const u8 white_brightness_to_level_map[] = {
 	0x00,
 	0x5c,
 	0xb8,
@@ -42,18 +44,23 @@ struct driver_data_t {
 	struct led_classdev nb05_kbd_led_cdev;
 };
 
-static void nb05_leds_set_brightness(struct led_classdev *led_cdev __always_unused,
+static int nb05_leds_set_brightness(struct led_classdev *led_cdev __always_unused,
 				     enum led_brightness brightness)
 {
-	if (brightness < 0 || brightness > NB05_KBD_BRIGHTNESS_MAX_WHITE)
-		return;
-
 	const struct dmi_system_id *sysid;
+
+	if (brightness < 0 || brightness > NB05_KBD_BRIGHTNESS_MAX_WHITE)
+		return -EINVAL;
+
 	sysid = nb05_match_device();
+	if (!sysid)
+		return -ENODEV;
 	if (!strcmp(sysid->ident, IFLX14I01))
 		nb05_write_ec_ram(0x03e2, white_brightness_to_level_map[brightness]);
 	else
 		nb05_write_ec_ram(0x0409, white_brightness_to_level_map[brightness]);
+
+	return 0;
 }
 
 void nb05_leds_notify_brightness_change_extern(u8 step)
@@ -61,10 +68,12 @@ void nb05_leds_notify_brightness_change_extern(u8 step)
 	if (step > NB05_KBD_BRIGHTNESS_MAX_WHITE)
 		return;
 
+	mutex_lock(&nb05_kbd_led_lock);
 	if (__nb05_kbd_led_cdev) {
 		__nb05_kbd_led_cdev->brightness = step;
 		led_classdev_notify_brightness_hw_changed(__nb05_kbd_led_cdev, step);
 	}
+	mutex_unlock(&nb05_kbd_led_lock);
 }
 EXPORT_SYMBOL(nb05_leds_notify_brightness_change_extern);
 
@@ -75,7 +84,7 @@ static int init_leds(struct platform_device *pdev)
 
 	driver_data->nb05_kbd_led_cdev.name = "white:" LED_FUNCTION_KBD_BACKLIGHT;
 	driver_data->nb05_kbd_led_cdev.max_brightness = NB05_KBD_BRIGHTNESS_MAX_WHITE;
-	driver_data->nb05_kbd_led_cdev.brightness_set = &nb05_leds_set_brightness;
+	driver_data->nb05_kbd_led_cdev.brightness_set_blocking = &nb05_leds_set_brightness;
 	driver_data->nb05_kbd_led_cdev.brightness = NB05_KBD_BRIGHTNESS_DEFAULT_WHITE;
 	driver_data->nb05_kbd_led_cdev.flags = LED_BRIGHT_HW_CHANGED;
 
@@ -83,14 +92,15 @@ static int init_leds(struct platform_device *pdev)
 	if (retval)
 		return retval;
 
+	mutex_lock(&nb05_kbd_led_lock);
 	__nb05_kbd_led_cdev = &driver_data->nb05_kbd_led_cdev;
+	mutex_unlock(&nb05_kbd_led_lock);
 
 	return 0;
 }
 
 static int __init tuxedo_nb05_kbd_backlight_probe(struct platform_device *pdev)
 {
-	int result;
 	struct driver_data_t *driver_data;
 
 	pr_debug("driver probe\n");
@@ -101,16 +111,7 @@ static int __init tuxedo_nb05_kbd_backlight_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, driver_data);
 
-	if (result) {
-		pr_err("Failed init write %d\n", result);
-		return result;
-	}
-
-	result = init_leds(pdev);
-	if (result)
-		return result;
-
-	return 0;
+	return init_leds(pdev);
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
@@ -120,8 +121,10 @@ static void tuxedo_nb05_kbd_backlight_remove(struct platform_device *pdev)
 #endif
 {
 	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	led_classdev_unregister(&driver_data->nb05_kbd_led_cdev);
+	mutex_lock(&nb05_kbd_led_lock);
 	__nb05_kbd_led_cdev = NULL;
+	mutex_unlock(&nb05_kbd_led_lock);
+	led_classdev_unregister(&driver_data->nb05_kbd_led_cdev);
 	pr_debug("driver remove\n");
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 	return 0;

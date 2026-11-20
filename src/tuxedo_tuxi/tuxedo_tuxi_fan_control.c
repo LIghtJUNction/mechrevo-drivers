@@ -32,7 +32,7 @@
 #define FAN_ON_MIN_SPEED_PERCENT 25
 
 struct driver_data_t {
-	struct platform_device *pdev;
+	u8 nr_fans;
 };
 
 static ssize_t fan1_pwm_show(struct device *dev,
@@ -85,18 +85,33 @@ static struct attribute *fan_control_attrs_list[] = {
 	NULL
 };
 
+static umode_t fan_control_is_visible(struct kobject *kobj,
+				      struct attribute *attr, int index)
+{
+	struct driver_data_t *data = dev_get_drvdata(kobj_to_dev(kobj));
+
+	if (index / 2 >= data->nr_fans)
+		return 0;
+	return attr->mode;
+}
+
 static struct attribute_group fan_control_attr_group = {
-	.attrs = fan_control_attrs_list
+	.attrs = fan_control_attrs_list,
+	.is_visible = fan_control_is_visible
 };
 
 static ssize_t fan1_pwm_show(struct device *dev,
 			     struct device_attribute *attr, char *buffer)
 {
-	u8 pwm_data, duty_data;
-	duty_data = tuxi_get_fan_speed(0, &duty_data);
-	pwm_data = (duty_data * 0xff) / FAN_SET_DUTY_MAX;
-	sysfs_emit(buffer, "%d\n", pwm_data);
-	return strlen(buffer);
+	u8 duty_data;
+	int err;
+
+	err = tuxi_get_fan_speed(0, &duty_data);
+	if (err)
+		return err;
+
+	return sysfs_emit(buffer, "%u\n",
+			  (duty_data * 0xff) / FAN_SET_DUTY_MAX);
 }
 
 static ssize_t fan1_pwm_store(struct device *dev,
@@ -132,14 +147,14 @@ static ssize_t fan1_pwm_enable_show(struct device *dev,
 	int err;
 
 	err = tuxi_get_fan_mode(&mode);
+	if (err)
+		return err;
 	if (mode == MANUAL) {
 		enable_hwmon = 1;
 	} else {
 		enable_hwmon = 2;
 	}
-	sysfs_emit(buffer, "%d\n", enable_hwmon);
-
-	return strlen(buffer);
+	return sysfs_emit(buffer, "%u\n", enable_hwmon);
 }
 
 static ssize_t fan1_pwm_enable_store(struct device *dev,
@@ -155,8 +170,10 @@ static ssize_t fan1_pwm_enable_store(struct device *dev,
 
 	if (enable_hwmon == 1)
 		mode = MANUAL;
-	else
+	else if (enable_hwmon == 2)
 		mode = AUTO;
+	else
+		return -EINVAL;
 
 	err = tuxi_set_fan_mode(mode);
 	if (err)
@@ -168,11 +185,15 @@ static ssize_t fan1_pwm_enable_store(struct device *dev,
 static ssize_t fan2_pwm_show(struct device *dev,
 			     struct device_attribute *attr, char *buffer)
 {
-	u8 pwm_data, duty_data;
-	duty_data = tuxi_get_fan_speed(1, &duty_data);
-	pwm_data = (duty_data * 0xff) / FAN_SET_DUTY_MAX;
-	sysfs_emit(buffer, "%d\n", pwm_data);
-	return strlen(buffer);
+	u8 duty_data;
+	int err;
+
+	err = tuxi_get_fan_speed(1, &duty_data);
+	if (err)
+		return err;
+
+	return sysfs_emit(buffer, "%u\n",
+			  (duty_data * 0xff) / FAN_SET_DUTY_MAX);
 }
 
 static ssize_t fan2_pwm_store(struct device *dev,
@@ -208,14 +229,14 @@ static ssize_t fan2_pwm_enable_show(struct device *dev,
 	int err;
 
 	err = tuxi_get_fan_mode(&mode);
+	if (err)
+		return err;
 	if (mode == MANUAL) {
 		enable_hwmon = 1;
 	} else {
 		enable_hwmon = 2;
 	}
-	sysfs_emit(buffer, "%d\n", enable_hwmon);
-
-	return strlen(buffer);
+	return sysfs_emit(buffer, "%u\n", enable_hwmon);
 }
 
 static ssize_t fan2_pwm_enable_store(struct device *dev,
@@ -231,8 +252,10 @@ static ssize_t fan2_pwm_enable_store(struct device *dev,
 
 	if (enable_hwmon == 1)
 		mode = MANUAL;
-	else
+	else if (enable_hwmon == 2)
 		mode = AUTO;
+	else
+		return -EINVAL;
 
 	err = tuxi_set_fan_mode(mode);
 	if (err)
@@ -241,31 +264,42 @@ static ssize_t fan2_pwm_enable_store(struct device *dev,
 	return size;
 }
 
-static umode_t
-hwm_is_visible(const void __always_unused *drvdata,
-	       enum hwmon_sensor_types __always_unused type,
-	       u32 __always_unused attr, int __always_unused channel)
+static umode_t hwm_is_visible(const void *drvdata,
+			      enum hwmon_sensor_types type, u32 attr, int channel)
 {
-	return 0444;
+	const struct driver_data_t *data = drvdata;
+
+	if (channel < 0 || channel >= data->nr_fans || channel >= 2)
+		return 0;
+	if (type == hwmon_temp &&
+	    (attr == hwmon_temp_input || attr == hwmon_temp_label))
+		return 0444;
+	if (type == hwmon_fan &&
+	    (attr == hwmon_fan_input || attr == hwmon_fan_label ||
+	     attr == hwmon_fan_min || attr == hwmon_fan_max))
+		return 0444;
+	return 0;
 }
 
-static int
-hwm_read(struct device __always_unused *dev, enum hwmon_sensor_types type,
-	 u32 __always_unused attr, int channel, long *val)
+static int hwm_read(struct device *dev, enum hwmon_sensor_types type,
+		    u32 attr, int channel, long *val)
 {
+	struct driver_data_t *data = dev_get_drvdata(dev);
 	int err;
-	u16 temp;
-	u16 rpm;
+	u16 temp, rpm;
+
+	if (channel < 0 || channel >= data->nr_fans || channel >= 2)
+		return -EOPNOTSUPP;
 
 	switch (type) {
 	case hwmon_temp:
+		if (attr != hwmon_temp_input)
+			break;
 		err = tuxi_get_fan_temp(channel, &temp);
 		if (err)
 			return err;
-		*val = (temp - 2730) * 100; // temp is in tenth Kelvin, hovever
-					    // the last digit is always 0, so
-					    // the conversion is also rounded to
-					    // whole °C.
+		/* Firmware reports tenths of Kelvin; hwmon expects millidegrees C. */
+		*val = (temp - 2730) * 100;
 		return 0;
 	case hwmon_fan:
 		switch (attr) {
@@ -273,7 +307,7 @@ hwm_read(struct device __always_unused *dev, enum hwmon_sensor_types type,
 			*val = 0;
 			return 0;
 		case hwmon_fan_max:
-			*val = 6000; // FIXME Return value read from firmware.
+			*val = 6000; /* FIXME: read the limit from firmware. */
 			return 0;
 		case hwmon_fan_input:
 			err = tuxi_get_fan_rpm(channel, &rpm);
@@ -284,10 +318,10 @@ hwm_read(struct device __always_unused *dev, enum hwmon_sensor_types type,
 		default:
 			break;
 		}
+		break;
 	default:
 		break;
 	}
-
 	return -EOPNOTSUPP;
 }
 
@@ -301,22 +335,22 @@ static const char * const hwm_fan_labels[] = {
 	"gpu0"
 };
 
-static int
-hwm_read_string(struct device __always_unused *dev,
-		enum hwmon_sensor_types type, u32 __always_unused attr,
-		int channel, const char **str)
+static int hwm_read_string(struct device *dev, enum hwmon_sensor_types type,
+			   u32 attr, int channel, const char **str)
 {
-	switch (type) {
-	case hwmon_temp:
+	struct driver_data_t *data = dev_get_drvdata(dev);
+
+	if (channel < 0 || channel >= data->nr_fans || channel >= 2)
+		return -EOPNOTSUPP;
+
+	if (type == hwmon_temp && attr == hwmon_temp_label) {
 		*str = hwm_temp_labels[channel];
 		return 0;
-	case hwmon_fan:
+	}
+	if (type == hwmon_fan && attr == hwmon_fan_label) {
 		*str = hwm_fan_labels[channel];
 		return 0;
-	default:
-		break;
 	}
-
 	return -EOPNOTSUPP;
 }
 
@@ -354,19 +388,22 @@ static int __init tuxedo_tuxi_fan_control_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, driver_data);
 
-	driver_data->pdev = pdev;
+	err = tuxi_get_nr_fans(&driver_data->nr_fans);
+	if (err)
+		return err;
+	if (!driver_data->nr_fans)
+		return -ENODEV;
 
-	err = sysfs_create_group(&driver_data->pdev->dev.kobj, &fan_control_attr_group);
+	err = devm_device_add_group(&pdev->dev, &fan_control_attr_group);
 	if (err) {
 		pr_err("create group failed\n");
-		platform_device_unregister(driver_data->pdev);
 		return err;
 	}
 
-	if(tuxi_get_fan_temp(0, &temp) == 0 && tuxi_get_fan_rpm(0, &rpm) == 0) {
+	if (tuxi_get_fan_temp(0, &temp) == 0 && tuxi_get_fan_rpm(0, &rpm) == 0) {
 		hwmdev = devm_hwmon_device_register_with_info(&pdev->dev,
 							      "tuxedo_tuxi_sensors",
-							      NULL,
+							      driver_data,
 							      &hwminfo,
 							      NULL);
 		return PTR_ERR_OR_ZERO(hwmdev);
@@ -377,37 +414,13 @@ static int __init tuxedo_tuxi_fan_control_probe(struct platform_device *pdev)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-static int tuxedo_tuxi_fan_control_remove(struct platform_device *pdev)
-#else
-static void tuxedo_tuxi_fan_control_remove(struct platform_device *pdev)
-#endif
-{
-	pr_debug("driver remove\n");
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	sysfs_remove_group(&driver_data->pdev->dev.kobj, &fan_control_attr_group);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-	return 0;
-#endif
-}
-
 static struct platform_device *tuxedo_tuxi_fan_control_device;
 static struct platform_driver tuxedo_tuxi_fan_control_driver = {
 	.driver.name = "tuxedo_fan_control",
-	.remove = tuxedo_tuxi_fan_control_remove,
 };
 
 static int __init tuxedo_tuxi_fan_control_init(void)
 {
-	int err;
-	u8 dummy;
-
-	// Check interface presence
-	err = tuxi_get_nr_fans(&dummy);
-	if (err == -ENODEV)
-		return err;
-
 	tuxedo_tuxi_fan_control_device =
 		platform_create_bundle(&tuxedo_tuxi_fan_control_driver,
 				       tuxedo_tuxi_fan_control_probe, NULL, 0, NULL, 0);

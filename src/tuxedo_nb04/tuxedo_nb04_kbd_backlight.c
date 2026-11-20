@@ -37,7 +37,7 @@ struct driver_data_t {
 	struct device_keyboard_status_t device_status;
 };
 
-static void leds_set_brightness_mc_keyboard(struct led_classdev *led_cdev, enum led_brightness brightness)
+static int leds_set_brightness_mc_keyboard(struct led_classdev *led_cdev, enum led_brightness brightness)
 {
 	struct led_classdev_mc *mcled_cdev = lcdev_to_mccdev(led_cdev);
 	u8 red = mcled_cdev->subled_info[0].intensity;
@@ -46,7 +46,7 @@ static void leds_set_brightness_mc_keyboard(struct led_classdev *led_cdev, enum 
 
 	pr_debug("wmi_set_whole_keyboard(%u, %u, %u, %u)\n", red, green, blue, brightness);
 
-	wmi_set_whole_keyboard(red, green, blue, brightness);
+	return wmi_set_whole_keyboard(red, green, blue, brightness);
 }
 
 static int init_leds(struct platform_device *pdev)
@@ -56,7 +56,7 @@ static int init_leds(struct platform_device *pdev)
 
 	driver_data->mcled_cdev_keyboard.led_cdev.name = "rgb:" LED_FUNCTION_KBD_BACKLIGHT;
 	driver_data->mcled_cdev_keyboard.led_cdev.max_brightness = KEYBOARD_MAX_BRIGHTNESS;
-	driver_data->mcled_cdev_keyboard.led_cdev.brightness_set = &leds_set_brightness_mc_keyboard;
+	driver_data->mcled_cdev_keyboard.led_cdev.brightness_set_blocking = &leds_set_brightness_mc_keyboard;
 	driver_data->mcled_cdev_keyboard.led_cdev.brightness = KEYBOARD_DEFAULT_BRIGHTNESS;
 	driver_data->mcled_cdev_keyboard.num_colors = 3;
 	driver_data->mcled_cdev_keyboard.subled_info = driver_data->mcled_cdev_subleds_keyboard;

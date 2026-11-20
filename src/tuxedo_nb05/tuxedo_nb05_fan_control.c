@@ -39,7 +39,6 @@
 #define DUTY_TO_PWM(duty_data) ((duty_data * 0xff) / FAN_SET_DUTY_MAX)
 
 struct driver_data_t {
-	struct platform_device *pdev;
 	struct nb05_ec_data_t *ec_data;
 	bool write_rpm;
 };
@@ -317,6 +316,8 @@ static ssize_t fan1_pwm_show(struct device *dev,
 	else
 		duty_data = read_fan1_duty_ranges();
 
+	if (duty_data > FAN_SET_DUTY_MAX)
+		return -ERANGE;
 	pwm_data = DUTY_TO_PWM(duty_data);
 	sysfs_emit(buffer, "%d\n", pwm_data);
 
@@ -390,8 +391,10 @@ static ssize_t fan1_pwm_enable_store(struct device *dev,
 
 	if (enable_hwmon == 2)
 		enable_data = false;
-	else
+	else if (enable_hwmon == 1)
 		enable_data = true;
+	else
+		return -EINVAL;
 
 	if (driver_data->ec_data->dev_data->fanctl_onereg)
 		err = write_fan1_enable_onereg(enable_data);
@@ -409,6 +412,8 @@ static ssize_t fan2_pwm_show(struct device *dev,
 {
 	u8 pwm_data, duty_data;
 	duty_data = read_fan2_duty();
+	if (duty_data > FAN_SET_DUTY_MAX)
+		return -ERANGE;
 	pwm_data = DUTY_TO_PWM(duty_data);
 	sysfs_emit(buffer, "%d\n", pwm_data);
 
@@ -471,8 +476,10 @@ static ssize_t fan2_pwm_enable_store(struct device *dev,
 
 	if (enable_hwmon == 2)
 		enable_data = false;
-	else
+	else if (enable_hwmon == 1)
 		enable_data = true;
+	else
+		return -EINVAL;
 
 	err = write_fan2_enable(enable_data);
 	if (err)
@@ -483,56 +490,28 @@ static ssize_t fan2_pwm_enable_store(struct device *dev,
 
 static int __init tuxedo_nb05_fan_control_probe(struct platform_device *pdev)
 {
-	int err;
+	struct driver_data_t *driver_data;
 
-	struct driver_data_t *driver_data = devm_kzalloc(&pdev->dev, sizeof(*driver_data), GFP_KERNEL);
+	driver_data = devm_kzalloc(&pdev->dev, sizeof(*driver_data), GFP_KERNEL);
 	if (!driver_data)
 		return -ENOMEM;
 
-	pr_debug("driver probe\n");
-
 	dev_set_drvdata(&pdev->dev, driver_data);
-
-	driver_data->pdev = pdev;
 	nb05_get_ec_data(&driver_data->ec_data);
 
-	driver_data->write_rpm = false;
-	if (!driver_data->ec_data->dev_data->fanctl_onereg) {
-		if (driver_data->ec_data->ver_major >= 9 &&
-		    driver_data->ec_data->ver_minor >= 10)
-			driver_data->write_rpm = false;
-		else
-			driver_data->write_rpm = true;
-	}
+	/* EC 9.10 and newer use duty control without the legacy RPM writes. */
+	driver_data->write_rpm =
+		!driver_data->ec_data->dev_data->fanctl_onereg &&
+		(driver_data->ec_data->ver_major < 9 ||
+		 (driver_data->ec_data->ver_major == 9 &&
+		  driver_data->ec_data->ver_minor < 10));
 
-	err = sysfs_create_group(&driver_data->pdev->dev.kobj, &fan_control_attr_group);
-	if (err) {
-		pr_err("create group failed\n");
-		platform_device_unregister(driver_data->pdev);
-		return err;
-	}
-
-	return 0;
-}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-static int tuxedo_nb05_fan_control_remove(struct platform_device *pdev)
-#else
-static void tuxedo_nb05_fan_control_remove(struct platform_device *pdev)
-#endif
-{
-	pr_debug("driver remove\n");
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	sysfs_remove_group(&driver_data->pdev->dev.kobj, &fan_control_attr_group);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-	return 0;
-#endif
+	return devm_device_add_group(&pdev->dev, &fan_control_attr_group);
 }
 
 static struct platform_device *tuxedo_nb05_fan_control_device;
 static struct platform_driver tuxedo_nb05_fan_control_driver = {
 	.driver.name = "tuxedo_fan_control",
-	.remove = tuxedo_nb05_fan_control_remove,
 };
 
 static int __init tuxedo_nb05_fan_control_init(void)

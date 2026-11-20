@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/mutex.h>
 #include <linux/dmi.h>
 #include <linux/version.h>
 #include "tuxedo_nb04_wmi_bs.h"
@@ -30,7 +31,7 @@
 #define DEFAULT_PROFILE		WMI_SYSTEM_MODE_BEAST
 
 struct driver_data_t {
-	struct platform_device *pdev;
+	struct mutex lock;
 	u8 current_profile_value;
 };
 
@@ -54,12 +55,6 @@ static int set_system_mode(u8 mode_input)
 		return -EIO;
 
 	return 0;
-}
-
-static int write_platform_profile_state(struct platform_device *pdev)
-{
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	return set_system_mode(driver_data->current_profile_value);
 }
 
 static ssize_t platform_profile_choices_show(struct device *dev,
@@ -96,11 +91,11 @@ static struct attribute_group platform_profile_attr_group = {
 };
 
 struct char_to_value_t {
-	char* descriptor;
+	const char *descriptor;
 	u64 value;
 };
 
-static struct char_to_value_t platform_profile_options[] = {
+static const struct char_to_value_t platform_profile_options[] = {
 	{ .descriptor = "low-power",	.value = WMI_SYSTEM_MODE_BATTERY },
 	{ .descriptor = "balanced",	.value = WMI_SYSTEM_MODE_HUMAN },
 	{ .descriptor = "performance",	.value = WMI_SYSTEM_MODE_BEAST },
@@ -110,43 +105,27 @@ static ssize_t platform_profile_choices_show(struct device *dev,
 					     struct device_attribute *attr,
 					     char *buffer)
 {
-	int i, n;
-	n = ARRAY_SIZE(platform_profile_options);
-	for (i = 0; i < n; ++i) {
-		sprintf(buffer + strlen(buffer), "%s",
-			platform_profile_options[i].descriptor);
-		if (i < n - 1)
-			sprintf(buffer + strlen(buffer), " ");
-		else
-			sprintf(buffer + strlen(buffer), "\n");
-	}
-
-	return strlen(buffer);
+	return sysfs_emit(buffer, "%s %s %s\n",
+			  platform_profile_options[0].descriptor,
+			  platform_profile_options[1].descriptor,
+			  platform_profile_options[2].descriptor);
 }
 
 static ssize_t platform_profile_show(struct device *dev,
 				     struct device_attribute *attr, char *buffer)
 {
-	u64 platform_profile_value;
-	int i, err;
-	struct platform_device *pdev = to_platform_device(dev);
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
+	u8 platform_profile_value;
+	int i;
+	struct driver_data_t *driver_data = dev_get_drvdata(dev);
 
-	err = 0;
+	mutex_lock(&driver_data->lock);
 	platform_profile_value = driver_data->current_profile_value;
-
-	if (err) {
-		pr_err("Error reading power profile");
-		return -EIO;
-	}
+	mutex_unlock(&driver_data->lock);
 
 	for (i = 0; i < ARRAY_SIZE(platform_profile_options); ++i)
-		if (platform_profile_options[i].value == platform_profile_value) {
-			sprintf(buffer, "%s\n", platform_profile_options[i].descriptor);
-			return strlen(buffer);
-		}
-
-	pr_err("Read platform profile value not matched to a descriptor\n");
+		if (platform_profile_options[i].value == platform_profile_value)
+			return sysfs_emit(buffer, "%s\n",
+					  platform_profile_options[i].descriptor);
 
 	return -EIO;
 }
@@ -155,36 +134,26 @@ static ssize_t platform_profile_store(struct device *dev,
 				      struct device_attribute *attr,
 				      const char *buffer, size_t size)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	u64 platform_profile_value;
+	struct driver_data_t *driver_data = dev_get_drvdata(dev);
+	u8 profile;
 	int i, err;
-	char *buffer_copy;
-	char *platform_profile_descriptor;
-
-	buffer_copy = kmalloc(size + 1, GFP_KERNEL);
-	strcpy(buffer_copy, buffer);
-	platform_profile_descriptor = strstrip(buffer_copy);
 
 	for (i = 0; i < ARRAY_SIZE(platform_profile_options); ++i)
-		if (strcmp(platform_profile_options[i].descriptor, platform_profile_descriptor) == 0) {
-			platform_profile_value = platform_profile_options[i].value;
+		if (sysfs_streq(buffer, platform_profile_options[i].descriptor))
 			break;
-		}
-
-	kfree(buffer_copy);
-
-	if (i < ARRAY_SIZE(platform_profile_options)) {
-		// Option found try to set
-		driver_data->current_profile_value = platform_profile_value;
-		err = write_platform_profile_state(pdev);
-		if (err)
-			return err;
-		return size;
-	} else {
-		// Invalid input, not matched to an option
+	if (i == ARRAY_SIZE(platform_profile_options))
 		return -EINVAL;
-	}
+
+	profile = platform_profile_options[i].value;
+	mutex_lock(&driver_data->lock);
+	err = set_system_mode(profile);
+	if (!err)
+		driver_data->current_profile_value = profile;
+	mutex_unlock(&driver_data->lock);
+
+	if (err)
+		return err;
+	return size;
 }
 
 static int __init tuxedo_nb04_power_profiles_probe(struct platform_device *pdev)
@@ -203,38 +172,18 @@ static int __init tuxedo_nb04_power_profiles_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, driver_data);
 
-	driver_data->pdev = pdev;
-	driver_data->current_profile_value = DEFAULT_PROFILE;
-	write_platform_profile_state(pdev);
-
-	err = sysfs_create_group(&driver_data->pdev->dev.kobj, &platform_profile_attr_group);
-	if (err) {
-		pr_err("create group failed\n");
-		platform_device_unregister(driver_data->pdev);
+	mutex_init(&driver_data->lock);
+	err = set_system_mode(DEFAULT_PROFILE);
+	if (err)
 		return err;
-	}
+	driver_data->current_profile_value = DEFAULT_PROFILE;
 
-	return 0;
-}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-static int tuxedo_nb04_power_profiles_remove(struct platform_device *pdev)
-#else
-static void tuxedo_nb04_power_profiles_remove(struct platform_device *pdev)
-#endif
-{
-	pr_debug("driver remove\n");
-	struct driver_data_t *driver_data = dev_get_drvdata(&pdev->dev);
-	sysfs_remove_group(&driver_data->pdev->dev.kobj, &platform_profile_attr_group);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
-	return 0;
-#endif
+	return devm_device_add_group(&pdev->dev, &platform_profile_attr_group);
 }
 
 static struct platform_device *tuxedo_nb04_power_profiles_device;
 static struct platform_driver tuxedo_nb04_power_profiles_driver = {
 	.driver.name = "tuxedo_platform_profile",
-	.remove = tuxedo_nb04_power_profiles_remove,
 };
 
 static int __init tuxedo_nb04_power_profiles_init(void)

@@ -32,7 +32,9 @@ static int clevo_wmi_evaluate(u32 wmi_method_id, u32 wmi_arg, union acpi_object 
 	struct acpi_buffer acpi_buffer_out = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *acpi_result;
 	acpi_status status_acpi;
-	int return_status = 0;
+
+	if (!IS_ERR_OR_NULL(result))
+		*result = NULL;
 
 	status_acpi =
 		wmi_evaluate_method(CLEVO_WMI_METHOD_GUID, 0x00, wmi_method_id,
@@ -40,21 +42,21 @@ static int clevo_wmi_evaluate(u32 wmi_method_id, u32 wmi_arg, union acpi_object 
 
 	if (unlikely(ACPI_FAILURE(status_acpi))) {
 		pr_err("failed to evaluate wmi method\n");
+		ACPI_FREE(acpi_buffer_out.pointer);
 		return -EIO;
 	}
 
 	acpi_result = (union acpi_object *)acpi_buffer_out.pointer;
 	if (!acpi_result) {
 		pr_err("failed to evaluate WMI method\n");
-		return_status = -1;
+		return -ENODATA;
 	}
-	else {
-		if (!IS_ERR_OR_NULL(result)) {
-			*result = acpi_result;
-		}
-	}
+	if (!IS_ERR_OR_NULL(result))
+		*result = acpi_result;
+	else
+		ACPI_FREE(acpi_result);
 
-	return return_status;
+	return 0;
 }
 
 static int clevo_wmi_interface_method_call(u8 cmd, u32 arg, union acpi_object **result_value)
@@ -66,7 +68,9 @@ static int clevo_wmi_interface_method_call_pkgbuf(u8 cmd, u8 *arg, u32 length, u
 {
 	pr_info("%s: unsupported wmi method call; ignoring cmd 0x%02x; please use acpi interface\n",
 			__func__, cmd);
-	return 0;
+	if (!IS_ERR_OR_NULL(result_value))
+		*result_value = NULL;
+	return -EOPNOTSUPP;
 }
 
 struct clevo_interface_t clevo_wmi_interface = {
@@ -112,7 +116,9 @@ static int clevo_wmi_probe(struct wmi_device *wdev, const void *dummy_context)
 	ACPI_FREE(out_obj);
 
 	// Add this interface
-	clevo_keyboard_add_interface(&clevo_wmi_interface);
+	status = clevo_keyboard_add_interface(&clevo_wmi_interface);
+	if (status)
+		return status;
 
 	pr_info("interface initialized\n");
 
@@ -139,14 +145,15 @@ static void clevo_wmi_notify(struct wmi_device *wdev, union acpi_object *dummy)
 	int status;
 
 	status = clevo_wmi_evaluate(0x01, 0, &out_obj);
-	if (!status) {
-		if (out_obj->type == ACPI_TYPE_INTEGER) {
-			event_value = (u32)out_obj->integer.value;
-		} else {
-			pr_err("return type not integer, use clevo_evaluate_method2\n");
-		}
+	if (status)
+		return;
+	if (out_obj->type != ACPI_TYPE_INTEGER) {
+		pr_err("return type not integer, use clevo_evaluate_method2\n");
 		ACPI_FREE(out_obj);
+		return;
 	}
+	event_value = (u32)out_obj->integer.value;
+	ACPI_FREE(out_obj);
 	pr_debug("clevo_wmi notify\n");
 	if (!IS_ERR_OR_NULL(clevo_wmi_interface.event_callb)) {
 		// Execute registered callback

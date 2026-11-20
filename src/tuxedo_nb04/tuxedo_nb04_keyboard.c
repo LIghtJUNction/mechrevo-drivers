@@ -168,15 +168,14 @@ static void tuxedo_nb04_keyboard_remove(struct wmi_device *wdev)
 
 static void tuxedo_nb04_keyboard_notify(struct wmi_device *wdev, union acpi_object *obj)
 {
-	u8 function_number;
 	u8 event_code;
 	struct driver_data_t *driver_data = dev_get_drvdata(&wdev->dev);
 
 	if (obj &&
 	    obj->type == ACPI_TYPE_BUFFER &&
-	    obj->buffer.length >= 2)
+	    obj->buffer.length >= 2 &&
+	    obj->buffer.pointer)
 	{
-		function_number = obj->buffer.pointer[0];
 		event_code = obj->buffer.pointer[1];
 		pr_debug("event value: %d (%0#4x)\n",
 			 event_code, event_code);

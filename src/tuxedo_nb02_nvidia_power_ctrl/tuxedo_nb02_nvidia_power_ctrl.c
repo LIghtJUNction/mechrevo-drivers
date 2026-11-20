@@ -285,39 +285,29 @@ static int __init init_db_and_ctgp(void)
 	return 0;
 }
 
+static struct attribute *power_ctrl_attrs[] = {
+	&dev_attr_ctgp_offset.attr,
+#ifdef DEBUG
+	&dev_attr_db_offset.attr,
+	&dev_attr_ctgp_enable.attr,
+	&dev_attr_db_enable.attr,
+	&dev_attr_tpp_offset.attr,
+#endif
+	NULL
+};
+
+static const struct attribute_group power_ctrl_attr_group = {
+	.attrs = power_ctrl_attrs
+};
+
 static int __init init_sysfs_attrs(struct platform_device *pdev)
 {
-	int result = 0;
-
-	result = sysfs_create_file(&pdev->dev.kobj, &dev_attr_ctgp_offset.attr);
-	if (result)
-		return result;
-
-#ifdef DEBUG
-	result = sysfs_create_file(&pdev->dev.kobj, &dev_attr_db_offset.attr);
-	if (result)
-		return result;
-
-	result = sysfs_create_file(&pdev->dev.kobj, &dev_attr_ctgp_enable.attr);
-	if (result)
-		return result;
-
-	result = sysfs_create_file(&pdev->dev.kobj, &dev_attr_db_enable.attr);
-	if (result)
-		return result;
-
-	result = sysfs_create_file(&pdev->dev.kobj, &dev_attr_tpp_offset.attr);
-	if (result)
-		return result;
-#endif // DEBUG
-
-	return 0;
+	return devm_device_add_group(&pdev->dev, &power_ctrl_attr_group);
 }
-
-static int interface_probe_retries = 5;
 
 static int __init tuxedo_nb02_nvidia_power_ctrl_probe(struct platform_device *pdev) {
 	int result = 0;
+	int interface_probe_retries = 5;
 	char **uniwill_active_interface = NULL;
 	struct pci_dev *gpu_dev = NULL;
 

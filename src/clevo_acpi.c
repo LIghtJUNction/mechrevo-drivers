@@ -59,6 +59,9 @@ static int clevo_acpi_evaluate(struct acpi_device *device, u8 cmd, u32 arg, unio
 		.package.elements = dsm_argv4_package_data
 	};
 
+	if (!IS_ERR_OR_NULL(result))
+		*result = NULL;
+
 	status = guid_parse(CLEVO_ACPI_DSM_UUID, &clevo_acpi_dsm_uuid);
 	if (status < 0)
 		return -ENOENT;
@@ -70,15 +73,14 @@ static int clevo_acpi_evaluate(struct acpi_device *device, u8 cmd, u32 arg, unio
 	out_obj = acpi_evaluate_dsm(handle, &clevo_acpi_dsm_uuid, dsm_rev_dummy, dsm_func, &dsm_argv4);
 	if (!out_obj) {
 		pr_err("failed to evaluate _DSM\n");
-		status = -1;
+		return -EIO;
 	}
-	else {
-		if (!IS_ERR_OR_NULL(result)) {
-			*result = out_obj;
-		}
-	}
+	if (!IS_ERR_OR_NULL(result))
+		*result = out_obj;
+	else
+		ACPI_FREE(out_obj);
 
-	return status;
+	return 0;
 }
 
 static int clevo_acpi_evaluate_pkgbuf(struct acpi_device *device, u8 cmd, u8 *arg, u32 length, union acpi_object **result)
@@ -106,6 +108,9 @@ static int clevo_acpi_evaluate_pkgbuf(struct acpi_device *device, u8 cmd, u8 *ar
 
 	guid_t clevo_acpi_dsm_uuid;
 
+	if (!IS_ERR_OR_NULL(result))
+		*result = NULL;
+
 	status = guid_parse(CLEVO_ACPI_DSM_UUID, &clevo_acpi_dsm_uuid);
 	if (status < 0)
 		return -ENOENT;
@@ -117,15 +122,14 @@ static int clevo_acpi_evaluate_pkgbuf(struct acpi_device *device, u8 cmd, u8 *ar
 	out_obj = acpi_evaluate_dsm(handle, &clevo_acpi_dsm_uuid, dsm_rev_dummy, dsm_func, &dsm_argv4);
 	if (!out_obj) {
 		pr_err("failed to evaluate _DSM\n");
-		status = -1;
+		return -EIO;
 	}
-	else {
-		if (!IS_ERR_OR_NULL(result)) {
-			*result = out_obj;
-		}
-	}
+	if (!IS_ERR_OR_NULL(result))
+		*result = out_obj;
+	else
+		ACPI_FREE(out_obj);
 
-	return status;
+	return 0;
 }
 
 static int clevo_acpi_interface_method_call(u8 cmd, u32 arg, union acpi_object **result_value)
@@ -168,24 +172,21 @@ struct clevo_interface_t clevo_acpi_interface = {
 static void clevo_acpi_notify(acpi_handle handle, u32 event, void *data)
 {
 	struct acpi_device *adev = data;
-	u32 event_value;
 	union acpi_object *out_obj;
 	int status;
 
-	// struct clevo_acpi_driver_data_t *clevo_acpi_driver_data;
-
 	status = clevo_acpi_evaluate(adev, 0x01, 0, &out_obj);
 	if (!status) {
-			if (out_obj->type == ACPI_TYPE_INTEGER) {
-				event_value = (u32)out_obj->integer.value;
-			} else {
-				pr_err("return type not integer, use clevo_evaluate_method2\n");
-			}
-			ACPI_FREE(out_obj);
+		if (out_obj->type == ACPI_TYPE_INTEGER)
+			pr_debug("clevo_acpi event: %0#6x, clevo event value: %0#6x\n",
+				 event, (u32)out_obj->integer.value);
+		else
+			pr_err("return type not integer, use clevo_evaluate_method2\n");
+		ACPI_FREE(out_obj);
 	}
-	pr_debug("clevo_acpi event: %0#6x, clevo event value: %0#6x\n", event, event_value);
 
-	// clevo_acpi_driver_data = container_of(&device, struct clevo_acpi_driver_data_t, adev);
+	/* ACPI delivers its event in the notification itself. Keep that path
+	 * independent of the optional firmware event-value read above. */
 	if (!IS_ERR_OR_NULL(clevo_acpi_interface.event_callb)) {
 		// Execute registered callback
 		clevo_acpi_interface.event_callb(event);
@@ -203,10 +204,6 @@ static int clevo_platform_probe(struct platform_device *pdev)
 	if (!acpi)
 		return -ENODEV;
 
-	error = acpi_dev_install_notify_handler(acpi, ACPI_ALL_NOTIFY, clevo_acpi_notify, acpi);
-	if (error)
-		return error;
-
 	driver_data = devm_kzalloc(&pdev->dev, sizeof(*driver_data), GFP_KERNEL);
 	if (!driver_data)
 		return -ENOMEM;
@@ -214,12 +211,21 @@ static int clevo_platform_probe(struct platform_device *pdev)
 	driver_data->adev = acpi;
 	driver_data->clevo_interface = &clevo_acpi_interface;
 
+	error = acpi_dev_install_notify_handler(acpi, ACPI_ALL_NOTIFY, clevo_acpi_notify, acpi);
+	if (error)
+		return error;
+
 	active_driver_data = driver_data;
 
 	pr_debug("clevo_acpi driver add\n");
 
 	// Add this interface
-	clevo_keyboard_add_interface(&clevo_acpi_interface);
+	error = clevo_keyboard_add_interface(&clevo_acpi_interface);
+	if (error) {
+		acpi_dev_remove_notify_handler(acpi, ACPI_ALL_NOTIFY, clevo_acpi_notify);
+		active_driver_data = NULL;
+		return error;
+	}
 
 	pr_info("interface initialized\n");
 

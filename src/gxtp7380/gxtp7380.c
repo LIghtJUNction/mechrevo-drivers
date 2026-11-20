@@ -99,6 +99,7 @@ static int __init gxtp7380_driver_init(void)
         pdevinfo.fwnode = acpi_fwnode_handle(acpi);
 
 	pdev = platform_device_register_full(&pdevinfo);
+	acpi_dev_put(acpi);
 	if (IS_ERR(pdev))
 		return PTR_ERR(pdev);
 

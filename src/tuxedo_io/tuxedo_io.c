@@ -1157,6 +1157,7 @@ static struct cdev tuxedo_io_cdev;
 static int __init tuxedo_io_init(void)
 {
 	int err;
+	struct device *device;
 
 	// Hardware identification
 	id_check_clevo = clevo_identify();
@@ -1179,7 +1180,7 @@ static int __init tuxedo_io_init(void)
 	err = (cdev_add(&tuxedo_io_cdev, tuxedo_io_device_handle, 1));
 	if (err < 0) {
 		pr_err("Failed to add cdev\n");
-		unregister_chrdev_region(tuxedo_io_device_handle, 1);
+		goto unregister_region;
 	}
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
@@ -1187,11 +1188,27 @@ static int __init tuxedo_io_init(void)
 #else
 	tuxedo_io_device_class = class_create("tuxedo_io");
 #endif
+	if (IS_ERR(tuxedo_io_device_class)) {
+		err = PTR_ERR(tuxedo_io_device_class);
+		goto delete_cdev;
+	}
 
-	device_create(tuxedo_io_device_class, NULL, tuxedo_io_device_handle, NULL, "tuxedo_io");
+	device = device_create(tuxedo_io_device_class, NULL, tuxedo_io_device_handle, NULL, "tuxedo_io");
+	if (IS_ERR(device)) {
+		err = PTR_ERR(device);
+		goto destroy_class;
+	}
 	pr_debug("Module init successful\n");
 
 	return 0;
+
+destroy_class:
+	class_destroy(tuxedo_io_device_class);
+delete_cdev:
+	cdev_del(&tuxedo_io_cdev);
+unregister_region:
+	unregister_chrdev_region(tuxedo_io_device_handle, 1);
+	return err;
 }
 
 static void __exit tuxedo_io_exit(void)

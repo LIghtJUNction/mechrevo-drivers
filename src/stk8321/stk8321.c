@@ -233,8 +233,10 @@ static int stk8321_read_raw(struct iio_dev *indio_dev,
 		*val = sign_extend32(ret, chan->scan_type.realbits - 1);
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SAMP_FREQ:
+		mutex_lock(&data->lock);
 		*val = stk8321_samp_freq_table[data->samp_freq].val;
 		*val2 = stk8321_samp_freq_table[data->samp_freq].val2;
+		mutex_unlock(&data->lock);
 		return IIO_VAL_INT_PLUS_MICRO;
 	default:
 		return -EINVAL;
@@ -246,7 +248,8 @@ static int stk8321_write_raw(struct iio_dev *indio_dev,
 			    int val, int val2, long mask)
 {
 	struct stk8321_data *data = iio_priv(indio_dev);
-	int i, ret, matching_index;
+	int ret, restore_ret, matching_index;
+	size_t i;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
@@ -261,12 +264,18 @@ static int stk8321_write_raw(struct iio_dev *indio_dev,
 			return -EINVAL;
 
 		mutex_lock(&data->lock);
-		data->samp_freq = matching_index;
-		stk8321_set_power_mode(data->client, STK8321_POWMODE_SUSPEND);
+		ret = stk8321_set_power_mode(data->client, STK8321_POWMODE_SUSPEND);
+		if (ret)
+			goto unlock;
 		ret = stk8321_set_bandwidth(
 			data->client,
-			stk8321_samp_freq_table[data->samp_freq].reg_bits);
-		stk8321_set_power_mode(data->client, STK8321_POWMODE_NORMAL);
+			stk8321_samp_freq_table[matching_index].reg_bits);
+		if (!ret)
+			data->samp_freq = matching_index;
+		restore_ret = stk8321_set_power_mode(data->client, STK8321_POWMODE_NORMAL);
+		if (!ret)
+			ret = restore_ret;
+unlock:
 		mutex_unlock(&data->lock);
 		return ret;
 	default:
@@ -289,6 +298,7 @@ static int stk8321_apply_acpi_orientation(struct device *dev,
 	union acpi_object *obj;
 	acpi_status status;
 	struct acpi_device *adev = ACPI_COMPANION(dev);
+	struct iio_mount_matrix matrix = iio_mount_zeromatrix;
 	int i, axis;
 	char *value;
 
@@ -313,21 +323,24 @@ static int stk8321_apply_acpi_orientation(struct device *dev,
 		return -EIO;
 	}
 
-	*orientation = iio_mount_zeromatrix;
-
 	// Format is: three values, one for each axis, where each value
 	// map to selected axis (bits 0-1) and possibly flips the sign
 	// (bit 4)
 	for (i = 0; i < 3; ++i) {
-		axis = (obj->buffer.pointer[i] & 0x3) * 3;
+		axis = obj->buffer.pointer[i] & 0x3;
+		if (axis >= 3) {
+			kfree(buffer.pointer);
+			return -EINVAL;
+		}
 		if (obj->buffer.pointer[i] & (1 << 4))
 			value = "-1";
 		else
 			value = "1";
 
-		orientation->rotation[i + axis] = value;
+		matrix.rotation[i + axis * 3] = value;
 	}
 
+	*orientation = matrix;
 	kfree(buffer.pointer);
 
 	return 0;
@@ -423,12 +436,22 @@ static int stk8321_probe(struct i2c_client *client)
 	data->samp_freq = 0;
 
 	// Setup sensor in suspend mode
-	stk8321_set_power_mode(client, STK8321_POWMODE_SUSPEND);
-	stk8321_set_range(client, STK8321_RANGESEL_2G);
-	stk8321_set_bandwidth(
+	ret = stk8321_set_power_mode(client, STK8321_POWMODE_SUSPEND);
+	if (ret)
+		return ret;
+	ret = stk8321_set_range(client, STK8321_RANGESEL_2G);
+	if (ret)
+		return ret;
+	ret = stk8321_set_bandwidth(
 		client, stk8321_samp_freq_table[data->samp_freq].reg_bits);
-	i2c_smbus_write_byte_data(client, STK8321_REG_DATASETUP, 0);
-	stk8321_set_power_mode(client, STK8321_POWMODE_NORMAL);
+	if (ret)
+		return ret;
+	ret = i2c_smbus_write_byte_data(client, STK8321_REG_DATASETUP, 0);
+	if (ret)
+		return ret;
+	ret = stk8321_set_power_mode(client, STK8321_POWMODE_NORMAL);
+	if (ret)
+		goto err_suspend;
 
 	indio_dev->name = "stk8321";
 	indio_dev->info = &stk8321_info;
@@ -438,12 +461,20 @@ static int stk8321_probe(struct i2c_client *client)
 
 	ret = stk8321_apply_orientation(indio_dev);
 	if (ret)
-		return ret;
+		goto err_suspend;
+
+	ret = devm_iio_device_register(&client->dev, indio_dev);
+	if (ret)
+		goto err_suspend;
 
 	if (!id && has_acpi_companion(&client->dev))
 		stk8321_dual_probe(client);
 
-	return devm_iio_device_register(&client->dev, indio_dev);
+	return 0;
+
+err_suspend:
+	stk8321_set_power_mode(client, STK8321_POWMODE_SUSPEND);
+	return ret;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
@@ -463,20 +494,24 @@ static int stk8321_suspend(struct device *dev)
 {
 	struct stk8321_data *data = iio_priv(dev_get_drvdata(dev));
 	struct i2c_client *client = data->client;
+	int ret;
+
 	mutex_lock(&data->lock);
-	stk8321_set_power_mode(client, STK8321_POWMODE_SUSPEND);
+	ret = stk8321_set_power_mode(client, STK8321_POWMODE_SUSPEND);
 	mutex_unlock(&data->lock);
-	return 0;
+	return ret;
 }
 
 static int stk8321_resume(struct device *dev)
 {
 	struct stk8321_data *data = iio_priv(dev_get_drvdata(dev));
 	struct i2c_client *client = data->client;
+	int ret;
+
 	mutex_lock(&data->lock);
-	stk8321_set_power_mode(client, STK8321_POWMODE_NORMAL);
+	ret = stk8321_set_power_mode(client, STK8321_POWMODE_NORMAL);
 	mutex_unlock(&data->lock);
-	return 0;
+	return ret;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(stk8321_pm_ops, stk8321_suspend,

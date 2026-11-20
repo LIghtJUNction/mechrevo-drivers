@@ -29,74 +29,69 @@
 #define BS_INPUT_BUFFER_LENGTH	8
 #define BS_OUTPUT_BUFFER_LENGTH	80
 
-struct driver_data_t {};
-
 static DEFINE_MUTEX(nb04_wmi_bs_access_lock);
 
 static struct wmi_device *__wmi_dev;
 
 bool nb04_wmi_bs_available(void)
 {
-	if (__wmi_dev)
-		return true;
-	else
-		return false;
+	bool available;
+
+	mutex_lock(&nb04_wmi_bs_access_lock);
+	available = __wmi_dev != NULL;
+	mutex_unlock(&nb04_wmi_bs_access_lock);
+	return available;
 }
 EXPORT_SYMBOL(nb04_wmi_bs_available);
 
-static int __nb04_wmi_bs_method(struct wmi_device *wdev, u32 wmi_method_id,
-				u8 *in, u8 *out)
-{
-	struct acpi_buffer acpi_buffer_in = { (acpi_size)BS_INPUT_BUFFER_LENGTH, in };
-	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *acpi_object_out;
-	acpi_status status;
-
-	mutex_lock(&nb04_wmi_bs_access_lock);
-
-	pr_debug("evaluate: %u\n", wmi_method_id);
-	status = wmidev_evaluate_method(wdev, 0, wmi_method_id,
-					&acpi_buffer_in, &return_buffer);
-
-	mutex_unlock(&nb04_wmi_bs_access_lock);
-
-	if (ACPI_FAILURE(status)) {
-		pr_err("failed to evaluate wmi method %u\n", wmi_method_id);
-		return -EIO;
-	}
-
-	acpi_object_out = (union acpi_object *) return_buffer.pointer;
-	if (!acpi_object_out)
-		return -ENODATA;
-
-	if (acpi_object_out->type != ACPI_TYPE_BUFFER) {
-		// Returns an int 0 when not finding a valid method number
-		kfree(return_buffer.pointer);
-		return -EINVAL;
-	}
-
-	if (acpi_object_out->buffer.length != BS_OUTPUT_BUFFER_LENGTH) {
-		pr_err("Unexpected buffer length: %u for method (%u) call\n", 
-		       acpi_object_out->buffer.length, wmi_method_id);
-		kfree(return_buffer.pointer);
-		return -EIO;
-	}
-
-	memcpy(out, acpi_object_out->buffer.pointer, BS_OUTPUT_BUFFER_LENGTH);
-	kfree(return_buffer.pointer);
-
-	return 0;
-}
-
-/**
- * Method interface 8 bytes in 80 bytes out
- */
+/* Method interface: 8 bytes in, 80 bytes out. */
 int nb04_wmi_bs_method(u32 wmi_method_id, u8 *in, u8 *out)
 {
-	if (__wmi_dev)
-		return __nb04_wmi_bs_method(__wmi_dev, wmi_method_id, in, out);
-	else
-		return -ENODEV;
+	struct acpi_buffer acpi_buffer_in = { BS_INPUT_BUFFER_LENGTH, in };
+	struct acpi_buffer return_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+	union acpi_object *object;
+	acpi_status status;
+	int err = 0;
+
+	if (!in || !out)
+		return -EINVAL;
+
+	mutex_lock(&nb04_wmi_bs_access_lock);
+	if (!__wmi_dev) {
+		err = -ENODEV;
+		goto out;
+	}
+
+	pr_debug("evaluate: %u\n", wmi_method_id);
+	status = wmidev_evaluate_method(__wmi_dev, 0, wmi_method_id,
+				       &acpi_buffer_in, &return_buffer);
+	if (ACPI_FAILURE(status)) {
+		pr_err("failed to evaluate wmi method %u\n", wmi_method_id);
+		err = -EIO;
+		goto out;
+	}
+
+	object = return_buffer.pointer;
+	if (!object) {
+		err = -ENODATA;
+		goto out;
+	}
+	if (object->type != ACPI_TYPE_BUFFER) {
+		/* Firmware returns integer zero for an unknown method. */
+		err = -EINVAL;
+		goto out;
+	}
+	if (object->buffer.length != BS_OUTPUT_BUFFER_LENGTH ||
+	    !object->buffer.pointer) {
+		err = -EIO;
+		goto out;
+	}
+
+	memcpy(out, object->buffer.pointer, BS_OUTPUT_BUFFER_LENGTH);
+out:
+	kfree(return_buffer.pointer);
+	mutex_unlock(&nb04_wmi_bs_access_lock);
+	return err;
 }
 EXPORT_SYMBOL(nb04_wmi_bs_method);
 
@@ -106,7 +101,7 @@ static int tuxedo_nb04_wmi_probe(struct wmi_device *wdev)
 static int tuxedo_nb04_wmi_probe(struct wmi_device *wdev, const void *dummy_context)
 #endif
 {
-	struct driver_data_t *driver_data;
+	int err = 0;
 
 	pr_debug("driver probe\n");
 
@@ -116,15 +111,14 @@ static int tuxedo_nb04_wmi_probe(struct wmi_device *wdev, const void *dummy_cont
 	if (!wmi_has_guid(NB04_WMI_BS_GUID))
 		return -ENODEV;
 
-	__wmi_dev = wdev;
+	mutex_lock(&nb04_wmi_bs_access_lock);
+	if (__wmi_dev)
+		err = -EBUSY;
+	else
+		__wmi_dev = wdev;
+	mutex_unlock(&nb04_wmi_bs_access_lock);
 
-	driver_data = devm_kzalloc(&wdev->dev, sizeof(struct driver_data_t), GFP_KERNEL);
-	if (!driver_data)
-		return -ENOMEM;
-
-	dev_set_drvdata(&wdev->dev, driver_data);
-
-	return 0;
+	return err;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
@@ -133,6 +127,10 @@ static int tuxedo_nb04_wmi_remove(struct wmi_device *wdev)
 static void tuxedo_nb04_wmi_remove(struct wmi_device *wdev)
 #endif
 {
+	mutex_lock(&nb04_wmi_bs_access_lock);
+	if (__wmi_dev == wdev)
+		__wmi_dev = NULL;
+	mutex_unlock(&nb04_wmi_bs_access_lock);
 	pr_debug("driver remove\n");
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)

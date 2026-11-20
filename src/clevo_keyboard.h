@@ -211,14 +211,21 @@ static void set_next_color_whole_kb(void)
 	kbd_led_state.whole_kbd_color = new_color_id;
 }
 
-static void set_kbd_backlight_mode(u8 kbd_backlight_mode)
+static int set_kbd_backlight_mode(u8 kbd_backlight_mode)
 {
+	int status;
+
+	if (kbd_backlight_mode >= ARRAY_SIZE(kbd_backlight_modes))
+		return -EINVAL;
 	TUXEDO_INFO("Set keyboard backlight mode on %s", kbd_backlight_modes[kbd_backlight_mode].name);
 
-	if (!clevo_evaluate_method(CLEVO_CMD_SET_KB_RGB_LEDS, kbd_backlight_modes[kbd_backlight_mode].value, NULL)) {
+	status = clevo_evaluate_method(CLEVO_CMD_SET_KB_RGB_LEDS,
+		kbd_backlight_modes[kbd_backlight_mode].value, NULL);
+	if (!status) {
 		// method was succesfull so update ur internal state struct
 		kbd_led_state.mode = kbd_backlight_mode;
 	}
+	return status;
 }
 
 // Sysfs Interface for the keyboard backlight mode
@@ -239,8 +246,11 @@ static ssize_t set_kbd_backlight_mode_fs(struct device *child,
 		return err;
 	}
 
-	kbd_backlight_mode = clamp_t(u8, kbd_backlight_mode, 0, ARRAY_SIZE(kbd_backlight_modes) - 1);
-	set_kbd_backlight_mode(kbd_backlight_mode);
+	if (kbd_backlight_mode >= ARRAY_SIZE(kbd_backlight_modes))
+		return -EINVAL;
+	err = set_kbd_backlight_mode(kbd_backlight_mode);
+	if (err)
+		return err;
 
 	return size;
 }
@@ -259,12 +269,12 @@ static int kbd_backlight_mode_id_validator(const char *value,
 		return -EINVAL;
 	}
 
-	return param_set_int(value, kbd_backlight_mode_param);
+	return param_set_byte(value, kbd_backlight_mode_param);
 }
 
 static const struct kernel_param_ops param_ops_mode_ops = {
 	.set = kbd_backlight_mode_id_validator,
-	.get = param_get_int,
+	.get = param_get_byte,
 };
 
 static u8 param_kbd_backlight_mode = CLEVO_KB_MODE_DEFAULT;
@@ -273,6 +283,8 @@ MODULE_PARM_DESC(kbd_backlight_mode, "Set the keyboard backlight mode");
 
 static void clevo_send_cc_combo(void)
 {
+	if (!clevo_keyboard_driver.input_device)
+		return;
 	// Special key combination. Opens TCC by default when installed.
 	input_report_key(clevo_keyboard_driver.input_device, KEY_LEFTMETA, 1);
 	input_report_key(clevo_keyboard_driver.input_device, KEY_LEFTALT, 1);
@@ -359,7 +371,7 @@ static bool dmi_string_in(enum dmi_field f, const char *str)
 
 static int clevo_acpi_fn_get(u8 *on, u8 *kbstatus1, u8 *kbstatus2)
 {
-	int status = 0;
+	int status;
 	union acpi_object *out_obj;
 	u8 fnlock;
 
@@ -368,31 +380,23 @@ static int clevo_acpi_fn_get(u8 *on, u8 *kbstatus1, u8 *kbstatus2)
 		return status;
 	}
 
-	if (out_obj->type == ACPI_TYPE_BUFFER ) {
-		if (out_obj->buffer.length >= 3) {
-			// use buffer
-			fnlock = out_obj->buffer.pointer[0];
-			if (fnlock == 1) {
-				pr_debug("FnLock is set: kbstatus[1]: %08x  kbstatus[2]: %08x\n", (u32) out_obj->buffer.pointer[1], (u32)out_obj->buffer.pointer[2]);
-				*on = 1;
-			}
-			if (fnlock == 2) {
-				pr_debug("FnLock is not set: kbstatus[1]: %08x  kbstatus[2]: %08x\n", (u32) out_obj->buffer.pointer[1], (u32)out_obj->buffer.pointer[2]);
-				*on = 0;
-			}
-			if (fnlock != 1 && fnlock != 2) {
-				pr_err("FnLock undefined: 0x%x\n", fnlock);
-				status = -ENODATA;
-			}
-			*kbstatus1 = out_obj->buffer.pointer[1];
-			*kbstatus2 = out_obj->buffer.pointer[2];
-		}
-		else {
-			pr_err("unexpected buffer size %d\n", out_obj->buffer.length);
-		}
-		ACPI_FREE(out_obj);
+	if (out_obj->type != ACPI_TYPE_BUFFER ||
+	    out_obj->buffer.length < 3 || !out_obj->buffer.pointer) {
+		status = -ENODATA;
+		goto out;
 	}
+	fnlock = out_obj->buffer.pointer[0];
+	if (fnlock != 1 && fnlock != 2) {
+		pr_err("FnLock undefined: 0x%x\n", fnlock);
+		status = -ENODATA;
+		goto out;
+	}
+	*on = fnlock == 1;
+	*kbstatus1 = out_obj->buffer.pointer[1];
+	*kbstatus2 = out_obj->buffer.pointer[2];
 
+out:
+	ACPI_FREE(out_obj);
 	return status;
 }
 
@@ -459,9 +463,7 @@ static ssize_t clevo_fn_lock_store(struct device *dev,
 }
 
 static bool clevo_fn_lock_available(void){
-	int err;
-	union acpi_object *out_obj;
-	u8 fnlock;
+	u8 on, kbstatus1, kbstatus2;
 
 	// no sysfs device for Aura Gen3 due to Fn Lock interference (via keyboard)
 	// but Aura Gen3 refresh (NL45AU2 und NL57AU) has working Fn Lock
@@ -471,40 +473,11 @@ static bool clevo_fn_lock_available(void){
 	     dmi_match(DMI_BOARD_NAME, "NL45PU2")))
 			return 0;
 
-	// check Fn lock for WMI
-	if( strcmp(active_clevo_interface->string_id, CLEVO_INTERFACE_WMI_STRID) == 0) {
-		pr_debug("FnLock test: WMI is not supported\n");
-		return 0;
-	}
-
-	// check Fn Lock for ACPI
-	if( strcmp(active_clevo_interface->string_id, CLEVO_INTERFACE_ACPI_STRID) == 0) {
-		err = clevo_evaluate_method2(0x4, 0x18, &out_obj);
-		if (err) {
-			pr_debug("FnLock test: ACPI evaluate returned an error\n");
-			return 0;
-		}
-
-		if (out_obj->type != ACPI_TYPE_BUFFER ) {
-			pr_debug("FnLock test: no ACPI buffer\n");
-			return 0;
-		}
-		if (out_obj->buffer.length < 3) {
-			pr_debug("FnLock test: ACPI buffer too small\n");
-			ACPI_FREE(out_obj);
-			return 0;
-		}
-		fnlock = out_obj->buffer.pointer[0];
-		if (fnlock != 1 && fnlock != 2) {
-			pr_debug("FnLock test: unexpected FnLock value 0x%02x\n", fnlock);
-			ACPI_FREE(out_obj);
-			return 0;
-		}
-		ACPI_FREE(out_obj);
-		return 1;
-	}
-
-	return 0;
+	/* Package-buffer writes are available only through the ACPI interface. */
+	if (IS_ERR_OR_NULL(active_clevo_interface) ||
+	    strcmp(active_clevo_interface->string_id, CLEVO_INTERFACE_ACPI_STRID))
+		return false;
+	return clevo_acpi_fn_get(&on, &kbstatus1, &kbstatus2) == 0;
 }
 
 static u8 clevo_legacy_flexicharger_start_values[] = {40, 50, 60, 70, 80, 95};
@@ -548,6 +521,8 @@ static int clevo_has_legacy_flexicharger(bool *status)
 		|| dmi_string_in(DMI_BOARD_NAME, "NS50_70MU")
 		;
 
+	*status = false;
+
 	if (excluded_device) {
 		*status = false;
 		return 0;
@@ -561,6 +536,8 @@ static int clevo_has_legacy_flexicharger(bool *status)
 
 	write_data |= ((read_data >> 8) & 0xffff);
 	result = clevo_evaluate_method(0x76, write_data, &read_data);
+	if (result)
+		return result;
 
 	if (read_data == 0x76)
 		*status = true;
@@ -588,6 +565,8 @@ static int clevo_legacy_flexicharger_read(u8 *start, u8 *end, u8 *status)
 	int result;
 
 	result = clevo_evaluate_method(0x77, 0, &data);
+	if (result)
+		return result;
 	if (end != NULL)
 		*end = (data >> 0x10) & 0xff;
 	if (start != NULL)
@@ -646,7 +625,7 @@ static int clevo_cc4_flexicharger_read(u8 *start, u8 *end, u8 *status)
 		return -EIO;
 
 	if (out_obj->type != ACPI_TYPE_BUFFER ||
-	    out_obj->buffer.length < 3) {
+	    out_obj->buffer.length < 3 || !out_obj->buffer.pointer) {
 		ACPI_FREE(out_obj);
 		return -EIO;
 	}
@@ -966,12 +945,16 @@ static struct acpi_battery_hook battery_hook = {
 static void clevo_flexicharger_init(void)
 {
 	battery_hook_register(&battery_hook);
+	/* Registration is also live when no battery is currently present. */
+	charge_control_registered = true;
 }
 
 static void clevo_flexicharger_remove(void)
 {
-	if (charge_control_registered)
+	if (charge_control_registered) {
 		battery_hook_unregister(&battery_hook);
+		charge_control_registered = false;
+	}
 }
 
 static void clevo_keyboard_init(void)
@@ -1075,39 +1058,44 @@ static struct tuxedo_keyboard_driver clevo_keyboard_driver = {
 
 int clevo_keyboard_add_interface(struct clevo_interface_t *new_interface)
 {
+	struct clevo_interface_t *previous;
+	struct clevo_interface_t **slot;
+	struct platform_device *dev;
+	int status = 0;
+
 	mutex_lock(&clevo_keyboard_interface_modification_lock);
 
 	if (strcmp(new_interface->string_id, CLEVO_INTERFACE_WMI_STRID) == 0) {
-		clevo_interfaces.wmi = new_interface;
-		clevo_interfaces.wmi->event_callb = clevo_keyboard_event_callb;
-
-		// Only use wmi if there is no other current interface
-		if (ZERO_OR_NULL_PTR(active_clevo_interface)) {
-			pr_debug("enable wmi events\n");
-			clevo_interfaces.wmi->method_call(CLEVO_CMD_SET_EVENTS_ENABLED, 0, NULL);
-
-			active_clevo_interface = clevo_interfaces.wmi;
-		}
+		slot = &clevo_interfaces.wmi;
 	} else if (strcmp(new_interface->string_id, CLEVO_INTERFACE_ACPI_STRID) == 0) {
-		clevo_interfaces.acpi = new_interface;
-		clevo_interfaces.acpi->event_callb = clevo_keyboard_event_callb;
-
-		pr_debug("enable acpi events (takes priority)\n");
-		clevo_interfaces.acpi->method_call(CLEVO_CMD_SET_EVENTS_ENABLED, 0, NULL);
-		active_clevo_interface = clevo_interfaces.acpi;
+		slot = &clevo_interfaces.acpi;
 	} else {
-		// Not recognized interface
 		pr_err("unrecognized interface\n");
-		mutex_unlock(&clevo_keyboard_interface_modification_lock);
-		return -EINVAL;
+		status = -EINVAL;
+		goto unlock;
 	}
-
+	if (*slot && *slot != new_interface) {
+		status = -EBUSY;
+		goto unlock;
+	}
+	previous = active_clevo_interface;
+	*slot = new_interface;
+	if (!active_clevo_interface || slot == &clevo_interfaces.acpi) {
+		active_clevo_interface = new_interface;
+		new_interface->method_call(CLEVO_CMD_SET_EVENTS_ENABLED, 0, NULL);
+	}
+	dev = tuxedo_keyboard_init_driver(&clevo_keyboard_driver);
+	if (IS_ERR_OR_NULL(dev)) {
+		*slot = NULL;
+		active_clevo_interface = previous;
+		status = dev ? PTR_ERR(dev) : -ENODEV;
+	} else {
+		/* Events may use input and LEDs only after their initialization. */
+		new_interface->event_callb = clevo_keyboard_event_callb;
+	}
+unlock:
 	mutex_unlock(&clevo_keyboard_interface_modification_lock);
-
-	if (active_clevo_interface != NULL)
-		tuxedo_keyboard_init_driver(&clevo_keyboard_driver);
-
-	return 0;
+	return status;
 }
 EXPORT_SYMBOL(clevo_keyboard_add_interface);
 
@@ -1116,20 +1104,24 @@ int clevo_keyboard_remove_interface(struct clevo_interface_t *interface)
 	mutex_lock(&clevo_keyboard_interface_modification_lock);
 
 	if (strcmp(interface->string_id, CLEVO_INTERFACE_WMI_STRID) == 0) {
+		if (clevo_interfaces.wmi != interface)
+			goto unlock;
 		clevo_interfaces.wmi = NULL;
 	} else if (strcmp(interface->string_id, CLEVO_INTERFACE_ACPI_STRID) == 0) {
+		if (clevo_interfaces.acpi != interface)
+			goto unlock;
 		clevo_interfaces.acpi = NULL;
 	} else {
 		mutex_unlock(&clevo_keyboard_interface_modification_lock);
 		return -EINVAL;
 	}
+	interface->event_callb = NULL;
 
 	if (active_clevo_interface == interface) {
 		tuxedo_keyboard_remove_driver(&clevo_keyboard_driver);
 		active_clevo_interface = NULL;
 	}
-
-
+unlock:
 	mutex_unlock(&clevo_keyboard_interface_modification_lock);
 
 	return 0;

@@ -20,18 +20,18 @@
 
 .PHONY: all install clean package package-deb package-rpm package-alpm
 
-KDIR := /lib/modules/$(shell uname -r)/build
+KDIR ?= /lib/modules/$(shell uname -r)/build
 
 all:
-	make -C $(KDIR) M=$(PWD) $(MAKEFLAGS) modules
+	$(MAKE) -C "$(KDIR)" M="$(CURDIR)" modules
 
 install: all
-	make -C $(KDIR) M=$(PWD) $(MAKEFLAGS) modules_install
+	$(MAKE) -C "$(KDIR)" M="$(CURDIR)" modules_install
 	@if [ -d files ]; then cp -r files/* /; fi
 	@if [ -d usr ]; then cp -r usr /; fi
 
 clean:
-	make -C $(KDIR) M=$(PWD) $(MAKEFLAGS) clean
+	$(MAKE) -C "$(KDIR)" M="$(CURDIR)" clean
 	rm -rf build/
 
 package: package-deb package-rpm package-alpm
