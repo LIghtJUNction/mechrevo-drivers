@@ -162,6 +162,12 @@ class HardwareCycleBoundaryTests(unittest.TestCase):
 
 
 class ControlFailureTests(unittest.TestCase):
+    def setUp(self):
+        device = mock.Mock()
+        device.exists.return_value = True
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(control, "EC_CONTROL_DEVICE", device).start()
+
     def test_dbus_transport_failure_is_not_replaced_by_default_mode(self):
         with mock.patch.object(control, "call_tccd_dbus", side_effect=OSError("bus down")), \
                 self.assertRaises(OSError):
@@ -625,68 +631,158 @@ class ModeTdpProfileTests(unittest.TestCase):
         opened.assert_not_called()
 
 
-class TouchpadRestoreTests(unittest.TestCase):
+class TouchpadHelperTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.state = Path(self.tmp.name) / "touchpad_state"
-        self.device = Path(self.tmp.name) / "i2c-UNIW0001:00"
-        self.device.mkdir()
+        helper = Path(self.tmp.name) / "touchpad-helper"
+        helper.write_text("fixture")
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(mock.patch.object(control, "get_state_file", return_value=self.state))
-        self.stack.enter_context(mock.patch.object(control, "TOUCHPAD_DEVICE_PATH", self.device))
-        self.set = self.stack.enter_context(mock.patch.object(control, "set_touchpad"))
+        self.stack.enter_context(mock.patch.object(control, "TOUCHPAD_HELPER", helper))
+        self.stack.enter_context(mock.patch.object(control.os, "geteuid", return_value=1000))
+        self.run = self.stack.enter_context(mock.patch.object(control.subprocess, "run"))
+        self.notify = self.stack.enter_context(mock.patch.object(control, "send_notification"))
+        self.output = self.stack.enter_context(redirect_stdout(io.StringIO()))
+        self.helper = str(helper)
+        self.reply(True)
 
-    def test_restores_saved_off_and_on_states(self):
-        for value, enabled in (("0", False), ("1", True)):
-            with self.subTest(value=value):
-                self.state.write_text(value)
-                self.set.reset_mock()
-                self.assertEqual(control.restore_touchpad_state(), enabled)
-                self.set.assert_called_once_with(enabled)
+    def reply(self, enabled, *, mixed=False, devices=None):
+        if devices is None:
+            devices = [{"name": "Touchpad", "enabled": enabled}]
+        self.run.return_value = control.subprocess.CompletedProcess(
+            [], 0, json.dumps({"ok": True, "enabled": enabled, "mixed": mixed, "devices": devices}), ""
+        )
 
-    def test_missing_state_is_a_noop(self):
+    def test_status_is_unprivileged_and_uses_actual_device_state(self):
+        self.assertTrue(control.get_touchpad())
+        self.assertEqual(self.run.call_args.args[0], [self.helper, "status"])
+
+    def test_set_uses_only_the_installed_privileged_helper(self):
+        self.reply(False)
+        control.set_touchpad(False)
+        self.assertEqual(self.run.call_args.args[0], ["/usr/bin/pkexec", self.helper, "off"])
+        self.assertIn("已禁用", self.output.getvalue())
+
+    def test_root_does_not_spawn_another_authorization_process(self):
+        with mock.patch.object(control.os, "geteuid", return_value=0):
+            control.set_touchpad(True)
+        self.assertEqual(self.run.call_args.args[0], [self.helper, "on"])
+
+    def test_hotkey_reports_success_only_after_verified_helper_result(self):
+        self.reply(False)
+        control.toggle_touchpad()
+        self.assertEqual(self.run.call_args.args[0], ["/usr/bin/pkexec", self.helper, "toggle"])
+        self.notify.assert_called_once()
+        self.assertIn("已禁用", self.notify.call_args.args[1])
+
+    def test_authorization_failure_does_not_emit_success(self):
+        self.run.return_value = control.subprocess.CompletedProcess([], 127, "", "Not authorized")
+        with self.assertRaisesRegex(RuntimeError, "Not authorized"):
+            control.toggle_touchpad()
+        self.notify.assert_not_called()
+        self.assertEqual(self.output.getvalue(), "")
+
+    def test_command_timeout_does_not_emit_success(self):
+        self.run.side_effect = control.subprocess.TimeoutExpired([], 40)
+        with self.assertRaisesRegex(RuntimeError, "未完成"):
+            control.toggle_touchpad()
+        self.notify.assert_not_called()
+
+    def test_helper_failure_preserves_diagnostic_and_rollback_errors(self):
+        failure = {"ok": False, "error": "readback failed", "rollback_errors": ["pad disconnected"]}
+        self.run.return_value = control.subprocess.CompletedProcess([], 1, json.dumps(failure), "")
+        with self.assertRaisesRegex(RuntimeError, "readback failed.*pad disconnected"):
+            control.toggle_touchpad()
+        self.notify.assert_not_called()
+
+    def test_invalid_and_missing_devices_are_not_reported_disabled(self):
+        for payload in ("not json", "{}", '{"enabled": false, "mixed": false, "devices": []}'):
+            with self.subTest(payload=payload):
+                self.run.return_value = control.subprocess.CompletedProcess([], 0, payload, "")
+                with self.assertRaises(RuntimeError):
+                    control.get_touchpad()
+
+    def test_write_readback_must_match_every_device(self):
+        self.reply(True)
+        with self.assertRaisesRegex(RuntimeError, "回读"):
+            control.set_touchpad(False)
+        self.assertEqual(self.output.getvalue(), "")
+
+    def test_device_summary_inconsistency_is_rejected(self):
+        self.reply(True, devices=[{"enabled": False}])
+        with self.assertRaisesRegex(RuntimeError, "汇总"):
+            control.get_touchpad()
+
+    def test_mixed_state_is_visible_and_not_called_disabled(self):
+        self.reply(False, mixed=True, devices=[{"enabled": False}, {"enabled": True}])
+        result = control.touchpad_action("status")
+        self.assertIn("部分启用", control.touchpad_summary(result))
+        with self.assertRaisesRegex(RuntimeError, "不一致"):
+            control.get_touchpad()
+        with self.assertRaisesRegex(RuntimeError, "不一致"):
+            control.toggle_touchpad()
+        self.notify.assert_not_called()
+
+    def test_restore_without_saved_state_is_a_noop(self):
+        self.reply(None, devices=[])
         self.assertIsNone(control.restore_touchpad_state())
-        self.set.assert_not_called()
 
-    def test_invalid_state_is_rejected(self):
-        self.state.write_text("2")
-        with self.assertRaisesRegex(RuntimeError, "Invalid saved touchpad state"):
-            control.restore_touchpad_state()
-        self.set.assert_not_called()
+    def test_missing_helper_explains_installation_problem(self):
+        Path(self.helper).unlink()
+        with self.assertRaisesRegex(RuntimeError, "未安装"):
+            control.get_touchpad()
+        self.run.assert_not_called()
 
-    def test_waits_for_late_i2c_device_then_applies_state(self):
-        self.state.write_text("0")
-        device = mock.Mock()
-        device.exists.side_effect = [False, True]
-        with mock.patch.object(control, "TOUCHPAD_DEVICE_PATH", device), \
-                mock.patch.object(control.time, "monotonic", side_effect=[0.0, 0.0]), \
-                mock.patch.object(control.time, "sleep") as sleep:
-            self.assertEqual(control.restore_touchpad_state(), False)
-        sleep.assert_called_once_with(0.25)
-        self.set.assert_called_once_with(False)
+    def test_cli_toggle_uses_atomic_helper_action(self):
+        self.reply(False)
+        with mock.patch.object(control.sys, "argv", ["mechrevo-control", "touchpad", "toggle"]):
+            self.assertEqual(control.main(), 0)
+        self.assertEqual(self.run.call_count, 1)
+        self.assertEqual(self.run.call_args.args[0][-1], "toggle")
+        self.notify.assert_not_called()
 
-    def test_timeout_is_visible(self):
-        self.state.write_text("0")
-        device = mock.Mock()
-        device.exists.return_value = False
-        with mock.patch.object(control, "TOUCHPAD_DEVICE_PATH", device), \
-                mock.patch.object(control.time, "monotonic", side_effect=[0.0, 31.0]), \
+
+class TouchpadHotkeyIndependenceTests(HotkeyStreamTests):
+    def test_mode_failure_without_tccd_keeps_subsequent_touchpad_key_working(self):
+        payload = b"".join(struct.pack("qqHHi", 0, 0, 1, code, value)
+                           for code, value in [(64, 1), (64, 0), (191, 1), (191, 0)])
+        self.run_pipe(payload, close_writer=True)
+        with mock.patch.object(control, "sync_oem_profiles", side_effect=RuntimeError("tccd unavailable")), \
                 mock.patch.object(control.time, "sleep"), \
-                self.assertRaisesRegex(RuntimeError, "did not reappear"):
-            control.restore_touchpad_state()
-        self.set.assert_not_called()
+                mock.patch.object(control, "cycle_mode", side_effect=RuntimeError("tccd unavailable")) as cycle, \
+                mock.patch.object(control, "toggle_touchpad") as toggle, \
+                self.assertRaisesRegex(RuntimeError, "disconnected"):
+            control.run_daemon()
+        cycle.assert_called_once_with(notify=True)
+        toggle.assert_called_once_with()
+
+    def test_touchpad_chord_works_when_tccd_is_unavailable(self):
+        payload = b"".join(struct.pack("qqHHi", 0, 0, 1, code, value)
+                           for code, value in [(191, 1), (191, 2), (191, 0)])
+        self.run_pipe(payload, close_writer=True)
+        with mock.patch.object(control, "sync_oem_profiles", side_effect=RuntimeError("tccd unavailable")), \
+                mock.patch.object(control.time, "sleep"), \
+                mock.patch.object(control, "toggle_touchpad") as toggle, \
+                self.assertRaisesRegex(RuntimeError, "disconnected"):
+            control.run_daemon()
+        toggle.assert_called_once_with()
+
+    def test_touchpad_error_keeps_the_daemon_listening(self):
+        payload = struct.pack("qqHHi", 0, 0, 1, 191, 1)
+        self.run_pipe(payload, close_writer=True)
+        with mock.patch.object(control, "toggle_touchpad", side_effect=RuntimeError("denied")), \
+                self.assertRaisesRegex(RuntimeError, "disconnected"):
+            control.run_daemon()
 
 
 class TouchpadSleepHookTests(unittest.TestCase):
     def test_hook_is_executable_and_only_runs_post(self):
         hook = ROOT / "scripts/mechrevo-touchpad-sleep"
         self.assertTrue(os.access(hook, os.X_OK))
-        text = hook.read_text()
-        self.assertIn('[ "${1:-}" = "post" ]', text)
-        self.assertIn("/var/lib/mechrevo-control/touchpad_state", text)
-        self.assertIn("/usr/bin/mechrevo-control touchpad restore", text)
+        result = control.subprocess.run([str(hook), "pre"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("/usr/lib/mechrevo-control/touchpad-helper restore-all", hook.read_text())
 
 
 if __name__ == "__main__":

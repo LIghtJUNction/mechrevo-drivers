@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore saved touchpad input state
+Documentation=https://github.com/LIghtJUNction/mechrevo-drivers
+After=systemd-udevd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/mechrevo-control/touchpad-helper restore-all
+TimeoutStartSec=infinity

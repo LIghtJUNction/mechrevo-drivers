@@ -7,7 +7,7 @@ Gaming Center to Linux on the GM6PX0X (and compatible) platforms:
 1. Operating Modes (Office / Gaming / Turbo; independent thermal power policy)
 2. One-Click Fan Boost (一键强冷 / 100% Full Speed) & Auto Fan Control
 3. Win Key Lock (电竞游戏防误触锁) via hardware scancode mapping
-4. Touchpad Hardware Lock via I2C device bind/unbind
+4. Desktop-independent touchpad input control with verified readback
 5. Fn Lock (F1-F12 primary vs multimedia hotkeys)
 6. 3-Stage Battery Health Care (100% High Capacity / 80% Balanced / 60% Long-Life)
 7. Single-Zone RGB Keyboard Lighting & 4-Level Brightness Control
@@ -65,11 +65,7 @@ def get_state_file(name: str) -> Path:
 FN_LOCK_PATH = Path("/sys/devices/platform/tuxedo_keyboard/fn_lock")
 BATTERY_PROFILE_PATH = Path("/sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile")
 RGB_LEDS_DIR = Path("/sys/class/leds/rgb:kbd_backlight")
-TOUCHPAD_I2C_DEVICE = "i2c-UNIW0001:00"
-TOUCHPAD_BIND_PATH = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/bind")
-TOUCHPAD_UNBIND_PATH = Path("/sys/bus/i2c/drivers/i2c_hid_acpi/unbind")
-TOUCHPAD_BOUND_CHECK = Path(f"/sys/bus/i2c/drivers/i2c_hid_acpi/{TOUCHPAD_I2C_DEVICE}")
-TOUCHPAD_DEVICE_PATH = Path(f"/sys/bus/i2c/devices/{TOUCHPAD_I2C_DEVICE}")
+TOUCHPAD_HELPER = Path("/usr/lib/mechrevo-control/touchpad-helper")
 
 # Local cooling defaults: keep at least 60% in normal modes. This floor was
 # exercised on GM6PX0X; it is a control request, not a guaranteed RPM or OEM curve.
@@ -894,19 +890,6 @@ def cycle_mode(notify: bool = True) -> str:
     return next_key
 
 
-def toggle_touchpad() -> None:
-    """Toggle touchpad via desktop script or omarchy tool."""
-    script = Path.home() / ".config/hypr/scripts/toggle-touchpad.sh"
-    if script.exists():
-        run_cmd([str(script)])
-    elif shutil.which("omarchy-toggle-touchpad"):
-        run_cmd(["omarchy-toggle-touchpad"])
-    elif shutil.which("omarchy-toggle-input-device"):
-        run_cmd(["omarchy-toggle-input-device", "touchpad", "toggle"])
-    else:
-        raise RuntimeError("No supported touchpad toggle command is available")
-
-
 def run_daemon(ec_only: bool = False) -> None:
     """Listen to physical hotkey events.
 
@@ -965,7 +948,9 @@ def run_daemon(ec_only: bool = False) -> None:
                 break
             except Exception as exc:
                 if attempt == 9:
-                    raise
+                    last_profile_id = None
+                    print(f"[!] 性能档位暂不可用，继续监听触摸板热键: {exc}", file=sys.stderr)
+                    break
                 print(f"[!] 等待 tccd D-Bus 就绪 ({attempt + 1}/10): {exc}", file=sys.stderr)
                 time.sleep(0.5)
 
@@ -985,9 +970,14 @@ def run_daemon(ec_only: bool = False) -> None:
             if not ready:
                 if ec_only:
                     continue
-                current_profile_id = get_current_mode_info()[1]
-                if current_profile_id != last_profile_id:
-                    last_profile_id = sync_mode_led_from_profile(current_profile_id)
+                try:
+                    current_profile_id = get_current_mode_info()[1]
+                    if current_profile_id != last_profile_id:
+                        last_profile_id = sync_mode_led_from_profile(current_profile_id)
+                except (RuntimeError, OSError, ValueError) as exc:
+                    if last_profile_id is not None:
+                        print(f"[!] 性能档位暂不可用，触摸板热键继续工作: {exc}", file=sys.stderr)
+                    last_profile_id = None
                 continue
             data = f.read(event_size)
             if not data:
@@ -1033,8 +1023,12 @@ def run_daemon(ec_only: bool = False) -> None:
                                 print(f"[*] UEFI PowerMode -> {uefi_mode}")
                         else:
                             print("[*] 捕捉到机身实体模式按键触发！执行模式切换...")
-                            cycle_mode(notify=True)
-                            last_profile_id = sync_mode_led_from_profile()
+                            try:
+                                cycle_mode(notify=True)
+                                last_profile_id = sync_mode_led_from_profile()
+                            except (RuntimeError, OSError, ValueError) as exc:
+                                last_profile_id = None
+                                print(f"[!] 性能档位切换失败，触摸板热键继续工作: {exc}", file=sys.stderr)
 
                 elif ec_only:
                     # The root EC-only service must not duplicate the user
@@ -1053,7 +1047,10 @@ def run_daemon(ec_only: bool = False) -> None:
                     if now - last_tp_trigger >= 0.4:
                         last_tp_trigger = now
                         print("[*] 捕捉到触控板硬件切换键 (KEY_F21) 触发！执行触控板开关...")
-                        toggle_touchpad()
+                        try:
+                            toggle_touchpad()
+                        except (RuntimeError, OSError) as exc:
+                            print(f"[!] 触摸板切换失败: {exc}", file=sys.stderr)
 
                 # 4. Keyboard backlight keys (KEY_KBDILLUMTOGGLE = 228, KEY_KBDILLUMDOWN = 229, KEY_KBDILLUMUP = 230)
                 elif ev_code == 228:
@@ -1122,56 +1119,89 @@ def set_win_lock(enabled: bool) -> None:
 
 
 # ==============================================================================
-# 4. Touchpad Hardware Lock
+# 4. Touchpad Input Control
 # ==============================================================================
 
+def touchpad_action(action: str) -> dict:
+    """Use one installed, narrowly authorized helper for CLI and hotkeys."""
+    if action not in {"status", "on", "off", "toggle", "restore"}:
+        raise ValueError(f"Unknown touchpad action: {action}")
+    if not TOUCHPAD_HELPER.is_file():
+        raise RuntimeError("触摸板组件未安装，请更新 mechrevo-console")
+    command = [str(TOUCHPAD_HELPER), action]
+    if action != "status" and os.geteuid() != 0:
+        command.insert(0, "/usr/bin/pkexec")
+    try:
+        # A timed-out pkexec client cannot prove that its privileged child stopped.
+        # Mutations wait for the helper's real receipt; read-only discovery is bounded.
+        response = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=40 if action == "status" else None)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"触摸板操作未完成: {exc}") from exc
+    if response.returncode != 0:
+        detail = response.stderr.strip()
+        if not detail:
+            try:
+                failure = json.loads(response.stdout)
+                detail = str(failure["error"])
+                if failure.get("rollback_errors"):
+                    detail += "; 恢复失败: " + "; ".join(map(str, failure["rollback_errors"]))
+            except (ValueError, TypeError, KeyError):
+                detail = f"helper exit {response.returncode}"
+        raise RuntimeError(f"触摸板操作失败: {detail}")
+    try:
+        result = json.loads(response.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("触摸板组件没有返回有效状态") from exc
+    if (not isinstance(result, dict) or result.get("ok") is not True
+            or not isinstance(result.get("devices"), list)):
+        raise RuntimeError("触摸板组件返回了不完整状态")
+    if action == "restore" and result.get("enabled") is None and not result["devices"]:
+        return result
+    devices = result["devices"]
+    if (type(result.get("enabled")) is not bool or type(result.get("mixed")) is not bool
+            or not devices or any(not isinstance(d, dict) or type(d.get("enabled")) is not bool
+                                  for d in devices)):
+        raise RuntimeError("触摸板组件返回了不完整状态")
+    states = {d["enabled"] for d in devices}
+    if result["mixed"] != (len(states) > 1):
+        raise RuntimeError("触摸板设备状态与汇总不一致")
+    if not result["mixed"] and result["enabled"] != devices[0]["enabled"]:
+        raise RuntimeError("触摸板设备状态与汇总不一致")
+    if action in {"on", "off"} and states != {action == "on"}:
+        raise RuntimeError("触摸板状态回读与请求不一致")
+    if action in {"toggle", "restore"} and result["mixed"]:
+        raise RuntimeError("触摸板操作后仍有设备状态不一致")
+    return result
+
+
+def touchpad_summary(result: dict) -> str:
+    state = "部分启用" if result["mixed"] else ("已启用" if result["enabled"] else "已禁用")
+    return f"内核输入{state}（{len(result['devices'])} 个触摸板）"
+
+
 def get_touchpad() -> bool:
-    """Check if touchpad is enabled (device bound)."""
-    if not TOUCHPAD_BOUND_CHECK.parent.exists():
-        raise RuntimeError(f"Touchpad binding interface is unavailable: {TOUCHPAD_BOUND_CHECK.parent}")
-    return TOUCHPAD_BOUND_CHECK.exists()
+    result = touchpad_action("status")
+    if result["mixed"]:
+        raise RuntimeError("多块触摸板状态不一致")
+    return result["enabled"]
 
 
 def set_touchpad(enabled: bool) -> None:
-    """Enable or disable touchpad via I2C driver bind/unbind."""
-    current = get_touchpad()
-    if enabled and not current:
-        if not TOUCHPAD_BIND_PATH.exists():
-            raise RuntimeError(f"Touchpad bind interface is unavailable: {TOUCHPAD_BIND_PATH}")
-        TOUCHPAD_BIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
-    elif not enabled and current:
-        if not TOUCHPAD_UNBIND_PATH.exists():
-            raise RuntimeError(f"Touchpad unbind interface is unavailable: {TOUCHPAD_UNBIND_PATH}")
-        TOUCHPAD_UNBIND_PATH.write_text(TOUCHPAD_I2C_DEVICE)
-    actual = get_touchpad()
-    if actual != enabled:
-        raise RuntimeError(f"触控板状态回读不匹配: requested {enabled}, got {actual}")
-    get_state_file("touchpad_state").write_text("1" if enabled else "0")
-    state_str = "已开启 (正常滑动)" if enabled else "已锁定禁用 (防误触生效)"
-    print(f"[✓] 机械革命触控板状态: {state_str}")
+    result = touchpad_action("on" if enabled else "off")
+    print(touchpad_summary(result))
 
 
-def restore_touchpad_state(timeout: float = 30.0) -> bool | None:
-    """Reapply the saved hardware touchpad state after resume.
+def toggle_touchpad(notify: bool = True) -> None:
+    result = touchpad_action("toggle")
+    summary = touchpad_summary(result)
+    print(summary)
+    if notify:
+        send_notification("触摸板", summary, icon="input-touchpad")
 
-    Returns None when no state was saved. The i2c device may appear a moment
-    after resume, so wait for it before bind/unbind; otherwise a late device
-    registration could silently undo the saved off state.
-    """
-    state_file = get_state_file("touchpad_state")
-    if not state_file.exists():
-        return None
-    value = state_file.read_text().strip()
-    if value not in {"0", "1"}:
-        raise RuntimeError(f"Invalid saved touchpad state: {value!r}")
-    enabled = value == "1"
-    deadline = time.monotonic() + timeout
-    while not TOUCHPAD_DEVICE_PATH.exists():
-        if time.monotonic() >= deadline:
-            raise RuntimeError(f"Touchpad device did not reappear: {TOUCHPAD_DEVICE_PATH}")
-        time.sleep(0.25)
-    set_touchpad(enabled)
-    return enabled
+
+def restore_touchpad_state() -> bool | None:
+    return touchpad_action("restore")["enabled"]
 
 
 # ==============================================================================
@@ -1442,7 +1472,10 @@ def show_dashboard() -> None:
     sensors = read_hwmon_sensors()
     mode = get_current_mode()
     win_lock = "已锁定 (防误触)" if get_win_lock() else "未锁定 (正常)"
-    touchpad = "已启用" if get_touchpad() else "已禁用"
+    try:
+        touchpad = touchpad_summary(touchpad_action("status"))
+    except RuntimeError as exc:
+        touchpad = f"不可用：{exc}"
     fn_lock = "F1-F12 优先" if get_fn_lock() else "多媒体快捷键优先"
     battery = {
         "high_capacity": "100% 高容量模式",
@@ -1517,7 +1550,7 @@ def main() -> int:
     p_win.add_argument("action", nargs="?", choices=["on", "off", "toggle", "status"], default="status")
 
     # touchpad
-    p_tp = subparsers.add_parser("touchpad", help="笔记本触控板硬件开关")
+    p_tp = subparsers.add_parser("touchpad", help="跨桌面的触摸板内核输入开关")
     p_tp.add_argument("action", nargs="?", choices=["on", "off", "toggle", "status", "restore"], default="status")
 
     # fn-lock
@@ -1579,15 +1612,15 @@ def main() -> int:
             elif args.action == "off":
                 set_touchpad(False)
             elif args.action == "toggle":
-                set_touchpad(not get_touchpad())
+                toggle_touchpad(notify=False)
             elif args.action == "restore":
                 restored = restore_touchpad_state()
                 if restored is None:
-                    print("没有保存的触控板硬件状态，跳过恢复")
+                    print("没有保存的触摸板状态，跳过恢复")
                 else:
-                    print(f"已恢复触控板硬件状态: {'开启' if restored else '禁用'}")
+                    print(f"已恢复触摸板内核输入: {'开启' if restored else '禁用'}")
             else:
-                print(f"触控板状态: {'已启用' if get_touchpad() else '已禁用'}")
+                print(touchpad_summary(touchpad_action("status")))
         elif args.command == "fn-lock":
             if args.action == "on":
                 set_fn_lock(True, notify=True)

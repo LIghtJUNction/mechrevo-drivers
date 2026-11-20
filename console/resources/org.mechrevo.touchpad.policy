@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>mechrevo-drivers</vendor>
+  <vendor_url>https://github.com/LIghtJUNction/mechrevo-drivers</vendor_url>
+  <action id="org.mechrevo.touchpad">
+    <description>Enable or disable touchpad input</description>
+    <description xml:lang="zh_CN">启用或禁用触摸板输入</description>
+    <message>Change touchpad input on your active local seat</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/mechrevo-control/touchpad-helper</annotate>
+  </action>
+</policyconfig>

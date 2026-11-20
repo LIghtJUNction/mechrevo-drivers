@@ -1,0 +1,2 @@
+# Defer restoration until udev has completed input classification.
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="mechrevo-touchpad-restore@%k.service"
