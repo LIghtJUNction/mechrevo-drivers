@@ -24,3 +24,17 @@ Module.symvers
 /.sync-worktrees/
 /.local-tests/
 __pycache__/
+
+# Generated evidence is stored in the external archive.
+/console/screenshots/before-native-system.png
+/console/screenshots/catalog-dark.png
+/console/screenshots/catalog-light.png
+/console/screenshots/controls-dark.png
+/console/screenshots/live-device-dark.png
+/console/screenshots/minimum-160-percent.png
+/console/screenshots/native-system.png
+/console/screenshots/overview-dark.png
+/console/screenshots/overview-large-text.png
+/console/screenshots/overview-light.png
+/console/screenshots/overview-narrow.png
+/console/screenshots/sensors-dark.png

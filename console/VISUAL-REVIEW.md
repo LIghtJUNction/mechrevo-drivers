@@ -8,16 +8,16 @@
 
 | 视图 | 尺寸 | 截图 |
 | --- | --- | --- |
-| 深色概览 | 1280×900 | [查看](screenshots/overview-dark.png) |
-| 浅色概览 | 1280×900 | [查看](screenshots/overview-light.png) |
-| 设备控制 | 1280×900 | [查看](screenshots/controls-dark.png) |
-| 传感器 | 1280×900 | [查看](screenshots/sensors-dark.png) |
-| 深色型号目录 | 1280×900 | [查看](screenshots/catalog-dark.png) |
-| 浅色型号目录 | 1280×900 | [查看](screenshots/catalog-light.png) |
-| 窄窗概览 | 400×780 | [查看](screenshots/overview-narrow.png) |
-| 160% 文字概览 | 1120×760 | [查看](screenshots/overview-large-text.png) |
-| 最小窗口，160% 文字 | 360×280 | [查看](screenshots/minimum-160-percent.png) |
-| 真实设备，只读运行 | 1280×900 | [查看](screenshots/live-device-dark.png) |
+| 深色概览 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 浅色概览 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 设备控制 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 传感器 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 深色型号目录 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 浅色型号目录 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
+| 窄窗概览 | 400×780 | [查看](../docs/evidence-archive-20261120.md) |
+| 160% 文字概览 | 1120×760 | [查看](../docs/evidence-archive-20261120.md) |
+| 最小窗口，160% 文字 | 360×280 | [查看](../docs/evidence-archive-20261120.md) |
+| 真实设备，只读运行 | 1280×900 | [查看](../docs/evidence-archive-20261120.md) |
 
 已检查深浅主题、控制与传感器页面、目录、窄窗和大字体的中文排版、对比度、内容溢出、选中状态。小窗口和大字体通过滚动保留内容；不要求在最小窗口内展示全部控件。
 

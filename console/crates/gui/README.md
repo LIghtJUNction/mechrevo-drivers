@@ -4,9 +4,9 @@ Windows / Linux 共用 Rust 核心，界面使用 eframe / egui 0.37；控制台
 
 Project Z 复用固定为 `zclap = 0.1.4` 和 `zhex = 0.1.3`：前者统一 CLI 参数语法、重复选项与必填项校验，并保留原生文件路径；后者供 CLI 和 GUI 共用 RGB 解析与显示。两者均没有第三方依赖，版本与校验值记录在 `console/Cargo.lock`。
 
-![原生控制中心深色界面，明确标注的模拟数据](../../screenshots/overview-dark.png)
+[原生控制中心深色界面，明确标注的模拟数据](../../../docs/evidence-archive-20261120.md)
 
-[浅色界面](../../screenshots/overview-light.png) · [截图与验收记录](../../VISUAL-REVIEW.md)
+[浅色界面](../../../docs/evidence-archive-20261120.md) · [截图与验收记录](../../VISUAL-REVIEW.md)
 
 ```sh
 cargo run --manifest-path console/Cargo.toml -p mechrevo-console-gui --features gui
