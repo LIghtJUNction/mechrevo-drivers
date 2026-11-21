@@ -3824,7 +3824,7 @@ dependencies = [
 [[package]]
 name = "zhex"
 version = "0.1.3"
-source = "git+https://github.com/LIghtJUNction/zhex.git#09dfaa0adee628d0714e2f9e96921555e619b2f6"
+source = "git+https://github.com/LIghtJUNction/zhex.git#9fc8de3901b2726e650537f4a6330355e8a965e7"
 
 [[package]]
 name = "zlib-rs"
