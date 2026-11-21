@@ -3799,7 +3799,7 @@ dependencies = [
 [[package]]
 name = "zclap"
 version = "0.1.4"
-source = "git+https://github.com/LIghtJUNction/zclap.git#4d87f3ae3743e81509d5ac5500909955667c860f"
+source = "git+https://github.com/LIghtJUNction/zclap.git#a4c7e6f3e0ff860de701573117248fe8538c71e5"
 
 [[package]]
 name = "zerocopy"
