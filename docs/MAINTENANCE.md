@@ -198,5 +198,27 @@ USB 开/关及两个操作次序；分别恢复旧 USB 或旧 RGB 路径都会�
 
 不要用 reset 或强推 `main` 来跟随上游，也不要直接关闭所有兼容性检查。
 从维护 `main` 开新分支，手工合并对应上游正式标签，逐项处理冲突和适配、在本地验收后提交 PR。
+同步 PR 应使用 GitHub 的 **Create a merge commit**，以保留上游正式版本提交的祖先关系。
+如果用 squash 或 rebase 合入，内容可能已经进入 `main`，但同步脚本仍会尝试合并同一个正式版本。
+在已获取最新 refs 的本地仓库中，可以离线检查（将 `v4.25.0` 换成日志中的正式标签）：
+
+```sh
+git merge-base --is-ancestor 'v4.25.0^{commit}' origin/main
+git merge-tree --write-tree origin/main 'v4.25.0^{commit}'
+```
+
+第一条返回 0 表示正式版本提交已在维护分支历史中，返回 1 表示缺少这条祖先关系。
+第二条在不切换分支的情况下预览合并，返回 1 时输出冲突路径。
+
+[#9](https://github.com/LIghtJUNction/mechrevo-drivers/issues/9) 中，
+[#1](https://github.com/LIghtJUNction/mechrevo-drivers/pull/1) 的 `v4.25.0` 内容经 squash 进入
+`main`（`3341c18`），实际的上游提交 `a929f9c` 未成为其祖先。
+因此同步重复尝试合并 `v4.25.0`，在
+[11 月 21 日的运行](https://github.com/LIghtJUNction/mechrevo-drivers/actions/runs/44860634172)
+中与 `src/tuxedo_io/tuxedo_io.c` 的 GM6BG0Q TDP 适配发生冲突。
+恢复祖先关系前，应核对整个候选差异，包括 Git 自动合并的片段。
+当前预览还会在 `src/ite_8291_lb/ite_8291_lb.c` 中重新引入部分 `0x7001` 灯条处理代码，
+这些片段也要与维护分支现有实现核对。
+
 若需要精确到型号的限制，应在独立补丁中记录理由、DMI 依据和测试范围。
-故障修复后关闭提醒 issue，正常定时同步会继续运行。
+同步 PR 合并后，从更新后的 `origin/main` 确认正式标签的祖先关系，并离线验收；确认故障已解除后再关闭提醒 issue。
