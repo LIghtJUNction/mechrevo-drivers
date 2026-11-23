@@ -1572,6 +1572,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "z64",
  "zhex",
 ]
 
@@ -3691,6 +3692,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "z64"
+version = "0.1.2"
+source = "git+https://github.com/LIghtJUNction/z64.git#7e9cff67beae2c484f8b9749b83ae24a1d0e1bbd"
+
+[[package]]
 name = "zbus"
 version = "5.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3824,7 +3830,7 @@ dependencies = [
 [[package]]
 name = "zhex"
 version = "0.1.3"
-source = "git+https://github.com/LIghtJUNction/zhex.git#9fc8de3901b2726e650537f4a6330355e8a965e7"
+source = "git+https://github.com/LIghtJUNction/zhex.git#52515207f9d97a2580182169b611b4763366b328"
 
 [[package]]
 name = "zlib-rs"

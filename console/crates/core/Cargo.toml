@@ -12,3 +12,9 @@ zhex.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+z64.workspace = true
+
+[dev-dependencies]
+z64.workspace = true

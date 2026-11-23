@@ -615,26 +615,12 @@ mod windows {
     }
 
     fn base64(bytes: &[u8]) -> String {
-        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut result = String::new();
-        for bytes in bytes.chunks(3) {
-            let a = bytes[0];
-            let b = *bytes.get(1).unwrap_or(&0);
-            let c = *bytes.get(2).unwrap_or(&0);
-            result.push(TABLE[(a >> 2) as usize] as char);
-            result.push(TABLE[(((a & 3) << 4) | (b >> 4)) as usize] as char);
-            result.push(if bytes.len() > 1 {
-                TABLE[(((b & 15) << 2) | (c >> 6)) as usize] as char
-            } else {
-                '='
-            });
-            result.push(if bytes.len() > 2 {
-                TABLE[(c & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-        result
+        let size = z64::encoded_len(bytes.len(), z64::Mode::Standard)
+            .expect("Base64 output length fits in memory");
+        let mut output = vec![0; size];
+        z64::encode(bytes, &mut output, z64::Mode::Standard)
+            .expect("Base64 output buffer has the exact required size");
+        String::from_utf8(output).expect("Base64 output is ASCII")
     }
     fn parse(text: &str) -> Result<Vec<BrightnessDevice>, ControlError> {
         let rows: Vec<Row> = serde_json::from_str(text.trim().trim_start_matches('\u{feff}'))
@@ -860,6 +846,10 @@ mod windows {
             assert!(!script.contains("injected"));
             assert!(!script.contains("-Filter"));
             assert!(script.contains("StringComparison]::Ordinal"));
+            assert_eq!(base64(b""), "");
+            assert_eq!(base64(&[0xff]), "/w==");
+            assert_eq!(base64(&[0xff, 0xff]), "//8=");
+            assert_eq!(base64(&[0xff, 0xff, 0xff]), "////");
             assert_eq!(base64(b"f"), "Zg==");
             assert_eq!(base64(b"fo"), "Zm8=");
             assert_eq!(base64(b"foo"), "Zm9v");
