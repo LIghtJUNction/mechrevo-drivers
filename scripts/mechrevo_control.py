@@ -916,6 +916,23 @@ class KeyboardSchedule:
         self.night_brightness = night_brightness
         self.owner = None
         self.last_error = None
+        self.override = None
+        self.fn_pending = None
+        self.current = None
+        self.night_period = None
+
+    def release(self):
+        if self.owner is not None:
+            self.owner.close()
+            self.owner = None
+        self.override = self.fn_pending = self.current = self.night_period = None
+
+    def fn_event(self):
+        # Both daemons observe physical input, but only the normal daemon runs
+        # the existing brightness helper. The owner confirms a resulting LED
+        # change by readback; an event alone never creates an override.
+        if self.owner is not None and self.current is not None:
+            self.fn_pending = (self.current, time.monotonic() + 2.0)
 
     def target(self, minute, closed):
         daytime = ((minute - self.day_start) % 1440
@@ -938,40 +955,74 @@ class KeyboardSchedule:
             raise RuntimeError("未知 ACPI 合盖状态，跳过自动背光")
         return "closed" in states
 
+    @staticmethod
+    def read_brightness(endpoint):
+        endpoint.seek(0)
+        value = endpoint.read(32).strip()
+        if value not in ("0", "1", "2", "3", "4"):
+            raise RuntimeError("无效的键盘亮度回读")
+        return int(value)
+
     def tick(self):
         if not self.enabled or not self.supported():
+            self.release()
             return
         try:
-            # A machine-wide abstract socket prevents the user and EC daemons
-            # from running this policy simultaneously, without new privileges.
-            if self.owner is None:
-                owner = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-                try:
-                    owner.bind("\0mechrevo-control-keyboard-schedule-v1")
-                except OSError:
-                    owner.close()
-                    raise RuntimeError("另一个 mechrevo-control 已控制自动背光")
-                self.owner = owner
             closed = self.lid_closed()
             now = datetime.now().astimezone()
-            target = self.target(now.hour * 60 + now.minute, closed)
+            minute = now.hour * 60 + now.minute
+            target = self.target(minute, closed)
+            period = (now.date().toordinal() * 1440 + minute - self.night_start) // 1440
+            if target == 0 or period != self.night_period:
+                self.override = self.fn_pending = None
+            self.night_period = period if target else None
             maximum = int((RGB_LEDS_DIR / "max_brightness").read_text().strip())
             if maximum != 4:
                 raise RuntimeError("不支持的键盘亮度范围，跳过自动背光")
-            brightness = RGB_LEDS_DIR / "brightness"
-            current = int(brightness.read_text().strip())
-            if not 0 <= current <= maximum:
-                raise RuntimeError("无效的键盘亮度回读")
-            if target != current:
-                # Recheck immediately before lighting; an unreadable lid never
-                # causes a write. Closed always wins over a time transition.
-                if target and self.lid_closed():
-                    target = 0
-                brightness.write_text(f"{target}\n")
-                if brightness.read_text().strip() != str(target):
-                    raise RuntimeError("自动键盘亮度回读不匹配")
+            # O_RDWR checks actual write access, even at target, without a
+            # probe write. Read, write and readback use this same open endpoint.
+            with (RGB_LEDS_DIR / "brightness").open("r+", encoding="ascii") as endpoint:
+                current = self.read_brightness(endpoint)
+                # Validate useful control before claiming the machine-wide
+                # socket. Read-only / broken instances cannot block a peer.
+                if self.owner is None:
+                    owner = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+                    try:
+                        owner.bind("\0mechrevo-control-keyboard-schedule-v1")
+                    except OSError:
+                        owner.close()
+                        raise RuntimeError("另一个 mechrevo-control 已控制自动背光")
+                    self.owner = owner
+                if target == 0:
+                    self.override = self.fn_pending = None
+                elif self.fn_pending is not None:
+                    previous, deadline = self.fn_pending
+                    if time.monotonic() >= deadline:
+                        self.fn_pending = None
+                    elif current != previous:
+                        self.override = current
+                        self.fn_pending = None
+                if target and self.override is not None:
+                    target = self.override
+                # While waiting for the Fn helper, leave nighttime brightness
+                # alone. Daytime/lid closure above always cancels this window.
+                pending = self.fn_pending is not None
+                if target != current and not pending:
+                    if target and self.lid_closed():
+                        target = 0
+                        self.override = self.fn_pending = None
+                    endpoint.seek(0)
+                    endpoint.write(f"{target}\n")
+                    endpoint.flush()
+                    if self.read_brightness(endpoint) != target:
+                        raise RuntimeError("自动键盘亮度回读不匹配")
+                    current = target
+                self.current = current
             self.last_error = None
         except (OSError, ValueError, RuntimeError) as exc:
+            # Includes open/read/write/flush/readback failures: let another
+            # existing daemon with working access take over on its next tick.
+            self.release()
             message = str(exc)
             if message != self.last_error:
                 print(f"[!] 自动背光: {message}", file=sys.stderr)
@@ -1055,10 +1106,11 @@ def run_daemon(ec_only: bool = False, keyboard_schedule=None) -> None:
         event_format = "qqHHi"
         event_size = struct.calcsize(event_format)
 
+        keyboard_schedule.tick()
         while True:
-            keyboard_schedule.tick()
             ready, _, _ = select.select([f], [], [], poll_timeout)
             if not ready:
+                keyboard_schedule.tick()
                 if ec_only or time.monotonic() < profile_poll_at:
                     continue
                 profile_poll_at = time.monotonic() + 3.0
@@ -1077,6 +1129,9 @@ def run_daemon(ec_only: bool = False, keyboard_schedule=None) -> None:
             if len(data) != event_size:
                 raise RuntimeError(f"Incomplete hotkey input event: expected {event_size} bytes, got {len(data)}")
             _, _, ev_type, ev_code, ev_value = struct.unpack(event_format, data)
+            if ev_type == 1 and ev_value == 1 and ev_code in (228, 229, 230):
+                keyboard_schedule.fn_event()
+            keyboard_schedule.tick()
             # EV_KEY = 1, ev_value == 1 (key press)
             if ev_type == 1 and ev_value == 1:
                 now = time.monotonic()
