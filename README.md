@@ -140,3 +140,10 @@ python3 -B scripts/verify.py --domain console
 ## 许可证
 
 本项目保留 TUXEDO 上游历史、版权与 GPL 许可证。具体条款见 [LICENSE](LICENSE)。
+
+Python 控制台现有 `mechrevo-control daemon`（含 `--ec-only`）在受支持机型上
+默认按本机时间控制键盘背光：07:00–19:00 熄灭、夜间亮度 1/4，合盖优先。
+夜间保留 Fn 亮度键的临时调整，合盖或离开该夜间时段后清除。
+支持自定义时间/亮度及 `--no-keyboard-schedule` 关闭。保留 Hyprland 旧合盖
+背光脚本时必须关闭此功能，避免两个自动控制器争写。
+详见 [配置、机型范围及验证限制](console/README.md#linux-键盘背光时段控制)。

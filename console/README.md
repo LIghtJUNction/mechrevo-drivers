@@ -24,3 +24,69 @@ OEM 示例仅适用于 `oem list` 实际列出的 ID 和范围；预览不写入
 CLI 状态 JSON 与导出文件保留 `schema_version: 1`，新增采集起止时间、单调耗时、工具版本和运行内核信息。Linux hwmon 传感器 ID 改为解析后的输入路径，物理设备归属与原始来源路径仍分别保留；依赖旧 ID 的消费者需要迁移索引。字段范围、休眠处理及 ID 稳定性限制见 [CLI JSON 与采集时间](../docs/MECHREVO-CONSOLE.md#cli-json-与采集时间)。
 
 官方营销目录和精确硬件身份依据分别保存在 `data/mechrevo-catalog.json` 与 `data/mechrevo-platform-evidence.json`。别名、项目号前缀、`mine` 或自定义功耗配置不能替代硬件识别。
+
+## Linux 键盘背光时段控制
+
+Python 控制台的现有 `mechrevo-control daemon` 和 `daemon --ec-only`
+入口默认启用时段控制；Rust GUI/CLI 不会另起自动控制器。当前仅精确匹配
+MECHREVO 的 GM6PX0X / `Kuangshi16Pro Series GM6PX0X` 和 GM6BG0Q /
+`Jiaolong16K Series GM6BG0Q`，并要求现有 `rgb:kbd_backlight` LED 的
+`max_brightness` 为 4（与现有驱动定义一致）。其他设备不写入。无需新增权限、内核逻辑或寄存器访问。
+
+默认按本机时区：07:00（含）到 19:00（不含）熄灭，其余时间亮度 1/4。
+自定义示例（时间必须为两位 `HH:MM`，两个分界不能相同）：
+
+```sh
+mechrevo-control daemon --day-start 08:00 --night-start 20:30 --night-brightness 2
+# 保留外部自动控制器时，在每个运行中的 daemon 上关闭本功能：
+mechrevo-control daemon --no-keyboard-schedule
+```
+
+白天区间可跨午夜，例如 `--day-start 20:00 --night-start 06:00`。
+合盖优先，开盖始终按当前时段计算，不恢复缓存亮度；启动、恢复运行和时区/
+时钟调整后也重新计算。守护进程每 250 ms 读取 ACPI lid 状态并核对亮度，
+仅在需要调整时写入现有 LED `brightness`，不修改 RGB。
+这是用户态轮询，合盖关灯存在调度/轮询延迟；进程未运行或系统挂起时不能执行。
+不设置 logind inhibitor，不修改 Hyprland、logind 或任何休眠策略。
+合盖状态缺失/无效、接口不支持或权限不足时记录错误并跳过，不猜测开盖状态。
+该情况不能保证纠正设备原有亮度；错误不会终止原来的热键功能。
+
+**不要让两个自动控制器同时写同一个设备。** 项目不会修改用户现有 Hyprland
+合盖背光脚本。若保留它，请给所有启动的 `mechrevo-control daemon` 加上
+`--no-keyboard-schedule`；若采用本功能，需自行停用旧背光控制器后再运行。
+本项目的两个 daemon 之间通过机器级抽象 socket 互斥自动背光，不能阻止
+Hyprland、其他程序或手动亮度写入。争取控制权前，先读取 lid、核对亮度范围，
+并以读写方式打开同一个 `brightness` 端点、验证当前值；即使亮度已等于目标，
+也检查实际打开权限，但不做探测写入。打开、读取、写入、flush 或回读失败会
+释放控制权，另一个具有可用访问权限的现有 daemon 可在下次轮询接管。
+权限检查不增加授权；只有真正写入时才能发现内核在 store 阶段拒绝请求的情况。
+
+开盖夜间保留现有 Fn 背光键（循环/减亮/增亮）。收到物理亮度键事件后，控制器
+最多等待 2 秒，在 LED 回读中确认亮度发生变化，才把新值作为当晚临时覆盖，
+包括 Fn 熄灭的 0。只有按键而没有回读变化不会产生覆盖；其他途径的任意写入
+不自动成为 Fn 覆盖。两个 daemon 都观察物理事件，由自动背光的实际持有者
+确认变化；`--ec-only` 仍不会调用用户亮度工具。临时覆盖在合盖、进入白天、
+进入另一夜间区间、控制失败交接或进程重启后清除；开盖按当前时段恢复计划值。
+白天和合盖期间仍强制为 0，Fn 不建立覆盖。由于确认依赖物理事件与随后回读，
+并发写入或超过 2 秒才生效的工具不保证归因为 Fn 调整；避免其他自动写灯程序。
+使用 `--no-keyboard-schedule` 时保留原有 Fn 手动行为，不强制时段或合盖亮度。
+
+服务的参数通过 systemd override 修改（本仓库不会自动启用/安装服务）：
+`systemctl --user edit mechrevo-gaming-hotkey.service`，加入：
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/mechrevo-control daemon --day-start 08:00 --night-start 20:30 --night-brightness 2
+```
+
+使用系统服务时对应为 `systemctl edit mechrevo-ec-hotkey.service`，并在
+`ExecStart` 保留 `daemon --ec-only`。保留旧脚本时将上述自定义参数改为
+`--no-keyboard-schedule`；若两种服务都运行，两个服务都应设置关闭参数。
+修改后需重新加载对应 systemd manager 并重启服务。仅文件变更不会改变已运行进程。
+
+云端验证：`python -m unittest discover -s tests -p 'test_keyboard_schedule.py'`，
+以及 `test_mechrevo_hotkey.py` 的现有入口回归。使用临时 LED/lid 文件和真实
+输入 pipe，经 `main → daemon → 策略 → brightness` 验证；未在对应笔记本上
+安装或验收灯光、ACPI 合盖上报、实际时区切换与睡眠恢复。源码中的既有型号
+部分验收记录不代表本功能已经实机验收。
